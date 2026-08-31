@@ -95,17 +95,27 @@ class LocalOllamaProvider:
             return False
 
     async def _generate(self, prompt: str, timeout: float) -> str:
+        # /api/chat은 system 메시지 분리를 지원해 JSON 스키마 준수율이 높다
         payload = {
             "model": self._model,
-            "prompt": prompt,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an assistant that helps reconstruct career gap period narratives. "
+                        "Always respond in Korean. Output JSON only — no other text."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
             "stream": False,
             "format": "json",
         }
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(f"{self._base_url}/api/generate", json=payload)
+                resp = await client.post(f"{self._base_url}/api/chat", json=payload)
                 resp.raise_for_status()
-                return resp.json()["response"]
+                return resp.json()["message"]["content"]
         except httpx.TimeoutException as exc:
             raise TimeoutError("Ollama request timed out") from exc
         except Exception as exc:
