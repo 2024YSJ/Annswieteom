@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from jinja2 import Environment, FileSystemLoader
 
 from app.core.config import settings
@@ -27,8 +28,7 @@ def _render(template_name: str, **kwargs: object) -> str:
 
 class GeminiProvider:
     def __init__(self) -> None:
-        genai.configure(api_key=settings.gemini_api_key)
-        self._model = genai.GenerativeModel("gemini-1.5-flash")
+        self._client = genai.Client(api_key=settings.gemini_api_key)
 
     async def draft_suggestion(self, context: InterviewContext, step: str) -> Suggestion:
         prompt = _render(
@@ -69,9 +69,10 @@ class GeminiProvider:
 
     async def _call(self, prompt: str) -> str:
         try:
-            response = await self._model.generate_content_async(
-                prompt,
-                generation_config=genai.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
                     response_mime_type="application/json"
                 ),
             )
