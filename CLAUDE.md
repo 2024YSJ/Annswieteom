@@ -125,3 +125,26 @@ Shared tasks (Supabase setup, DB schema, deployment config): [docs/checklists/00
 - `dev` — staging; default working branch
 - `feature/*` — individual feature work; PR into `dev`
 - Commit prefixes: `feat:`, `fix:`, `chore:`, `docs:`
+
+## Devlog
+
+작업이 끝날 때마다 `docs/devlog/` 아래에 기록을 남긴다. 체크리스트 파일과 1:1로 대응하는 파일명을 사용한다.
+
+```
+docs/devlog/
+├── PersonA/
+│   ├── 00_shared_scaffolding.md
+│   ├── 00_shared_db_schema.md
+│   ├── 01_local_llm_setup.md
+│   ├── 02_llm_adapter_layer.md
+│   └── ...
+└── PersonB/
+    └── ...
+```
+
+각 devlog 파일에 포함할 내용:
+- 완료/미완 체크리스트 항목
+- 핵심 결정 사항과 이유 (왜 이 방식을 선택했는가)
+- 트러블슈팅 (문제 → 원인 → 해결)
+- 관련 커밋 해시
+- 남은 작업
