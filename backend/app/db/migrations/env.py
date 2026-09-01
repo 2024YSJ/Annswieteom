@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 from alembic import context
 
@@ -12,21 +12,20 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# DATABASE_URL은 asyncpg 드라이버를 쓰므로 Alembic(동기)용으로 psycopg2로 교체
-_db_url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url", ""))
-_sync_url = _db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-config.set_main_option("sqlalchemy.url", _sync_url)
-
-import app.models  # noqa: E402 — 모든 모델을 임포트해 autogenerate가 감지하도록
+import app.models  # noqa: E402
 from app.db.session import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
+# asyncpg URL -> psycopg2 URL; use create_engine directly to avoid
+# configparser interpolation errors on %-encoded characters in the password
+_raw_url = os.environ.get("DATABASE_URL", "")
+_sync_url = _raw_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=_sync_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -37,11 +36,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_engine(_sync_url, poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
