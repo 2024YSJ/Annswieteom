@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
 
+    # 12-4절: 생성된 문장과 인용된 confirmed_facts 간 코사인 유사도 최소값.
+    # 0.45~0.65 범위에서 실제 생성 샘플로 튜닝 — app/services/consistency_check.py 참고.
+    consistency_threshold: float = 0.55
+
     class Config:
         env_file = ".env"
 
