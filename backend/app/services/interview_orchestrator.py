@@ -38,6 +38,7 @@ SIMPLE_TRANSITIONS: dict[str, tuple[str, str]] = {
     "period": ("PERIOD_INPUT", "CATEGORY_SELECT"),
     "categories": ("CATEGORY_SELECT", "RECORD_UPLOAD"),
     "records_skip": ("RECORD_UPLOAD", "FREQ_DRAFT"),
+    "generate": ("RESULT_GENERATE", "RESULT_REVIEW"),
 }
 
 
