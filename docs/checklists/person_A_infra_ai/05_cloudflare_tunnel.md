@@ -41,7 +41,8 @@
 
 ## 4. 외부 접속 확인 (중요 — PC 안에서 확인하는 것과 다르다)
 
-- [x] `https://llm.annswieteom.com` 외부(Cloudflare 엣지 경유) 요청에서 "Ollama is running" 응답 확인(2026-09-02). **참고**: 이건 외부 서버에서의 확인이며 휴대폰 데이터망 확인은 아직 안 했음 — 데모 전에 한 번 더 실기기로 확인 권장
+- [x] `https://llm.annswieteom.com` 외부(Cloudflare 엣지 경유) 요청에서 "Ollama is running" 응답 확인(2026-09-02)
+- [x] 휴대폰(데이터망)으로 실기기 접속 확인 완료(2026-09-02)
 
 ## 5. 자동 실행 등록 (재부팅 대비)
 
@@ -54,7 +55,7 @@
   Restart-Service cloudflared
   ```
   (`sc.exe config cloudflared binPath= ...`로 시도하면 PowerShell의 네이티브 인자 따옴표 처리 때문에 값이 깨질 수 있다 — 레지스트리를 직접 쓰는 쪽이 더 안전했다.) 수정 후 `service.log`에 4개의 tunnel connection이 등록되는 것과 외부에서 실제 200 응답이 오는 것까지 확인 완료.
-- [ ] PC를 실제로 재부팅해서 터널이 자동으로 다시 켜지는지 확인 — **아직 미실시**, 데모 전 반드시 1회 필요
+- [x] PC를 실제로 재부팅해서 터널이 자동으로 다시 켜지는지 확인 — 완료(2026-09-02), 자동 기동 정상 확인
 
 ## 6. 백엔드 연동
 
@@ -68,6 +69,6 @@
 
 ## 검증 기준
 
-- [x] 다른 기기에서 터널 고정 주소로 접속했을 때 Ollama 응답이 온다 — 2026-09-02, fresh curl로 `https://llm.annswieteom.com` → 200 "Ollama is running" 확인(휴대폰 데이터망 재확인은 아직 권장 사항으로 남음)
-- [ ] PC를 재부팅해도 Ollama, cloudflared 둘 다 사람이 손대지 않아도 자동으로 다시 켜진다 — **실제 재부팅 테스트 아직 안 함**
-- [ ] 이후 [07_server_ops_checklist.md](07_server_ops_checklist.md)의 "처음 설정할 때" 항목을 모두 체크할 수 있다
+- [x] 다른 기기에서 터널 고정 주소로 접속했을 때 Ollama 응답이 온다 — 2026-09-02, fresh curl 및 휴대폰 실기기 모두 확인
+- [x] PC를 재부팅해도 Ollama, cloudflared 둘 다 사람이 손대지 않아도 자동으로 다시 켜진다 — 2026-09-02 실제 재부팅으로 확인
+- [ ] 이후 [07_server_ops_checklist.md](07_server_ops_checklist.md)의 "처음 설정할 때" 항목을 모두 체크할 수 있다 — 6번(백엔드 연동)이 아직 열려 있어 전체 완료는 아님

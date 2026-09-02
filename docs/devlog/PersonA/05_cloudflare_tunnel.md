@@ -59,10 +59,16 @@ cloudflared.exe tunnel --url http://localhost:11434 --http-host-header localhost
 
 **교훈**: 이 프로젝트처럼 "서비스가 Running으로 보이면 끝"이라고 믿으면 안 된다 — 반드시 외부 HTTP 응답까지 확인해야 하고, 확인 도구 자체의 캐시(WebFetch 15분 캐시 등)도 의심해야 한다.
 
+## 마무리 (2026-09-02)
+
+- 실제 PC 재부팅 테스트 완료 — 레지스트리 ImagePath 수정 후에도 Ollama, cloudflared 서비스 모두 사람 개입 없이 자동 기동 확인
+- 휴대폰(데이터망)으로 `https://llm.annswieteom.com` 접속 확인 완료 — 서버 사이드 확인이 아닌 실제 외부 기기 확인
+
+**A-5(Cloudflare Tunnel) 체크리스트는 6번(백엔드 연동)을 제외하고 전부 완료.**
+
 ## 남은 작업
 
-- **실제 PC 재부팅 테스트** — 레지스트리 ImagePath까지 고쳐서 신뢰도는 높아졌지만, 실제 재부팅 후 자동 기동은 아직 검증 안 함. 데모 전 필수
-- 휴대폰 데이터망 등 실제 외부 기기로 한 번 더 접속 확인 (지금까지는 서버 사이드 요청으로만 확인)
 - `backend/.env` 자체가 아직 없음(B의 백엔드 스캐폴딩 대기) — 생성되면 `LOCAL_LLM_BASE_URL=https://llm.annswieteom.com` 반영
 - B에게 `https://llm.annswieteom.com` 주소 전달, Railway 배포 환경변수 반영 요청
 - (사소한 뒷정리) 첫 시도 때 `C:\Windows\System32\config\systemprofile\.cloudflared\`에 config/credentials를 복사해뒀는데 지금은 안 쓰인다 — 안전하지만 지워도 무방
+- 다음 작업은 [06_consistency_check.md](../../checklists/person_A_infra_ai/06_consistency_check.md) (A-6) 착수 — 임베딩 provider는 이미 있으므로 B 진행과 무관하게 바로 시작 가능
