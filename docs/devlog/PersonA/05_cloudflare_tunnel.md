@@ -39,9 +39,30 @@ cloudflared.exe tunnel --url http://localhost:11434 --http-host-header localhost
 5. `cloudflared tunnel run annswieteom-llm`으로 기동 → 외부에서 `https://llm.annswieteom.com` 요청 시 "Ollama is running" 정상 확인
 6. `cloudflared.exe service install`(관리자 권한)로 Windows 서비스 등록 → 수동 실행 프로세스는 종료하고 서비스 단독으로도 정상 응답하는 것 확인
 
+## Windows 서비스가 "Running"인데 실제로는 터널이 죽어있던 문제 (2026-09-02, 도메인 등록 후 재점검 중 발견)
+
+도메인 등록 후 다시 확인하던 중 `https://llm.annswieteom.com`에서 **530 / error code 1033**(Argo Tunnel 연결 없음)이 재현됐다. `Get-Service cloudflared`는 `Running`으로 나왔는데도 실패한 것이 핵심 단서.
+
+**진단 과정**:
+1. WebFetch 도구로 재확인했을 때는 "Ollama is running"이 나와 헷갈렸다 — 알고 보니 WebFetch는 동일 URL에 대해 15분 캐시를 쓰기 때문에, 서비스가 이미 맛이 간 뒤에도 예전 성공 응답을 재활용해서 보여준 것이었다. **`curl`로 직접 재요청해야 진짜 현재 상태를 알 수 있다.**
+2. `sc.exe qc cloudflared`로 서비스 설정을 보니 `BINARY_PATH_NAME`이 `"C:\Program Files (x86)\cloudflared\cloudflared.exe"` 하나뿐, 인자가 전혀 없었다.
+3. 같은 exe를 인자 없이 직접 실행해보니 `use 'cloudflared tunnel run' to start tunnel annswieteom-llm`라는 힌트만 찍고 즉시 종료됨을 확인. 즉 `cloudflared.exe service install`(토큰 없이)이 등록하는 서비스는 실제 터널을 켜는 명령이 아니었다.
+4. Windows 이벤트 로그(`Get-EventLog -LogName System`)에 "The Cloudflared agent service terminated unexpectedly... 4 time(s)"가 찍혀 있어 크래시 루프였음을 확인.
+
+**해결**: 서비스의 `ImagePath`를 레지스트리(`HKLM:\SYSTEM\CurrentControlSet\Services\cloudflared`)에서 직접 명시적인 명령으로 교체했다.
+```
+"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --config "C:\Users\sjyoo\.cloudflared\config.yml" --logfile "C:\Users\sjyoo\.cloudflared\service.log" run annswieteom-llm
+```
+`sc.exe config cloudflared binPath= ...`로 먼저 시도했으나 PowerShell이 네이티브 명령 인자로 문자열을 넘길 때 내부의 큰따옴표가 깨져서 반영이 안 됐다(BINARY_PATH_NAME이 그대로였음) — 레지스트리 `Set-ItemProperty`로 직접 쓰는 방법이 확실했다.
+
+수정 후 `service.log`에 4개의 tunnel connection이 정상 등록됐고, `curl https://llm.annswieteom.com` → `200 Ollama is running`으로 최종 확인.
+
+**교훈**: 이 프로젝트처럼 "서비스가 Running으로 보이면 끝"이라고 믿으면 안 된다 — 반드시 외부 HTTP 응답까지 확인해야 하고, 확인 도구 자체의 캐시(WebFetch 15분 캐시 등)도 의심해야 한다.
+
 ## 남은 작업
 
-- **실제 PC 재부팅 테스트** — 서비스 등록은 했지만 재부팅 후에도 자동으로 살아나는지는 아직 검증 안 함. 데모 전 필수
+- **실제 PC 재부팅 테스트** — 레지스트리 ImagePath까지 고쳐서 신뢰도는 높아졌지만, 실제 재부팅 후 자동 기동은 아직 검증 안 함. 데모 전 필수
 - 휴대폰 데이터망 등 실제 외부 기기로 한 번 더 접속 확인 (지금까지는 서버 사이드 요청으로만 확인)
 - `backend/.env` 자체가 아직 없음(B의 백엔드 스캐폴딩 대기) — 생성되면 `LOCAL_LLM_BASE_URL=https://llm.annswieteom.com` 반영
 - B에게 `https://llm.annswieteom.com` 주소 전달, Railway 배포 환경변수 반영 요청
+- (사소한 뒷정리) 첫 시도 때 `C:\Windows\System32\config\systemprofile\.cloudflared\`에 config/credentials를 복사해뒀는데 지금은 안 쓰인다 — 안전하지만 지워도 무방

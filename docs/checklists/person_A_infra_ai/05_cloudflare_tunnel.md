@@ -45,7 +45,15 @@
 
 ## 5. 자동 실행 등록 (재부팅 대비)
 
-- [x] 관리자 권한으로 `cloudflared.exe service install` 실행 → Windows 서비스 `cloudflared` 등록됨(`StartType: Automatic`, 현재 `Running`)
+- [x] 관리자 권한으로 `cloudflared.exe service install` 실행 → Windows 서비스 `cloudflared` 등록됨
+- [x] **중요한 함정**: `service install`(인자 없이)이 등록하는 서비스의 실행 명령은 그냥 `cloudflared.exe`뿐이다. 이 상태로 서비스를 시작하면 실제로는 터널을 켜지 않고 `use 'cloudflared tunnel run' to start tunnel ...` 힌트만 출력하고 즉시 종료된다 — Windows 서비스 관리자는 이를 "비정상 종료"로 판단해 재시작을 반복하다 결국 `Stopped`로 멈춘다. **서비스 상태가 `Running`으로 보여도 실제 터널 연결이 없을 수 있으니 반드시 외부 접속으로 확인해야 한다** (겉보기 `Running` 상태만 믿지 말 것 — 2026-09-02에 실제로 이 상태에서 외부 접속 시 오류 1033 재현됨).
+  해결: 레지스트리에서 서비스 실행 명령을 명시적으로 지정
+  ```powershell
+  Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\cloudflared' -Name ImagePath `
+    -Value '"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --config "C:\Users\<사용자명>\.cloudflared\config.yml" --logfile "C:\Users\<사용자명>\.cloudflared\service.log" run annswieteom-llm'
+  Restart-Service cloudflared
+  ```
+  (`sc.exe config cloudflared binPath= ...`로 시도하면 PowerShell의 네이티브 인자 따옴표 처리 때문에 값이 깨질 수 있다 — 레지스트리를 직접 쓰는 쪽이 더 안전했다.) 수정 후 `service.log`에 4개의 tunnel connection이 등록되는 것과 외부에서 실제 200 응답이 오는 것까지 확인 완료.
 - [ ] PC를 실제로 재부팅해서 터널이 자동으로 다시 켜지는지 확인 — **아직 미실시**, 데모 전 반드시 1회 필요
 
 ## 6. 백엔드 연동
@@ -60,6 +68,6 @@
 
 ## 검증 기준
 
-- [ ] 다른 기기에서 터널 고정 주소로 접속했을 때 Ollama 응답이 온다
-- [ ] PC를 재부팅해도 Ollama, cloudflared 둘 다 사람이 손대지 않아도 자동으로 다시 켜진다
+- [x] 다른 기기에서 터널 고정 주소로 접속했을 때 Ollama 응답이 온다 — 2026-09-02, fresh curl로 `https://llm.annswieteom.com` → 200 "Ollama is running" 확인(휴대폰 데이터망 재확인은 아직 권장 사항으로 남음)
+- [ ] PC를 재부팅해도 Ollama, cloudflared 둘 다 사람이 손대지 않아도 자동으로 다시 켜진다 — **실제 재부팅 테스트 아직 안 함**
 - [ ] 이후 [07_server_ops_checklist.md](07_server_ops_checklist.md)의 "처음 설정할 때" 항목을 모두 체크할 수 있다
