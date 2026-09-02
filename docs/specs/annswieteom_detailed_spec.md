@@ -1,7 +1,7 @@
 # "안 쉬었음" — Claude Code 구현 명세서 (최종본)
 
 작성일: 2026-08-30
-기반 문서: `annswieoteum_implementation_plan.md` (최종본)
+기반 문서: `annswieteom_implementation_plan.md` (최종본)
 대상 독자: 이 문서를 읽고 실제 코드를 작성할 **Claude Code(AI 코딩 에이전트)**, 그리고 이를 함께 사용할 **컴퓨터공학과 학부생 2인(초심자, 이 중 한 명은 서버를 직접 운영해본 경험이 전혀 없음)**
 목적: 원티드 AI Championship 2026 제출용 서비스를 3주 안에 실제로 완성하기 위한, 코드 작성에 바로 들어갈 수 있는 수준의 구현 명세서 겸 개발 계획서.
 
@@ -135,7 +135,7 @@ v1 계획서 대비 **채용공고 파싱 모듈이 완전히 제거**됐다. �
 ## 5. 리포지토리 구조 (모노레포)
 
 ```
-annswieoteum/
+annswieteom/
 ├── frontend/                      # Next.js (TypeScript)
 │   ├── app/
 │   ├── components/
@@ -629,10 +629,10 @@ Gemini의 비전 기능으로 이미지 텍스트를 추출한다(별도 OCR API
 > **먼저 개념부터**: "터널"은 A의 PC 안에서만 열려 있는 `http://localhost:11434`(Ollama)를, 인터넷 어디서나 접속 가능한 `https://무언가.trycloudflare.com` 같은 진짜 주소로 바꿔주는 통로다. 이 주소를 클라우드에 있는 우리 백엔드가 호출하는 것이다. 2-1절에서 설명했듯 이 통로로는 Ollama의 응답만 오갈 뿐, PC의 다른 부분에는 전혀 접근할 수 없다.
 
 1. `cloudflared.exe`를 다운로드한 폴더에서 PowerShell을 열고 로그인: `cloudflared.exe tunnel login` (브라우저가 열리며 Cloudflare 계정 인증 화면이 뜬다. 계정이 없으면 무료로 하나 만들면 된다.)
-2. 터널 생성: `cloudflared.exe tunnel create annswieoteum-llm` (성공하면 터널 ID와 `.json` 인증 파일 경로가 화면에 출력된다 — 이 경로를 기록해둔다.)
+2. 터널 생성: `cloudflared.exe tunnel create annswieteom-llm` (성공하면 터널 ID와 `.json` 인증 파일 경로가 화면에 출력된다 — 이 경로를 기록해둔다.)
 3. 홈 디렉터리의 `.cloudflared` 폴더에 생성된 설정 파일에 아래 내용을 작성(`config.yml`, 파일이 없으면 메모장으로 새로 만들어도 된다):
    ```yaml
-   tunnel: annswieoteum-llm
+   tunnel: annswieteom-llm
    credentials-file: C:\Users\<사용자명>\.cloudflared\<터널ID>.json
    ingress:
      - hostname: <원하는 서브도메인>.<보유 도메인 또는 Cloudflare 제공 도메인>
@@ -640,7 +640,7 @@ Gemini의 비전 기능으로 이미지 텍스트를 추출한다(별도 OCR API
      - service: http_status:404
    ```
    (도메인이 따로 없다면 Cloudflare 계정에 무료 도메인을 하나 연결하거나, Cloudflare 무료 Zero Trust 대시보드에서 안내하는 방식을 그대로 따라가면 된다. Claude Code는 이 단계에서 A가 도메인을 갖고 있는지 먼저 확인하고, 없다면 임시 방편으로 `cloudflared tunnel --url http://localhost:11434` 형태의 **Quick Tunnel**(로그인·도메인 등록 없이 즉석에서 임시 주소를 발급해주는 방식)로 먼저 개발을 진행하도록 안내해도 된다 — 다만 Quick Tunnel 주소는 실행할 때마다 바뀌므로 데모 당일에는 위 방식대로 고정 주소를 쓰는 것이 안전하다.)
-4. 실행: `cloudflared.exe tunnel run annswieoteum-llm`
+4. 실행: `cloudflared.exe tunnel run annswieteom-llm`
 5. **확인**: 다른 기기(예: 휴대폰 데이터로 연결한 스마트폰 브라우저)에서 3번에서 설정한 `https://<주소>`로 접속해봤을 때 Ollama 응답이 온다면 성공이다. PC 안에서 `http://localhost:11434`만 확인하는 것과는 다르게, 이 단계에서는 반드시 **PC 밖에서** 접속해봐야 진짜로 인터넷에 노출됐는지 확인할 수 있다.
 6. PC가 재부팅돼도 자동 실행되도록 Windows 서비스로 등록: `cloudflared.exe service install` (관리자 권한 PowerShell에서 실행 — PowerShell 아이콘을 우클릭해 "관리자 권한으로 실행"을 선택하면 된다)
 7. 발급된 주소를 백엔드 `.env`의 `LOCAL_LLM_BASE_URL`에 넣는다.
@@ -732,7 +732,7 @@ React Query로 서버 상태를 관리한다. 예: `['session', sessionId]`, `['
 - **Supabase 연결 실패**: `DATABASE_URL`에 비밀번호의 특수문자가 URL 인코딩되지 않은 경우가 흔하다(예: `@`는 `%40`으로).
 - **CORS 에러(프론트에서 백엔드 호출 실패)**: FastAPI에서 `CORSMiddleware`에 프론트엔드 주소(`http://localhost:3000` 등)를 허용 목록에 추가했는지 확인한다.
 - **Cloudflare Tunnel 주소가 백엔드에서 안 열림**: 4090 PC의 Ollama가 `0.0.0.0`이 아니라 `127.0.0.1`에만 바인딩돼 있으면 터널을 통해서도 접근이 안 될 수 있다 — Ollama 기본 설정으로는 보통 문제없지만, 안 되면 `OLLAMA_HOST=0.0.0.0` 환경변수를 설정하고 재시작해본다.
-- **(서버 처음 운영하는 분을 위한 항목) PC를 재부팅했더니 서버가 죽은 것 같다**: 당황하지 않아도 된다. `http://localhost:11434`가 안 열리면 Ollama가 꺼진 것이니 Ollama 앱을 다시 켜면 되고, 외부에서 접속이 안 되면 터널이 꺼진 것이니 PowerShell에서 `cloudflared.exe tunnel run annswieoteum-llm`을 다시 실행하면 된다. 13-3절 6번처럼 서비스로 등록해두면 이 문제 자체가 거의 발생하지 않는다.
+- **(서버 처음 운영하는 분을 위한 항목) PC를 재부팅했더니 서버가 죽은 것 같다**: 당황하지 않아도 된다. `http://localhost:11434`가 안 열리면 Ollama가 꺼진 것이니 Ollama 앱을 다시 켜면 되고, 외부에서 접속이 안 되면 터널이 꺼진 것이니 PowerShell에서 `cloudflared.exe tunnel run annswieteom-llm`을 다시 실행하면 된다. 13-3절 6번처럼 서비스로 등록해두면 이 문제 자체가 거의 발생하지 않는다.
 - **(서버 처음 운영하는 분을 위한 항목) Windows 방화벽이 "액세스를 허용하시겠습니까?" 경고를 띄운다**: Ollama나 cloudflared를 처음 실행할 때 Windows 방화벽이 뜨는 것은 정상이다. "액세스 허용"을 눌러주면 된다 — 이는 해당 프로그램이 네트워크를 쓰겠다는 표준적인 확인 절차이지, 문제가 생겼다는 신호가 아니다.
 - **(서버 처음 운영하는 분을 위한 항목) 노트북 화면을 덮었더니(절전모드) 서버가 멈췄다**: 데스크톱이 아니라 노트북으로 4090을 운용하는 경우, Windows 설정 → 시스템 → 전원에서 "덮개를 닫았을 때 절전 모드로 전환"을 "아무 것도 안 함"으로 바꿔야 한다. 데모·투표 기간에는 이 설정을 반드시 미리 확인해둔다(19절 체크리스트 참고).
 - **자꾸 뭔가 막힐 때의 기본 원칙**: 이 프로젝트에서 로컬 서버 관련 문제는 최악의 경우에도 서비스 전체를 멈추게 하지 않는다(10절 `FallbackProvider`가 자동으로 Gemini로 넘어간다). 그러니 A는 서버 쪽에서 막히더라도 서비스 전체가 죽었다고 걱정하지 말고, 시간을 넉넉히 두고 하나씩 확인하면 된다.

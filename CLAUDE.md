@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Critical design principle — Honesty Guardrail ("정직성 가드레일")**: Generated documents may only cite facts the user explicitly confirmed. This is enforced at the data model level via the `confirmed_facts` table. Every generated sentence must reference at least one row in `confirmed_facts` via `evidence_fact_ids`. Never bypass this constraint in code or prompts.
 
-Full implementation spec: [docs/specs/annswieoteum_detailed_spec.md](docs/specs/annswieoteum_detailed_spec.md)  
+Full implementation spec: [docs/specs/annswieteom_detailed_spec.md](docs/specs/annswieteom_detailed_spec.md)  
 Milestone roadmap: [docs/checklists/milestones_overview.md](docs/checklists/milestones_overview.md)
 
 ## Architecture

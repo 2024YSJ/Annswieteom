@@ -28,7 +28,7 @@
 
 - [ ] 아래 골격 생성:
   ```
-  annswieoteum/
+  annswieteom/
   ├── frontend/            (Next.js + TypeScript)
   ├── backend/             (FastAPI)
   │   └── app/
