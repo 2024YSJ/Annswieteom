@@ -15,12 +15,15 @@ from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.gap_period import GapPeriod
 from app.models.generated_document import GeneratedDocument
+from app.models.generated_sentence import GeneratedSentence
 from app.models.record import Record
 from app.models.record_chunk import RecordChunk
 from app.models.refresh_token import RefreshToken
 from app.models.session import Session as SessionModel
 from app.models.user import User
-from app.services.llm.base import Suggestion, BasedOn
+from app.services.embedding import get_embedding_provider
+from app.services.llm.base import BasedOn, DraftDocument, SentenceWithEvidence, Suggestion
+from app.services.record_pipeline.citation import get_fact_citation
 from app.services.record_pipeline.search import get_chunk_search
 from app.services.storage import get_storage
 
@@ -67,9 +70,15 @@ class FakeLLMProvider:
     suggestion unless a queue of canned suggestions is provided.
     """
 
-    def __init__(self, suggestions: list[Suggestion] | None = None):
+    def __init__(
+        self,
+        suggestions: list[Suggestion] | None = None,
+        documents: list[DraftDocument] | None = None,
+    ):
         self._queue = list(suggestions) if suggestions else None
+        self._document_queue = list(documents) if documents else None
         self.calls: list[tuple[str, str]] = []
+        self.document_calls: list[tuple[list[str], str]] = []
 
     async def draft_suggestion(self, context, step):
         self.calls.append((context.category_label, step))
@@ -78,7 +87,35 @@ class FakeLLMProvider:
         return Suggestion(draft_text=f"dummy {step} draft", based_on=BasedOn(type="generic_pattern"))
 
     async def generate_document(self, facts, tone):
-        raise NotImplementedError
+        self.document_calls.append(([f.id for f in facts], tone))
+        if self._document_queue:
+            return self._document_queue.pop(0)
+        # Default: one sentence per fact, citing that fact only.
+        return DraftDocument(sentences=[
+            SentenceWithEvidence(text=f"[{tone}] {f.content}", fact_indices=[i])
+            for i, f in enumerate(facts)
+        ])
+
+    async def health_check(self) -> bool:
+        return True
+
+
+class FakeEmbeddingProvider:
+    """Deterministic stand-in for FallbackEmbedding used by consistency_check —
+    every text maps to the same default vector unless overridden, so cosine
+    similarity is 1.0 (passes) by default. Tests that need a
+    consistency_check_passed=False case register a distinct vector for that
+    one sentence.
+    """
+
+    model_name = "fake"
+
+    def __init__(self, vectors: dict[str, list[float]] | None = None, default: list[float] | None = None):
+        self._vectors = vectors or {}
+        self._default = default or [1.0, 0.0]
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [self._vectors.get(t, self._default) for t in texts]
 
     async def health_check(self) -> bool:
         return True
@@ -230,6 +267,66 @@ def records_client():
             test_client.fake_storage = fake_storage
             test_client.process_record_calls = process_record_calls
             test_client.process_image_record_calls = process_image_record_calls
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+        asyncio.run(engine.dispose())
+
+
+@pytest.fixture
+def document_client():
+    """Like `session_client`, but with generated_documents/generated_sentences
+    tables and fake LLM + embedding providers so document generation (B-4) can
+    be driven end to end (generate -> regenerate -> patch -> finalize ->
+    export) without real Ollama/Gemini/pgvector.
+    """
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    tables = [
+        User.__table__,
+        RefreshToken.__table__,
+        SessionModel.__table__,
+        GapPeriod.__table__,
+        ActivityCategory.__table__,
+        ConfirmedFact.__table__,
+        GeneratedDocument.__table__,
+        GeneratedSentence.__table__,
+    ]
+
+    async def _create_tables():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all, tables=tables)
+
+    asyncio.run(_create_tables())
+
+    test_session_local = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def override_get_db():
+        async with test_session_local() as session:
+            yield session
+
+    fake_llm = FakeLLMProvider()
+    fake_embedding = FakeEmbeddingProvider()
+
+    async def override_chunk_search(session_id, label):
+        return []
+
+    async def override_fact_citation(fact_id):
+        return None
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+    app.dependency_overrides[get_embedding_provider] = lambda: fake_embedding
+    app.dependency_overrides[get_chunk_search] = lambda: override_chunk_search
+    app.dependency_overrides[get_fact_citation] = lambda: override_fact_citation
+    try:
+        with TestClient(app) as test_client:
+            test_client.fake_llm = fake_llm
+            test_client.fake_embedding = fake_embedding
             yield test_client
     finally:
         app.dependency_overrides.clear()

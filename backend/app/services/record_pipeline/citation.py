@@ -42,3 +42,15 @@ async def resolve_fact_citation(fact_id: uuid.UUID) -> Citation | None:
             source_url=source_url,
             published_at=published_at.isoformat() if published_at else None,
         )
+
+
+def get_fact_citation():
+    """FastAPI DI hook wrapping resolve_fact_citation.
+
+    resolve_fact_citation opens its own DB session directly (not through
+    get_db), so overriding the get_db dependency alone can't swap it out in
+    tests — routes should depend on this instead of importing the function
+    directly, so `app.dependency_overrides[get_fact_citation] = ...` works
+    (same pattern as app/services/record_pipeline/search.py::get_chunk_search).
+    """
+    return resolve_fact_citation
