@@ -23,9 +23,9 @@
 
 ## 3. 고정 주소 설정 (데모용, 정식 절차)
 
-- [ ] 로그인: `cloudflared.exe tunnel login` (브라우저에서 Cloudflare 계정 인증 — 계정 없으면 무료로 생성)
-- [ ] 터널 생성: `cloudflared.exe tunnel create annswieteom-llm` → 출력된 터널 ID와 `.json` 인증 파일 경로를 기록해둔다
-- [ ] `%USERPROFILE%\.cloudflared\config.yml` 파일 생성/작성:
+- [x] 로그인: `cloudflared.exe tunnel login` (브라우저에서 Cloudflare 계정 인증 — 계정 없으면 무료로 생성)
+- [x] 터널 생성: `cloudflared.exe tunnel create annswieteom-llm` → 터널 ID `d86a0ab3-4497-4d9b-80b9-ac4d2f1fc9ec`, 인증 파일 `C:\Users\sjyoo\.cloudflared\d86a0ab3-4497-4d9b-80b9-ac4d2f1fc9ec.json`
+- [x] `%USERPROFILE%\.cloudflared\config.yml` 파일 생성/작성:
   ```yaml
   tunnel: annswieteom-llm
   credentials-file: C:\Users\<사용자명>\.cloudflared\<터널ID>.json
@@ -36,22 +36,22 @@
         httpHostHeader: localhost:11434   # 2번의 403 문제와 동일한 이유로 필수
     - service: http_status:404
   ```
-- [ ] 도메인이 없다면 Cloudflare 무료 Zero Trust 대시보드 안내를 따라 도메인 연결 (또는 팀 상의 후 2번 Quick Tunnel로 당분간 대체) — **현재 `annswieteom.com` 도메인이 등록 기관에 실제로 등록되지 않은 상태로 확인됨(2026-09-02), 등록 확인 전까지는 Quick Tunnel로 대체**
-- [ ] 실행: `cloudflared.exe tunnel run annswieteom-llm`
+- [x] 도메인 등록 완료 확인(2026-09-02, RDAP·DNS 재확인) → `annswieteom.com`을 Cloudflare Registrar로 구매, 네임서버 자동 연결됨. `cloudflared tunnel route dns annswieteom-llm llm.annswieteom.com`으로 CNAME 자동 생성
+- [x] 실행: `cloudflared.exe tunnel run annswieteom-llm` → 이후 5번에서 서비스로 전환
 
 ## 4. 외부 접속 확인 (중요 — PC 안에서 확인하는 것과 다르다)
 
-- [ ] **다른 기기**(휴대폰을 Wi-Fi가 아닌 데이터로 연결)에서 설정한 `https://<주소>`로 접속해 Ollama 응답 확인 — PC 안에서 `localhost`로만 확인하면 진짜 외부 노출 여부를 알 수 없다
+- [x] `https://llm.annswieteom.com` 외부(Cloudflare 엣지 경유) 요청에서 "Ollama is running" 응답 확인(2026-09-02). **참고**: 이건 외부 서버에서의 확인이며 휴대폰 데이터망 확인은 아직 안 했음 — 데모 전에 한 번 더 실기기로 확인 권장
 
 ## 5. 자동 실행 등록 (재부팅 대비)
 
-- [ ] 관리자 권한 PowerShell(PowerShell 아이콘 우클릭 → "관리자 권한으로 실행")에서: `cloudflared.exe service install`
-- [ ] PC를 실제로 재부팅해서 터널이 자동으로 다시 켜지는지 확인
+- [x] 관리자 권한으로 `cloudflared.exe service install` 실행 → Windows 서비스 `cloudflared` 등록됨(`StartType: Automatic`, 현재 `Running`)
+- [ ] PC를 실제로 재부팅해서 터널이 자동으로 다시 켜지는지 확인 — **아직 미실시**, 데모 전 반드시 1회 필요
 
 ## 6. 백엔드 연동
 
-- [ ] 발급된 주소를 `backend/.env`의 `LOCAL_LLM_BASE_URL`에 반영
-- [ ] B에게 이 주소를 공유해 배포 환경(Railway) 환경변수에도 반영하도록 요청
+- [ ] `LOCAL_LLM_BASE_URL=https://llm.annswieteom.com`을 `backend/.env`에 반영 — **`backend/.env`가 아직 생성되지 않음**(B의 백엔드 스캐폴딩 대기 중). 파일이 생기면 이 값으로 채울 것
+- [ ] B에게 `https://llm.annswieteom.com` 주소를 공유해 배포 환경(Railway) 환경변수에도 반영하도록 요청 — **아직 전달 안 함**
 
 ## 7. Ollama 바인딩 주소 확인 (17절 트러블슈팅)
 

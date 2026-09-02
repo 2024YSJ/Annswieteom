@@ -27,10 +27,21 @@ cloudflared.exe tunnel --url http://localhost:11434 --http-host-header localhost
 
 적용 후 외부에서 정상적으로 "Ollama is running" 응답 확인됨. 고정 주소(named tunnel) 설정 시에도 `config.yml`의 `ingress[].originRequest.httpHostHeader`에 동일하게 반영해야 하므로 `infra/cloudflare/config.yml.example`에 미리 추가해뒀다. 이 이슈는 체크리스트 7번(트러블슈팅) 항목에 있던 "`OLLAMA_HOST=0.0.0.0` 재시작"만으로는 해결되지 않는 별개의 원인이라 체크리스트에 별도 항목으로 추가했다.
 
+## 도메인 등록 완료 후 고정 터널 구성 (2026-09-02, 같은 날 이어서 진행)
+
+`annswieteom.com`을 Cloudflare Registrar로 구매 완료. RDAP·DNS로 재확인한 결과 등록일 2026-09-02, 네임서버가 이미 `art.ns.cloudflare.com`/`athena.ns.cloudflare.com`로 연결되어 있어 별도 위임 작업 없이 바로 진행 가능했다(Registrar 자체가 Cloudflare라서).
+
+진행 순서:
+1. `cloudflared tunnel login` — 브라우저 OAuth, `cert.pem` 발급
+2. `cloudflared tunnel create annswieteom-llm` — 터널 ID `d86a0ab3-4497-4d9b-80b9-ac4d2f1fc9ec`
+3. `%USERPROFILE%\.cloudflared\config.yml` 작성 (`llm.annswieteom.com` → `http://localhost:11434`, `originRequest.httpHostHeader: localhost:11434` 포함)
+4. `cloudflared tunnel route dns annswieteom-llm llm.annswieteom.com` — CNAME 자동 생성 (수동으로 Cloudflare 대시보드에서 DNS 레코드를 만들 필요 없음)
+5. `cloudflared tunnel run annswieteom-llm`으로 기동 → 외부에서 `https://llm.annswieteom.com` 요청 시 "Ollama is running" 정상 확인
+6. `cloudflared.exe service install`(관리자 권한)로 Windows 서비스 등록 → 수동 실행 프로세스는 종료하고 서비스 단독으로도 정상 응답하는 것 확인
+
 ## 남은 작업
 
-- 도메인 등록 기관 확인 후 실제 소유 도메인 확정 → Cloudflare 네임서버(`art.ns.cloudflare.com`, `athena.ns.cloudflare.com`)로 위임
-- `cloudflared tunnel login` → `tunnel create annswieteom-llm` → 고정 `config.yml` 작성 (3번)
-- 외부 기기(휴대폰 데이터망)로 고정 주소 접속 확인 (4번)
-- `cloudflared.exe service install`로 재부팅 자동 실행 등록 + 실제 재부팅 테스트 (5번)
-- 발급 주소를 `backend/.env`의 `LOCAL_LLM_BASE_URL`에 반영, B에게 공유해 Railway 환경변수에도 반영 요청 (6번)
+- **실제 PC 재부팅 테스트** — 서비스 등록은 했지만 재부팅 후에도 자동으로 살아나는지는 아직 검증 안 함. 데모 전 필수
+- 휴대폰 데이터망 등 실제 외부 기기로 한 번 더 접속 확인 (지금까지는 서버 사이드 요청으로만 확인)
+- `backend/.env` 자체가 아직 없음(B의 백엔드 스캐폴딩 대기) — 생성되면 `LOCAL_LLM_BASE_URL=https://llm.annswieteom.com` 반영
+- B에게 `https://llm.annswieteom.com` 주소 전달, Railway 배포 환경변수 반영 요청
