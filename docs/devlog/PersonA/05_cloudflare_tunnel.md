@@ -64,11 +64,20 @@ cloudflared.exe tunnel --url http://localhost:11434 --http-host-header localhost
 - 실제 PC 재부팅 테스트 완료 — 레지스트리 ImagePath 수정 후에도 Ollama, cloudflared 서비스 모두 사람 개입 없이 자동 기동 확인
 - 휴대폰(데이터망)으로 `https://llm.annswieteom.com` 접속 확인 완료 — 서버 사이드 확인이 아닌 실제 외부 기기 확인
 
-**A-5(Cloudflare Tunnel) 체크리스트는 6번(백엔드 연동)을 제외하고 전부 완료.**
+~~**A-5(Cloudflare Tunnel) 체크리스트는 6번(백엔드 연동)을 제외하고 전부 완료.**~~ → **정정됨, 아래 참고.**
+
+## 정정: 위 작업은 전부 실제 서버 PC가 아니라 개발용 PC에서 한 것이었다
+
+지금까지의 모든 작업(cloudflared 설치, 터널 생성, config.yml, DNS 라우팅, 서비스 등록·수정, 재부팅·휴대폰 검증)은 **RTX 4090 서버 PC가 아니라 별도의 개발용 PC/노트북**에서 이뤄졌다는 걸 뒤늦게 확인했다. 그 개발용 PC의 Ollama에는 애초에 `qwen2.5:14b`나 `bge-m3`가 없고 `phi3.5`, `llama3.2:3b`, `qwen2.5:3b-instruct` 같은 가벼운 모델만 있었는데, 이게 신호였다 — 진작 이상하다고 여겼어야 했다.
+
+즉 지금 살아있는 `https://llm.annswieteom.com`은 실제 서버가 아니라 개발용 PC의 (프로젝트 사양과 다른) Ollama를 가리키고 있다. 다행히 이 작업 자체가 무의미한 건 아니다: 겪었던 두 버그(403 Host 헤더 문제, 서비스가 겉보기엔 Running인데 실제로는 죽어있던 문제)와 그 해결법은 실제 서버 PC에서도 100% 동일하게 재현될 문제라서, 그대로 재사용하면 이번처럼 헤매지 않고 바로 적용할 수 있다. 체크리스트에 8번 섹션("실제 서버 PC에서 재진행")으로 처음부터 두 문제를 피해가는 순서를 정리해뒀다.
+
+**중요**: 6번(백엔드 연동)에서 B에게 URL을 넘기는 건, 8번(실제 서버 PC 작업)이 끝난 뒤에 해야 한다 — 지금 넘기면 B가 개발용 PC를 가리키는 URL을 받게 된다.
 
 ## 남은 작업
 
-- `backend/.env` 자체가 아직 없음(B의 백엔드 스캐폴딩 대기) — 생성되면 `LOCAL_LLM_BASE_URL=https://llm.annswieteom.com` 반영
-- B에게 `https://llm.annswieteom.com` 주소 전달, Railway 배포 환경변수 반영 요청
+- **실제 서버 PC(RTX 4090)에서 터널을 처음부터 다시 구성** — 체크리스트 8번 순서대로. 터널 이름은 `annswieteom-llm-main`으로 개발용과 구분하고, `llm.annswieteom.com` DNS는 `--overwrite-dns`로 이 새 터널로 다시 연결해야 함
+- `backend/.env` 자체가 아직 없음(B의 백엔드 스캐폴딩 대기) — 생성되면 `LOCAL_LLM_BASE_URL=https://llm.annswieteom.com` 반영 (실제 서버 PC 작업 완료 후)
+- B에게 `https://llm.annswieteom.com` 주소 전달, Railway 배포 환경변수 반영 요청 (실제 서버 PC 작업 완료 후)
 - (사소한 뒷정리) 첫 시도 때 `C:\Windows\System32\config\systemprofile\.cloudflared\`에 config/credentials를 복사해뒀는데 지금은 안 쓰인다 — 안전하지만 지워도 무방
-- 다음 작업은 [06_consistency_check.md](../../checklists/person_A_infra_ai/06_consistency_check.md) (A-6) 착수 — 임베딩 provider는 이미 있으므로 B 진행과 무관하게 바로 시작 가능
+- A-6 consistency check는 임베딩 provider만 있으면 되므로 이 정정과 무관하게 이미 별도로 진행함
