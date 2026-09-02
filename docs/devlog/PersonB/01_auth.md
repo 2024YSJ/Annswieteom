@@ -35,6 +35,8 @@
 | `hash_password()` 호출 시 `ValueError: password cannot be longer than 72 bytes` + `AttributeError: module 'bcrypt' has no attribute '__about__'` | `passlib==1.7.4`가 `bcrypt` 백엔드 초기화 시 `bcrypt.__about__.__version__`을 읽는데, `bcrypt>=4.1`부터 이 속성이 제거됨. `pip install`이 최신 bcrypt(5.0.0)를 끌고 오면서 발생 | `requirements.txt`에 `bcrypt==4.0.1` 명시적으로 고정 |
 | `/auth/refresh`에서 `TypeError: can't compare offset-naive and offset-aware datetimes` | 테스트에 쓴 SQLite가 `DateTime(timezone=True)` 컬럼이어도 tzinfo를 보존하지 않고 naive datetime으로 돌려줌(Postgres/asyncpg라면 안 생길 문제지만, 어느 DB에서 실행되든 깨지지 않도록 방어하는 게 안전하다고 판단) | `security.py`에 `ensure_utc()` 헬퍼 추가, DB에서 읽은 `expires_at`을 비교 전에 정규화 |
 | `pytest`가 `ModuleNotFoundError: fastapi` 등 계속 발생 | 이 PC의 Python 3.14가 매우 최신이라 `requirements.txt`의 옛 버전 핀(예: `pydantic==2.9.2`)이 프리빌드 wheel을 못 찾아 소스 빌드하다 실패(Rust 툴체인 필요 등) — [[project-a6-consistency-check]]에서 겪은 것과 동일한 문제 | `backend/venv`에 핀 무시하고 최신 호환 버전으로 설치해서 로직만 검증. 정확한 버전 재조정은 팀에서 별도 논의 필요 |
+| Playwright로 회원가입 버튼을 눌러도 반응 없음, URL이 `/register?`로 바뀜(빈 쿼리스트링 붙은 GET) | 프론트를 `http://127.0.0.1:PORT`로 접속함. Next.js 개발 서버는 기본적으로 `localhost` 오리진만 허용하고 그 외(`127.0.0.1` 포함)에서 온 정적 자산 요청은 `403`으로 막는다(`allowedDevOrigins` 설정으로 풀 수 있음) — JS 번들이 로드는 됐지만 실행이 막혀 리액트가 이벤트 핸들러를 못 붙였고, 그래서 폼이 브라우저 기본 GET 제출로 처리됨 | `127.0.0.1` 대신 반드시 `localhost`로 접속 |
+| Host를 `localhost`로 고쳤는데도 여전히 로그인/회원가입이 아무 반응 없음(이번엔 URL에 `?`도 안 붙음) | 프론트를 포트 3123으로 띄웠는데, 백엔드 `app/main.py`의 `CORSMiddleware`가 `allow_origins=["http://localhost:3000"]`으로 고정돼 있어서 다른 포트에서 온 요청이 CORS에 막힘(브라우저 콘솔에만 조용히 에러가 남고 화면엔 아무 표시도 안 됨 — 내 코드의 `catch` 블록이 에러 문구를 보여주지만 `fetch` 자체가 CORS 프리플라이트에서 막히면 그 이전 단계라 원인 파악이 더 어려웠음) | E2E 테스트 시 프론트를 반드시 기본 포트 3000으로 띄움. 체크리스트에 이 함정을 명시해서 다음에 안 헤매게 해둠 |
 | `frontend/AGENTS.md`가 "이 Next.js는 학습 데이터와 다르다"고 경고 | Next.js 16.3.3은 `PageProps<'/route'>`/`LayoutProps<'/route'>` 같은 새 타입 헬퍼를 자동 생성함(기존 `layout.tsx`가 이미 `LayoutProps<"/">`를 쓰고 있었음) | 코드 작성 전에 `node_modules/next/dist/docs/`를 실제로 읽고 확인. 새 회원가입/로그인 페이지는 라우트 파라미터가 없어 이 타입 헬퍼가 필요 없어서 기존 관례(`app/page.tsx`)와 동일하게 무타입 컴포넌트로 작성 |
 
 ## 테스트 전략
@@ -44,11 +46,10 @@ DB가 필요한 라우트를 실제 Supabase 없이 검증하기 위해 두 단�
 1. **자동 테스트 (pytest, 25개)**: `backend/tests/api/conftest.py`가 매 테스트마다 새 in-memory SQLite(StaticPool로 커넥션 하나 유지)를 만들고 `get_db` 의존성을 그걸로 오버라이드한다. `pgvector.Vector` 타입을 쓰는 다른 테이블들은 SQLite가 컴파일 못하므로, `Base.metadata.create_all(tables=[User.__table__, RefreshToken.__table__])`처럼 필요한 테이블만 명시해서 생성했다.
 2. **실제 서버 라이브 검증**: pytest의 `TestClient`가 아니라 진짜 `uvicorn`으로 서버를 띄우고 `curl`로 회원가입→로그인→중복가입(409)→틀린 비밀번호(401)→`/me`→`/refresh`→`/logout`→로그아웃 후 refresh 재시도(401) 전체 흐름을 확인했다(체크리스트 "검증 기준" 항목 전부 여기서 통과 확인). 이건 `backend/smoke_test.db`라는 임시 SQLite 파일을 썼고, 확인 후 삭제해서 저장소에는 안 남았다.
 
-프론트는 `next build`/`next lint` 통과, `next dev`로 두 페이지가 실제로 폼을 렌더링하는 것까지 확인했다. 다만 브라우저에서 실제로 버튼을 눌러 백엔드까지 왕복시키는 클릭 테스트는 이 세션에 브라우저 자동화 도구가 없어 수행하지 못했다 — 사람이 한 번 `npm run dev` + 백엔드 로컬 실행해서 눈으로 확인하는 걸 권장.
+3. **실제 브라우저 E2E (Playwright, 2026-09-02 추가)**: 별도의 브라우저 자동화 "도구" 없이도 Playwright는 그냥 npm 패키지라서 설치해서 직접 돌릴 수 있었다. `npm install -D @playwright/test` + `npx playwright install chromium`으로 헤드리스 Chromium을 받고, `frontend/e2e/auth.spec.ts`에 회원가입→로그인→(로그인 응답의 실제 `access_token` 확인)→홈 이동, 그리고 중복 이메일/오답 비밀번호 시 에러 문구 노출까지 실제 클릭으로 검증하는 테스트 3개를 작성했다. 처음 두 번은 실패했는데, 둘 다 진짜 원인이 있었다(아래 트러블슈팅 참고). 원인을 고치고 나니 3개 다 통과.
 
 ## 남은 작업
 
 - Supabase `DATABASE_URL`이 팀 채널로 공유되면 `backend/.env` 생성 → `alembic upgrade head` → 실제 DB로 위 시나리오 재확인
-- 사람이 브라우저에서 직접 회원가입→로그인 클릭 테스트
 - 02(인터뷰 상태머신) 작업 시 `get_owned_session`을 실제 라우트에 연결
 - Railway 배포 시 `ENVIRONMENT=production` 환경변수 추가 잊지 않기

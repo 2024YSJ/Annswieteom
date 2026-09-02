@@ -65,4 +65,29 @@
 - [x] 이미 가입된 이메일로 재가입 시도 시 `409`가 반환된다 — 라이브 검증 완료
 - [x] Access Token 없이 🔒 API를 호출하면 `401`이 반환된다 — 라이브 검증 완료
 
-**참고**: 위 라이브 검증은 실 Supabase가 아니라 임시 SQLite DB로 진행했다(`backend/.env`가 아직 없어 실제 `DATABASE_URL`이 없음 — [05_cloudflare_tunnel.md](../person_A_infra_ai/05_cloudflare_tunnel.md)와 같은 이유). Supabase 연결 정보가 팀 채널로 공유되면 `backend/.env`를 만들고 `alembic upgrade head`로 실제 스키마를 적용한 뒤 한 번 더 확인할 것. 프론트엔드는 `next build`/`next lint` 통과 및 `next dev`로 폼 렌더링까지 확인했으나, 실제 브라우저 클릭 테스트(로그인 버튼을 눌러 백엔드까지 왕복하는 것)는 브라우저 자동화 도구가 없어 수행하지 못함 — 사람이 한 번 확인 필요.
+**참고**: 위 라이브 검증은 실 Supabase가 아니라 임시 SQLite DB로 진행했다(`backend/.env`가 아직 없어 실제 `DATABASE_URL`이 없음 — [05_cloudflare_tunnel.md](../person_A_infra_ai/05_cloudflare_tunnel.md)와 같은 이유). Supabase 연결 정보가 팀 채널로 공유되면 `backend/.env`를 만들고 `alembic upgrade head`로 실제 스키마를 적용한 뒤 한 번 더 확인할 것.
+
+- [x] **실제 브라우저 클릭 테스트** — Playwright로 실제 Chromium을 띄워 회원가입 폼 작성→제출→로그인 페이지 이동→로그인 폼 작성→제출→로그인 응답에 실제 `access_token`이 들어있는지→홈으로 이동, 그리고 중복 이메일/오답 비밀번호일 때 화면에 에러 문구가 뜨는지까지 전부 실제 브라우저로 확인 완료(2026-09-02). `frontend/e2e/auth.spec.ts`, `npm run test:e2e`로 재실행 가능(백엔드가 `localhost:3000`을 CORS로 허용하고 있어야 하므로 프론트는 반드시 기본 포트 3000으로 띄울 것 — 아래 "E2E 테스트 실행법" 참고)
+
+### E2E 테스트 실행법 (`frontend/e2e/auth.spec.ts`)
+
+이 테스트를 실행하려면 백엔드와 프론트를 둘 다 띄워둬야 한다. 처음 실행 시 원인 파악에 시간이 걸렸던 함정 두 가지를 미리 적어둔다:
+
+1. **Next.js 개발 서버는 기본적으로 `localhost` 오리진만 허용한다** — `127.0.0.1`로 접속하면 정적 자산 요청이 전부 `403`으로 막혀서 하이드레이션 자체가 안 되고(클릭해도 반응 없음), 폼이 브라우저 기본 GET 제출로 새로고침돼버린다. 반드시 `http://localhost:PORT`로 접속할 것 (`127.0.0.1` 금지)
+2. **백엔드 CORS 허용 오리진이 `http://localhost:3000`으로 고정돼 있다** (`app/main.py`) — 프론트를 다른 포트로 띄우면 CORS에 막혀 회원가입/로그인 요청 자체가 실패한다(콘솔에 조용히 에러만 남고 화면엔 아무 반응 없음). 프론트는 반드시 **기본 포트 3000**으로 띄울 것
+
+```powershell
+# 터미널 1 — 백엔드 (임시 SQLite로 실행하는 예시, 실 DB가 있으면 그걸 써도 됨)
+cd backend
+$env:DATABASE_URL="sqlite+aiosqlite:///./e2e_test.db"; $env:JWT_SECRET="test-secret"
+python -c "..."   # tests/api/conftest.py 참고해 users/refresh_tokens 테이블만 생성
+venv\Scripts\python -m uvicorn app.main:app --port 8123
+
+# 터미널 2 — 프론트 (기본 포트 3000 그대로)
+cd frontend
+$env:NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:8123"; npm run dev
+
+# 터미널 3
+cd frontend
+npm run test:e2e
+```
