@@ -25,6 +25,7 @@
 - [ ] Railway 계정 생성, GitHub 저장소 연결, **배포 브랜치를 `main`으로 지정**, 루트를 `backend/`로 지정
 - [ ] 시작 명령어 설정: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - [ ] 환경변수 등록 (10-4절 표 전체): `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL_NAME`, `GEMINI_API_KEY`, `LLM_PROVIDER_ORDER`, `DATABASE_URL`, `JWT_SECRET`, 그리고 [00_shared/01_repo_and_env_setup.md](01_repo_and_env_setup.md)에서 추가한 Supabase Storage 접속 정보
+- [ ] `ENVIRONMENT=production` 추가 — [person_B_frontend_backend/01_auth.md](../person_B_frontend_backend/01_auth.md)에서 추가한 값. 이게 없으면(기본값 `development`) Refresh Token 쿠키가 `SameSite=Lax`로 내려가서 Vercel↔Railway 교차 도메인 환경에서 쿠키가 아예 전달되지 않는다(3번 참고)
 - [ ] `JWT_SECRET`은 `openssl rand -hex 32`로 새로 생성해서 등록 (로컬 개발용 값과 달라도 무방)
 - [ ] 배포 후 `<railway-url>/docs`에서 Swagger UI 접속 확인
 - [ ] 프론트엔드의 `NEXT_PUBLIC_API_BASE_URL`을 실제 Railway 배포 주소로 갱신, 재배포
