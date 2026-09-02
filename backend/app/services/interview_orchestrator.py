@@ -50,6 +50,17 @@ def require_simple_transition(action: str, current_status: str) -> str:
     return to_status
 
 
+def require_status(action: str, current_status: str, required_status: str) -> None:
+    """For actions that don't transition the state machine (e.g. records
+    upload, which stays in RECORD_UPLOAD — spec 8-2절) but still must only
+    run in one specific status.
+    """
+    if current_status != required_status:
+        raise StateMachineViolation(
+            f"'{action}' requires session status '{required_status}', got '{current_status}'"
+        )
+
+
 def require_draft_step(current_status: str) -> str:
     """interview/next 호출 가능 여부 확인. 반환값은 전이할 *_CONFIRM 상태."""
     if current_status not in DRAFT_STEPS:

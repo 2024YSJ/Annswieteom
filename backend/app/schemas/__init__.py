@@ -1,4 +1,5 @@
 from app.schemas.document import DocumentRead, GenerateRequest, SentenceRead, SentenceUpdate
+from app.schemas.record import BlogRecordCreate, RecordRead, TextRecordCreate
 from app.schemas.session import (
     ActivityCategoryRead,
     BasedOnRead,
@@ -28,4 +29,5 @@ __all__ = [
     "RecordChunkExcerptRead", "BasedOnRead", "InterviewNextRead",
     "InterviewConfirm", "InterviewConfirmRead",
     "GenerateRequest", "DocumentRead", "SentenceRead", "SentenceUpdate",
+    "BlogRecordCreate", "TextRecordCreate", "RecordRead",
 ]
