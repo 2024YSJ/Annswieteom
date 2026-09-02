@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { authApi, type UserRead } from "./api-client";
+import { authApi, registerTokenRefreshHandler, type UserRead } from "./api-client";
 
 interface AuthContextValue {
   accessToken: string | null;
@@ -25,6 +25,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [user, setUser] = useState<UserRead | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // Lets api-client push a silently-refreshed token back into this state
+    // (401 -> refresh -> retry, spec 14-3), without every call site needing
+    // to know about the refresh flow.
+    registerTokenRefreshHandler(setAccessToken);
+  }, []);
 
   useEffect(() => {
     // The access token lives only in memory (spec 14-3: never localStorage),

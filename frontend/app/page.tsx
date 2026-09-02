@@ -1,69 +1,56 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
+import { sessionApi } from "@/lib/api-client";
+import { errorMessage } from "@/lib/error-messages";
 
 export default function Home() {
+  const router = useRouter();
+  const { user, accessToken, isLoading, logout } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+
+  async function handleStart() {
+    setError(null);
+    setIsCreating(true);
+    try {
+      const session = await sessionApi.create(accessToken!);
+      router.push(`/sessions/${session.id}/period`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>
-            To get started, edit the{" "}
-            <code className={styles.code}>page.tsx</code> file.
-          </h1>
+    <main style={{ maxWidth: 480, margin: "120px auto", padding: "0 16px", textAlign: "center" }}>
+      <h1>안 쉬었음</h1>
+      <p>커리어 공백기를 근거 있는 STAR 내러티브로 정리해드려요.</p>
+
+      {isLoading ? (
+        <p>불러오는 중...</p>
+      ) : user ? (
+        <>
+          <p>{user.nickname}님, 환영합니다.</p>
+          <button type="button" onClick={handleStart} disabled={isCreating}>
+            {isCreating ? "시작하는 중..." : "새로 시작하기"}
+          </button>
+          {error && <p style={{ color: "crimson" }}>{error}</p>}
           <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
+            <button type="button" onClick={() => logout()} style={{ marginTop: 24 }}>
+              로그아웃
+            </button>
           </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        </>
+      ) : (
+        <p>
+          <Link href="/login">로그인</Link> 또는 <Link href="/register">회원가입</Link>으로 시작하세요.
+        </p>
+      )}
+    </main>
   );
 }
