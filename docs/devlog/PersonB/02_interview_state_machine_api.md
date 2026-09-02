@@ -40,9 +40,13 @@
 - `tests/services/test_interview_orchestrator.py`: FastAPI/DB 없이 상태 전이 함수만 단위 테스트 (8개)
 - `tests/api/test_interview.py`: `conftest.py`의 `session_client` 픽스처 — in-memory SQLite에 세션 관련 테이블만 생성하고, `get_llm_provider`/`get_chunk_search`를 `FakeLLMProvider`/빈 리스트 반환 함수로 오버라이드해서 실제 Ollama/Gemini/pgvector 없이 전체 API 플로우(회원가입→세션 생성→기간→카테고리→기록물 스킵→인터뷰 3라운드→다음 카테고리 또는 RESULT_GENERATE)를 검증 (12개)
 
+## 머지 및 실 DB 적용 (2026-09-02, 같은 날 이어서)
+
+`feature/auth` → `dev`, `feature/interview-flow` → `dev` 순서로 머지(둘 다 `--no-ff`, conflict 없음). `dev`에서 pytest 42개 재확인 후, 사용자 승인을 받아 실제 Supabase DB에 `alembic upgrade head` 실행 — `cf08f92b1e47` → `90edf5d28f6a`. 적용 후 `alembic current`로 `90edf5d28f6a (head)`를, `information_schema.columns`/`pg_get_constraintdef`로 새 `ck_sessions_status` 제약과 `sessions.pending_draft` 컬럼이 실제 DB에 반영된 것을 직접 확인했다.
+
+(참고: `alembic` 명령이 `os.environ["DATABASE_URL"]`을 직접 읽는데 — `env.py`가 pydantic-settings를 안 거치고 configparser 보간 문제를 피하려고 `os.environ`을 바로 씀 — 새 셸에서는 `.env` 파일이 있어도 OS 환경변수로 export되어 있지 않으면 빈 문자열을 읽어 `Could not parse SQLAlchemy URL` 에러가 난다. `python-dotenv`의 `load_dotenv()`를 호출한 뒤 같은 프로세스 안에서 `alembic.command`를 직접 호출하는 방식으로 우회했다 — 셸에 값을 export하거나 화면에 출력할 필요가 없어서 [[feedback-credential-redaction]] 원칙과도 맞다.)
+
 ## 남은 작업
 
-- **실제 Supabase DB에 마이그레이션 `90edf5d28f6a` 적용** (`alembic upgrade head`) — 지금 실제 DB의 `sessions.status` CHECK 제약은 옛날 값 그대로라, 이 상태에서 실제 DB로 상태머신을 돌리면 CHECK 위반으로 깨진다. 사용자 확인 후 진행 예정.
-- 실제 LLM(Ollama/Gemini)과 실제 DB로 전체 플로우 재검증 (지금까지는 `FakeLLMProvider` + SQLite로만 확인)
-- `feature/auth`가 `dev`에 머지되면 `feature/interview-flow`도 그 기준으로 정리
+- 실제 LLM(Ollama/Gemini)과 실제 DB로 전체 플로우 재검증 (지금까지는 `FakeLLMProvider` + SQLite, 그리고 스키마만 실 DB로 확인)
 - 다음은 [03_records_feature.md](../../checklists/person_B_frontend_backend/03_records_feature.md) — `POST /sessions/{id}/records`를 구현할 때 상태 전이는 이미 여기서 검토 완료(전이 없음, `RECORD_UPLOAD` 유지)

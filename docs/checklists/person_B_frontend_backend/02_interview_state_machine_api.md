@@ -3,12 +3,12 @@
 근거: 명세서 8절, 9-2절, 9-3절
 선행 조건: [01_auth.md](01_auth.md), [00_shared/02_database_schema.md](../00_shared/02_database_schema.md)
 폴더: `backend/app/services/interview_orchestrator.py`, `backend/app/api/sessions.py`, `backend/app/api/interview.py`
-브랜치: `feature/interview-flow` (`feature/auth`에서 분기 — `dev`가 아직 B-1을 머지받지 못해서, `get_owned_session` 등 B-1 코드를 그대로 쓰려고 `feature/auth` 위에서 시작함. `feature/auth`가 `dev`에 먼저 머지돼야 함)
+브랜치: `feature/interview-flow` (`feature/auth`에서 분기 — 작업 당시 `dev`가 아직 B-1을 머지받지 못해서 `feature/auth` 위에서 시작함). **2026-09-02에 `feature/auth`, `feature/interview-flow` 순서로 `dev`에 머지 완료.**
 시점: 1~2주차
 
 > **용어**: "상태 머신"은 시스템이 가질 수 있는 상태들의 목록과, 어떤 조건에서 한 상태에서 다른 상태로 넘어가는지를 명시적으로 정의한 것이다. `sessions.status` 한 컬럼으로 "지금 사용자가 인터뷰의 어느 단계에 있는지"를 관리한다.
 
-> ⚠️ **구현 중 발견한 버그**: `app/models/session.py`의 `SESSION_STATUSES`(및 DB의 `ck_sessions_status` CHECK 제약)가 이 문서의 상태값과 전혀 다른 옛날 값(`INTERVIEW_FREQ`/`INTERVIEW_TASK`/`INTERVIEW_ACHIEVEMENT`/`GENERATING`/`DONE`)으로 들어있었다 — 8-2절 상태머신을 구현하는 이 시점까지 아무도 실제로 안 써봐서 안 걸렸던 것으로 보인다. 이번 작업에서 이 문서의 상태값(`PERIOD_INPUT`~`RESULT_REVIEW`)으로 교정하고 마이그레이션 `90edf5d28f6a`를 추가했다. **이 마이그레이션은 아직 실제 Supabase DB에 적용 전이다 — `alembic upgrade head`를 실제 DB에 대고 실행해야 한다.**
+> ⚠️ **구현 중 발견한 버그**: `app/models/session.py`의 `SESSION_STATUSES`(및 DB의 `ck_sessions_status` CHECK 제약)가 이 문서의 상태값과 전혀 다른 옛날 값(`INTERVIEW_FREQ`/`INTERVIEW_TASK`/`INTERVIEW_ACHIEVEMENT`/`GENERATING`/`DONE`)으로 들어있었다 — 8-2절 상태머신을 구현하는 이 시점까지 아무도 실제로 안 써봐서 안 걸렸던 것으로 보인다. 이번 작업에서 이 문서의 상태값(`PERIOD_INPUT`~`RESULT_REVIEW`)으로 교정하고 마이그레이션 `90edf5d28f6a`를 추가했다. **2026-09-02에 실제 Supabase DB에도 적용 완료** (`alembic current` → `90edf5d28f6a (head)` 확인).
 
 ## 1. 상태 전이 정의 (8절)
 
@@ -72,6 +72,6 @@ PERIOD_INPUT → CATEGORY_SELECT → RECORD_UPLOAD(선택)
 
 ## 미완 / 남은 작업
 
-- [ ] **마이그레이션 `90edf5d28f6a`를 실제 Supabase DB에 적용 (`alembic upgrade head`)** — 로컬 SQLite 테스트로는 코드 로직 검증만 끝난 상태고, 실제 DB의 `ck_sessions_status` 제약은 아직 옛날 값 그대로다. 이 상태에서는 실제 DB에 대고 `POST /sessions/{id}/categories` 이후 `FREQ_DRAFT` 등으로 상태를 바꾸는 순간 CHECK 위반으로 500이 난다. B-1처럼 실제 DB로 재검증할 때 가장 먼저 해야 할 일.
+- [x] **마이그레이션 `90edf5d28f6a`를 실제 Supabase DB에 적용 (`alembic upgrade head`)** — 2026-09-02 완료. `alembic current` → `90edf5d28f6a (head)`, `ck_sessions_status` 제약과 `sessions.pending_draft` 컬럼 모두 실제 DB에서 확인.
+- [x] `feature/auth`, `feature/interview-flow`를 순서대로 `dev`에 머지 완료 (둘 다 conflict 없이 merge). `dev`에서 전체 테스트 42개 재확인.
 - [ ] 실제 브라우저/curl로 전체 인터뷰 플로우를 실제 LLM(Ollama 또는 Gemini)과 함께 왕복 테스트 — 지금까지는 `FakeLLMProvider`로만 검증했다.
-- [ ] `feature/interview-flow`가 `feature/auth` 위에 얹혀 있으므로, `feature/auth`가 먼저 `dev`에 머지된 뒤 이 브랜치도 `dev` 기준으로 재정리(rebase 또는 그대로 PR)해야 한다.
