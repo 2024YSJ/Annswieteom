@@ -2,6 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    environment: str = "development"
+
     database_url: str
     jwt_secret: str
     jwt_access_expire_minutes: int = 30
