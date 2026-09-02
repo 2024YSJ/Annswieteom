@@ -17,7 +17,6 @@
 ## 미완 항목
 
 - `get_owned_session`을 실제 `/sessions/...` 라우트에서 사용하는 것 — 02(인터뷰 상태머신)~04(문서생성)에서 라우트가 생기는 대로 적용
-- 실 Supabase DB로의 최종 확인 — `backend/.env`가 아직 없어서 지금은 임시 SQLite로만 검증함
 - 실제 브라우저에서 로그인 버튼을 눌러 백엔드까지 왕복하는 클릭 테스트 — 브라우저 자동화 도구가 없어 못 함 (아래 "테스트 전략" 참고)
 
 ## 핵심 결정 사항과 이유
@@ -47,9 +46,18 @@ DB가 필요한 라우트를 실제 Supabase 없이 검증하기 위해 두 단�
 2. **실제 서버 라이브 검증**: pytest의 `TestClient`가 아니라 진짜 `uvicorn`으로 서버를 띄우고 `curl`로 회원가입→로그인→중복가입(409)→틀린 비밀번호(401)→`/me`→`/refresh`→`/logout`→로그아웃 후 refresh 재시도(401) 전체 흐름을 확인했다(체크리스트 "검증 기준" 항목 전부 여기서 통과 확인). 이건 `backend/smoke_test.db`라는 임시 SQLite 파일을 썼고, 확인 후 삭제해서 저장소에는 안 남았다.
 
 3. **실제 브라우저 E2E (Playwright, 2026-09-02 추가)**: 별도의 브라우저 자동화 "도구" 없이도 Playwright는 그냥 npm 패키지라서 설치해서 직접 돌릴 수 있었다. `npm install -D @playwright/test` + `npx playwright install chromium`으로 헤드리스 Chromium을 받고, `frontend/e2e/auth.spec.ts`에 회원가입→로그인→(로그인 응답의 실제 `access_token` 확인)→홈 이동, 그리고 중복 이메일/오답 비밀번호 시 에러 문구 노출까지 실제 클릭으로 검증하는 테스트 3개를 작성했다. 처음 두 번은 실패했는데, 둘 다 진짜 원인이 있었다(아래 트러블슈팅 참고). 원인을 고치고 나니 3개 다 통과.
+4. **실 Supabase 검증 (2026-09-02, 같은 날 이어서)**: `backend/.env`가 준비된 뒤 `alembic upgrade head`로 11개 테이블 전체 생성 확인, 위 2번의 curl 시나리오와 3번의 Playwright 스위트를 그대로 실 DB에 대고 재실행해서 전부 통과. 검증에 쓴 테스트 유저는 확인 후 DB에서 삭제.
+
+## `.env` 작성 중 겪은 사고 — 비밀번호 부분 노출
+
+실 DB 검증을 준비하며 `DATABASE_URL` 값이 올바른 형식인지 확인하려고 `sed`로 자격증명 부분을 가리는 명령을 짰는데, 정규식이 "첫 번째 `@` 앞까지만" 가리는 방식이었다. 그런데 당시 비밀번호에 URL 인코딩되지 않은 `@`가 들어있어서, 정규식이 그 지점에서 멈춰버렸고 **비밀번호 뒷부분 일부가 대화 로그에 그대로 노출되는 사고**가 있었다. 즉시 사용자에게 알리고 Supabase 비밀번호를 재발급받도록 안내했다. 이후로는 절대 정규식/문자열 자르기로 자격증명을 가리지 않고, `urllib.parse.urlsplit()`로 구조(스킴/호스트/포트)만 뽑아서 확인하고 자격증명이 들어있는 필드는 아예 코드 경로에 노출시키지 않는 방식으로 바꿨다. **교훈: 비밀번호 마스킹은 "그럴듯한 정규식"이 아니라 제대로 된 파서로 해야 한다 — 조금이라도 애매하면 아예 출력하지 않는 쪽을 택할 것.**
+
+이 과정에서 `.env` 작성 시 흔한 함정 두 개도 같이 발견했다(체크리스트에도 기록):
+- Supabase 대시보드가 그대로 복사해주는 연결 문자열은 `postgresql://`로 시작하는데, 비동기 드라이버가 필요해서 `postgresql+asyncpg://`로 고쳐야 한다
+- Supabase "Connect" 모달의 풀러 포트 6543(Transaction 모드)은 asyncpg의 prepared statement와 호환 안 됨 — 반드시 5432(Session 모드) 사용
 
 ## 남은 작업
 
-- Supabase `DATABASE_URL`이 팀 채널로 공유되면 `backend/.env` 생성 → `alembic upgrade head` → 실제 DB로 위 시나리오 재확인
+없음 — B-1 체크리스트 전 항목 완료. 다음은 [02_interview_state_machine_api.md](../../checklists/person_B_frontend_backend/02_interview_state_machine_api.md).
 - 02(인터뷰 상태머신) 작업 시 `get_owned_session`을 실제 라우트에 연결
 - Railway 배포 시 `ENVIRONMENT=production` 환경변수 추가 잊지 않기

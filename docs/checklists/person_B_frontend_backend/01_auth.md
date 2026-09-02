@@ -60,12 +60,16 @@
 
 ## 검증 기준 (마일스톤 1)
 
-- [x] 회원가입 → 로그인 → 발급받은 Access Token으로 `GET /auth/me` 호출이 실제로 사용자 정보를 반환한다 — 실제 uvicorn 서버 + curl로 라이브 검증 완료(2026-09-02)
-- [x] 잘못된 비밀번호로 로그인 시 `401`이 반환된다 — 라이브 검증 완료
-- [x] 이미 가입된 이메일로 재가입 시도 시 `409`가 반환된다 — 라이브 검증 완료
-- [x] Access Token 없이 🔒 API를 호출하면 `401`이 반환된다 — 라이브 검증 완료
+- [x] 회원가입 → 로그인 → 발급받은 Access Token으로 `GET /auth/me` 호출이 실제로 사용자 정보를 반환한다 — 실제 uvicorn 서버 + curl로 라이브 검증(2026-09-02, 임시 SQLite), **실 Supabase로 재검증 완료(2026-09-02)**
+- [x] 잘못된 비밀번호로 로그인 시 `401`이 반환된다 — 실 Supabase로 검증 완료
+- [x] 이미 가입된 이메일로 재가입 시도 시 `409`가 반환된다 — 실 Supabase로 검증 완료
+- [x] Access Token 없이 🔒 API를 호출하면 `401`이 반환된다 — 실 Supabase로 검증 완료
 
-**참고**: 위 라이브 검증은 실 Supabase가 아니라 임시 SQLite DB로 진행했다(`backend/.env`가 아직 없어 실제 `DATABASE_URL`이 없음 — [05_cloudflare_tunnel.md](../person_A_infra_ai/05_cloudflare_tunnel.md)와 같은 이유). Supabase 연결 정보가 팀 채널로 공유되면 `backend/.env`를 만들고 `alembic upgrade head`로 실제 스키마를 적용한 뒤 한 번 더 확인할 것.
+**실 Supabase 검증 완료 (2026-09-02)**: `backend/.env` 생성 → `alembic upgrade head`로 11개 테이블 전체 생성 확인 → 위 시나리오(회원가입/로그인/me/오답401/중복409/refresh/logout revocation)를 실제 Supabase 세션 풀러 연결로 재확인, Playwright E2E 3개도 실 DB 기준으로 재실행해서 통과. 테스트로 생성된 사용자는 확인 후 삭제해서 DB에 남아있지 않음.
+
+이 과정에서 `.env` 작성 시 흔히 겪을 함정 2개를 발견해서 기록해둔다 (다음에 또 `.env`를 새로 만들 일이 있으면 참고):
+- Supabase가 대시보드에서 그대로 복사해주는 연결 문자열은 `postgresql://`로 시작하는데, 이 프로젝트는 비동기 드라이버가 필요해서 **`postgresql+asyncpg://`**로 직접 고쳐야 한다
+- Supabase "Connect" 모달에 나오는 풀러 포트가 두 개(5432=Session, 6543=Transaction)인데, **Transaction 모드(6543)는 asyncpg의 prepared statement와 호환이 안 돼서 간헐적 오류가 날 수 있다** — 반드시 Session 모드(포트 5432)를 쓸 것
 
 - [x] **실제 브라우저 클릭 테스트** — Playwright로 실제 Chromium을 띄워 회원가입 폼 작성→제출→로그인 페이지 이동→로그인 폼 작성→제출→로그인 응답에 실제 `access_token`이 들어있는지→홈으로 이동, 그리고 중복 이메일/오답 비밀번호일 때 화면에 에러 문구가 뜨는지까지 전부 실제 브라우저로 확인 완료(2026-09-02). `frontend/e2e/auth.spec.ts`, `npm run test:e2e`로 재실행 가능(백엔드가 `localhost:3000`을 CORS로 허용하고 있어야 하므로 프론트는 반드시 기본 포트 3000으로 띄울 것 — 아래 "E2E 테스트 실행법" 참고)
 
