@@ -59,3 +59,14 @@ async def search_relevant_chunks(
         )
         for c in chunks
     ]
+
+
+def get_chunk_search():
+    """FastAPI DI hook wrapping search_relevant_chunks.
+
+    search_relevant_chunks opens its own DB session directly (not through
+    get_db), so overriding the get_db dependency alone can't swap it out in
+    tests — routes should depend on this instead of importing the function
+    directly, so `app.dependency_overrides[get_chunk_search] = ...` works.
+    """
+    return search_relevant_chunks
