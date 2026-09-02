@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import base64
 import re
 from datetime import date
-from pathlib import Path
 
 from google import genai
 from google.genai import types
@@ -12,19 +10,19 @@ from app.core.config import settings
 
 _DATE_PATTERN = re.compile(r"(\d{4})[.\-년 ](\d{1,2})[.\-월 ](\d{1,2})")
 
+MIME_TYPES_BY_EXTENSION = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 
-async def extract_text_from_image(image_path: str) -> tuple[str, date | None]:
+
+async def extract_text_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> tuple[str, date | None]:
     """Use Gemini Vision to extract text and publication date from an image.
+
+    Takes raw bytes rather than a filesystem path — the caller (record_pipeline)
+    is responsible for fetching the bytes from wherever the image is stored
+    (Supabase Storage in production), keeping this module storage-agnostic.
 
     Returns (extracted_text, date_if_found).
     """
     client = genai.Client(api_key=settings.gemini_api_key)
-
-    path = Path(image_path)
-    image_bytes = path.read_bytes()
-    suffix = path.suffix.lower()
-    mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
-    mime_type = mime_map.get(suffix, "image/jpeg")
 
     prompt = (
         "이 이미지에서 텍스트를 모두 추출해주세요. "

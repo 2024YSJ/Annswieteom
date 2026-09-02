@@ -81,6 +81,11 @@ async def get_session(
 async def delete_session(
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
-) -> None:
+):
+    # No `-> None` return annotation here on purpose: combined with this file's
+    # `from __future__ import annotations`, FastAPI resolves the stringified
+    # "None" annotation through typing.ForwardRef, whose _type_check coerces it
+    # to NoneType (a truthy class) — which then trips its
+    # "Status code 204 must not have a response body" assertion at import time.
     await db.delete(session)
     await db.commit()

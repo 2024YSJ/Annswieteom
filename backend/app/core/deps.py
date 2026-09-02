@@ -11,13 +11,19 @@ from app.db.session import get_db
 from app.models.session import Session
 from app.models.user import User
 
-_bearer_scheme = HTTPBearer(auto_error=True)
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    # auto_error=False + a manual 401 here (rather than HTTPBearer's default
+    # auto_error=True) — the latter raises 403 when the header is missing
+    # entirely, but spec 9-1 requires 401 for every unauthenticated 🔒 call
+    # regardless of whether the header was missing or just invalid.
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token")
     try:
         user_id = decode_access_token(credentials.credentials)
     except InvalidTokenError:

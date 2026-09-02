@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     supabase_url: str = ""
     supabase_service_key: str = ""
+    supabase_storage_bucket: str = "records"
 
     class Config:
         env_file = ".env"

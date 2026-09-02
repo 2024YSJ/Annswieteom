@@ -11,9 +11,10 @@ from app.models.record_chunk import RecordChunk
 from app.models.gap_period import GapPeriod
 from app.services.embedding import FallbackEmbedding
 from app.services.record_pipeline.chunker import chunk_text
-from app.services.record_pipeline.ocr import extract_text_from_image
+from app.services.record_pipeline.ocr import MIME_TYPES_BY_EXTENSION, extract_text_from_image
 from app.services.record_pipeline.parsers import generic, naver_blog, tistory
 from app.services.record_pipeline.platform_detector import detect_platform
+from app.services.storage import get_storage
 
 
 async def process_record(record_id: uuid.UUID) -> None:
@@ -70,7 +71,11 @@ async def process_image_record(record_id: uuid.UUID) -> None:
             if not record.storage_path:
                 raise ValueError("No storage_path for image record")
 
-            text, pub_date = await extract_text_from_image(record.storage_path)
+            storage = get_storage()
+            image_bytes = await storage.download(record.storage_path)
+            mime_type = _guess_mime_type(record.storage_path)
+
+            text, pub_date = await extract_text_from_image(image_bytes, mime_type)
             chunks = chunk_text(text, pub_date)
             await _embed_and_store(db, record, chunks)
 
@@ -89,7 +94,7 @@ async def process_image_record(record_id: uuid.UUID) -> None:
 # ---------------------------------------------------------------------------
 
 async def _fetch_text(record: Record) -> tuple[str, date | None]:
-    if record.record_type == "pasted_text":
+    if record.record_type == "text":
         return record.raw_text or "", None
 
     url = record.source_url or ""
@@ -131,6 +136,13 @@ async def _embed_and_store(db, record: Record, chunks) -> None:
             embedding=vector,
             embedding_model=provider.model_name,
         ))
+
+
+def _guess_mime_type(storage_path: str) -> str:
+    for ext, mime in MIME_TYPES_BY_EXTENSION.items():
+        if storage_path.lower().endswith(ext):
+            return mime
+    return "image/jpeg"
 
 
 def _user_message(exc: Exception) -> str:
