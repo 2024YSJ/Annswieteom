@@ -16,6 +16,8 @@ interface AuthContextValue {
   user: UserRead | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  guestLogin: () => Promise<string>;
+  refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -66,6 +68,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me);
   }, []);
 
+  const guestLogin = useCallback(async () => {
+    const tokens = await authApi.guestLogin();
+    setAccessToken(tokens.access_token);
+    const me = await authApi.me(tokens.access_token);
+    setUser(me);
+    return tokens.access_token;
+  }, []);
+
+  // Re-fetches /auth/me with the *current* access token, without issuing a
+  // new one. Used right after a guest "upgrades" via /auth/register — the
+  // access token only ever encodes user_id, so the same row's now-registered
+  // data (email, is_guest=false) shows up without needing to log in again.
+  const refreshUser = useCallback(async () => {
+    if (!accessToken) return;
+    const me = await authApi.me(accessToken);
+    setUser(me);
+  }, [accessToken]);
+
   const logout = useCallback(async () => {
     if (accessToken) {
       await authApi.logout(accessToken).catch(() => {
@@ -77,8 +97,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [accessToken]);
 
   const value = useMemo(
-    () => ({ accessToken, user, isLoading, login, logout }),
-    [accessToken, user, isLoading, login, logout],
+    () => ({ accessToken, user, isLoading, login, guestLogin, refreshUser, logout }),
+    [accessToken, user, isLoading, login, guestLogin, refreshUser, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

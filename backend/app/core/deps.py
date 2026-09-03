@@ -35,6 +35,23 @@ async def get_current_user(
     return user
 
 
+async def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """Like get_current_user, but returns None when no Authorization header is
+    sent at all (anonymous request) instead of raising.
+
+    A header that *is* present but invalid/expired still raises 401, same as
+    get_current_user — an expired guest token must not be silently treated as
+    "no user", or /auth/register would create a second anonymous account
+    instead of upgrading the guest's existing one, orphaning their session.
+    """
+    if credentials is None:
+        return None
+    return await get_current_user(credentials, db)
+
+
 async def get_owned_session(
     session_id: uuid.UUID,
     current_user: User = Depends(get_current_user),

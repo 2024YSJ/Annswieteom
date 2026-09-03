@@ -19,8 +19,9 @@ class LoginRequest(BaseModel):
 
 class UserRead(BaseModel):
     id: uuid.UUID
-    email: str
+    email: str | None
     nickname: str
+    is_guest: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

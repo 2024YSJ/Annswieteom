@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_current_user_optional
 from app.core.security import (
     create_access_token,
     ensure_utc,
@@ -48,16 +48,50 @@ async def _issue_refresh_token(db: AsyncSession, user_id) -> str:
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: UserCreate, db: AsyncSession = Depends(get_db)):
+async def register(
+    body: UserCreate,
+    current_user: User | None = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user is not None and not current_user.is_guest:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already_registered")
+
     existing = await db.scalar(select(User).where(User.email == body.email))
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email_already_exists")
+
+    if current_user is not None:
+        # Guest upgrade: keep the same row (and therefore the same sessions,
+        # access token, and refresh cookie) instead of creating a new user.
+        current_user.email = body.email
+        current_user.password_hash = hash_password(body.password)
+        current_user.nickname = body.nickname
+        current_user.is_guest = False
+        await db.commit()
+        return RegisterResponse(user_id=current_user.id)
 
     user = User(email=body.email, password_hash=hash_password(body.password), nickname=body.nickname)
     db.add(user)
     await db.commit()
     await db.refresh(user)
     return RegisterResponse(user_id=user.id)
+
+
+@router.post("/guest", response_model=TokenPair)
+async def guest_login(response: Response, db: AsyncSession = Depends(get_db)):
+    user = User(email=None, password_hash=None, nickname="게스트", is_guest=True)
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    raw_refresh_token = await _issue_refresh_token(db, user.id)
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=raw_refresh_token,
+        path=REFRESH_COOKIE_PATH,
+        **_refresh_cookie_kwargs(),
+    )
+    return TokenPair(access_token=create_access_token(user.id))
 
 
 @router.post("/login", response_model=TokenPair)
