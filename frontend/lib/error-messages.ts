@@ -15,6 +15,9 @@ const KNOWN_DETAILS: Record<string, string> = {
   no_pending_draft: "확인할 초안이 없습니다. 새로고침 후 다시 시도해주세요.",
   step_mismatch: "진행 단계가 맞지 않습니다. 새로고침 후 다시 시도해주세요.",
   llm_unavailable: "AI 서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.",
+  guest_session_limit_reached: "비회원은 세션을 1개까지만 만들 수 있어요. 회원가입하면 계속 이어서 쓸 수 있습니다.",
+  already_registered: "이미 회원가입된 계정입니다.",
+  email_already_exists: "이미 가입된 이메일입니다.",
 };
 
 const BY_STATUS: Record<number, string> = {

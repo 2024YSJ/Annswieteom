@@ -39,7 +39,15 @@ function RecordStatusRow({ sessionId, recordId, accessToken }: { sessionId: stri
   );
 }
 
-export function RecordUploadPanel({ sessionId, accessToken }: { sessionId: string; accessToken: string }) {
+export function RecordUploadPanel({
+  sessionId,
+  accessToken,
+  onRecordsChange,
+}: {
+  sessionId: string;
+  accessToken: string;
+  onRecordsChange?: (count: number) => void;
+}) {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("url");
   const [recordIds, setRecordIds] = useState<string[]>([]);
@@ -50,7 +58,11 @@ export function RecordUploadPanel({ sessionId, accessToken }: { sessionId: strin
   const [text, setText] = useState("");
 
   function addRecord(record: RecordRead) {
-    setRecordIds((prev) => [...prev, record.id]);
+    setRecordIds((prev) => {
+      const next = [...prev, record.id];
+      onRecordsChange?.(next.length);
+      return next;
+    });
     queryClient.setQueryData(queryKeys.record(sessionId, record.id), record);
   }
 

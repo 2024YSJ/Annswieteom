@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { BasedOnRead, ConfirmedFactRead } from "@/lib/api-client";
+import type { ActivityCategoryRead, BasedOnRead } from "@/lib/api-client";
+import { CATEGORY_LABELS } from "@/lib/session-routes";
 
 const FACT_TYPE_LABELS: Record<string, string> = {
   frequency: "빈도",
@@ -31,12 +32,14 @@ interface PendingDraft {
 }
 
 export function InterviewChatThread({
-  confirmedFacts,
+  categories,
+  currentCategoryId,
   pending,
   onConfirm,
   isSubmitting,
 }: {
-  confirmedFacts: ConfirmedFactRead[];
+  categories: ActivityCategoryRead[];
+  currentCategoryId: string | null;
   pending: PendingDraft | null;
   onConfirm: (finalText: string, wasEdited: boolean) => void;
   isSubmitting: boolean;
@@ -52,55 +55,70 @@ export function InterviewChatThread({
     setIsEditing(false);
   }
 
+  // Only categories that have at least one confirmed fact, or are the one
+  // currently being interviewed, are shown — categories not reached yet
+  // stay invisible (the AI doesn't preview future questions).
+  const visibleCategories = categories
+    .slice()
+    .sort((a, b) => a.order_index - b.order_index)
+    .filter((c) => c.confirmed_facts.length > 0 || c.id === currentCategoryId);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {confirmedFacts.map((fact) => (
-        <div key={fact.id} style={{ alignSelf: "flex-end", maxWidth: "80%" }}>
-          <div style={{ fontSize: 12, color: "#888", textAlign: "right" }}>{FACT_TYPE_LABELS[fact.fact_type]} · 확인됨</div>
-          <div style={{ background: "#daf1ff", padding: "8px 12px", borderRadius: 12 }}>{fact.content}</div>
+      {visibleCategories.map((category) => (
+        <div key={category.id} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ fontSize: 13, color: "#666", fontWeight: "bold" }}>
+            ▸ {category.custom_label ?? CATEGORY_LABELS[category.category_type]}
+          </div>
+          {category.confirmed_facts.map((fact) => (
+            <div key={fact.id} style={{ alignSelf: "flex-end", maxWidth: "80%" }}>
+              <div style={{ fontSize: 12, color: "#888", textAlign: "right" }}>{FACT_TYPE_LABELS[fact.fact_type]} · 확인됨</div>
+              <div style={{ background: "#daf1ff", padding: "8px 12px", borderRadius: 12 }}>{fact.content}</div>
+            </div>
+          ))}
+
+          {category.id === currentCategoryId && pending && (
+            <div style={{ alignSelf: "flex-start", maxWidth: "85%" }} aria-live="polite">
+              <div style={{ fontSize: 12, color: "#888" }}>{pending.stepLabel}</div>
+              <div style={{ background: "#f1f1f1", padding: "12px", borderRadius: 12, marginBottom: 8 }}>
+                <div style={{ marginBottom: 8 }}>
+                  <BasedOnBadge basedOn={pending.basedOn} />
+                </div>
+                {isEditing ? (
+                  <textarea
+                    rows={3}
+                    value={draftEdit}
+                    onChange={(e) => setDraftEdit(e.target.value)}
+                    style={{ width: "100%" }}
+                  />
+                ) : (
+                  <p style={{ margin: 0 }}>{pending.draftText}</p>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {isEditing ? (
+                  <button
+                    type="button"
+                    disabled={isSubmitting || draftEdit.trim().length === 0}
+                    onClick={() => onConfirm(draftEdit, true)}
+                  >
+                    수정한 내용으로 확인
+                  </button>
+                ) : (
+                  <>
+                    <button type="button" disabled={isSubmitting} onClick={() => onConfirm(pending.draftText, false)}>
+                      맞아요, 이대로 확인
+                    </button>
+                    <button type="button" disabled={isSubmitting} onClick={() => setIsEditing(true)}>
+                      고쳐서 확인할게요
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       ))}
-
-      {pending && (
-        <div style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
-          <div style={{ fontSize: 12, color: "#888" }}>{pending.stepLabel}</div>
-          <div style={{ background: "#f1f1f1", padding: "12px", borderRadius: 12, marginBottom: 8 }}>
-            <div style={{ marginBottom: 8 }}>
-              <BasedOnBadge basedOn={pending.basedOn} />
-            </div>
-            {isEditing ? (
-              <textarea
-                rows={3}
-                value={draftEdit}
-                onChange={(e) => setDraftEdit(e.target.value)}
-                style={{ width: "100%" }}
-              />
-            ) : (
-              <p style={{ margin: 0 }}>{pending.draftText}</p>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {isEditing ? (
-              <button
-                type="button"
-                disabled={isSubmitting || draftEdit.trim().length === 0}
-                onClick={() => onConfirm(draftEdit, true)}
-              >
-                수정한 내용으로 확인
-              </button>
-            ) : (
-              <>
-                <button type="button" disabled={isSubmitting} onClick={() => onConfirm(pending.draftText, false)}>
-                  맞아요, 이대로 확인
-                </button>
-                <button type="button" disabled={isSubmitting} onClick={() => setIsEditing(true)}>
-                  고쳐서 확인할게요
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -9,7 +9,7 @@ import { errorMessage } from "@/lib/error-messages";
 
 export default function Home() {
   const router = useRouter();
-  const { user, accessToken, isLoading, logout } = useAuth();
+  const { user, accessToken, isLoading, guestLogin, logout } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -18,7 +18,21 @@ export default function Home() {
     setIsCreating(true);
     try {
       const session = await sessionApi.create(accessToken!);
-      router.push(`/sessions/${session.id}/period`);
+      router.push(`/sessions/${session.id}`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function handleGuestStart() {
+    setError(null);
+    setIsCreating(true);
+    try {
+      const guestAccessToken = await guestLogin();
+      const session = await sessionApi.create(guestAccessToken);
+      router.push(`/sessions/${session.id}`);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -47,9 +61,15 @@ export default function Home() {
           </p>
         </>
       ) : (
-        <p>
-          <Link href="/login">로그인</Link> 또는 <Link href="/register">회원가입</Link>으로 시작하세요.
-        </p>
+        <>
+          <p>
+            <Link href="/login">로그인</Link> 또는 <Link href="/register">회원가입</Link>으로 시작하세요.
+          </p>
+          <button type="button" onClick={handleGuestStart} disabled={isCreating}>
+            {isCreating ? "시작하는 중..." : "게스트로 시작하기 (1회 체험)"}
+          </button>
+          {error && <p style={{ color: "crimson" }}>{error}</p>}
+        </>
       )}
     </main>
   );

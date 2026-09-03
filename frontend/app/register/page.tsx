@@ -3,10 +3,13 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { authApi, ApiError } from "@/lib/api-client";
+import { authApi } from "@/lib/api-client";
+import { errorMessage } from "@/lib/error-messages";
+import { useAuth } from "@/lib/auth-context";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { accessToken, user, refreshUser } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nickname, setNickname] = useState("");
@@ -22,16 +25,21 @@ export default function RegisterPage() {
       return;
     }
 
+    const wasGuest = user?.is_guest ?? false;
+
     setIsSubmitting(true);
     try {
-      await authApi.register({ email, password, nickname });
-      router.push("/login");
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setError("이미 가입된 이메일입니다.");
+      await authApi.register({ email, password, nickname }, wasGuest ? accessToken ?? undefined : undefined);
+      if (wasGuest) {
+        // Same access token, same session(s) — just re-fetch /auth/me so the
+        // UI reflects the now-registered identity instead of re-logging-in.
+        await refreshUser();
+        router.push("/");
       } else {
-        setError("회원가입에 실패했습니다. 잠시 후 다시 시도해주세요.");
+        router.push("/login");
       }
+    } catch (err) {
+      setError(errorMessage(err, "회원가입에 실패했습니다. 잠시 후 다시 시도해주세요."));
     } finally {
       setIsSubmitting(false);
     }

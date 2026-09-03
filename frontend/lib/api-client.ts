@@ -118,15 +118,17 @@ export interface RegisterResponse {
 
 export interface UserRead {
   id: string;
-  email: string;
+  email: string | null;
   nickname: string;
+  is_guest: boolean;
   created_at: string;
 }
 
 export const authApi = {
-  register: (payload: RegisterPayload) =>
+  register: (payload: RegisterPayload, accessToken?: string) =>
     request<RegisterResponse>("/api/v1/auth/register", {
       method: "POST",
+      headers: accessToken ? authHeaders(accessToken) : undefined,
       body: JSON.stringify(payload),
     }),
 
@@ -135,6 +137,8 @@ export const authApi = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
+
+  guestLogin: () => request<TokenPair>("/api/v1/auth/guest", { method: "POST" }),
 
   refresh: () => request<TokenPair>("/api/v1/auth/refresh", { method: "POST" }),
 
@@ -260,6 +264,11 @@ export const sessionApi = {
   create: (accessToken: string) =>
     request<SessionRead>("/api/v1/sessions", {
       method: "POST",
+      headers: authHeaders(accessToken),
+    }),
+
+  list: (accessToken: string) =>
+    request<SessionRead[]>("/api/v1/sessions", {
       headers: authHeaders(accessToken),
     }),
 

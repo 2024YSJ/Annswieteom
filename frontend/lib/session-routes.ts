@@ -1,30 +1,19 @@
 import type { CategoryType, SessionStatus } from "./api-client";
 
-/** Where a session's current status should route to — used both to advance
- * after a step completes and to redirect back on-load (refresh mid-flow,
- * stale bookmark, direct URL entry) so the user always lands on the step
- * that matches their actual server-side progress (14-4절 공통 UX 체크).
+/** Phase 2: every status now renders inline on the same `/sessions/{id}`
+ * page, so these just gate which section is "active" instead of picking a
+ * route to redirect to.
  */
-export function pathForStatus(sessionId: string, status: SessionStatus): string {
-  switch (status) {
-    case "PERIOD_INPUT":
-      return `/sessions/${sessionId}/period`;
-    case "CATEGORY_SELECT":
-      return `/sessions/${sessionId}/categories`;
-    case "RECORD_UPLOAD":
-      return `/sessions/${sessionId}/records`;
-    case "FREQ_DRAFT":
-    case "FREQ_CONFIRM":
-    case "TASK_DRAFT":
-    case "TASK_CONFIRM":
-    case "ACHIEVEMENT_DRAFT":
-    case "ACHIEVEMENT_CONFIRM":
-      return `/sessions/${sessionId}/interview`;
-    case "RESULT_GENERATE":
-    case "RESULT_REVIEW":
-      return `/sessions/${sessionId}/result`;
-  }
-}
+export const INTERVIEW_STATUSES = new Set<SessionStatus>([
+  "FREQ_DRAFT",
+  "FREQ_CONFIRM",
+  "TASK_DRAFT",
+  "TASK_CONFIRM",
+  "ACHIEVEMENT_DRAFT",
+  "ACHIEVEMENT_CONFIRM",
+]);
+
+export const RESULT_STATUSES = new Set<SessionStatus>(["RESULT_GENERATE", "RESULT_REVIEW"]);
 
 export const CATEGORY_LABELS: Record<CategoryType, string> = {
   part_time: "아르바이트",

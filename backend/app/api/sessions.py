@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,11 +25,33 @@ async def create_session(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionModel:
+    if current_user.is_guest:
+        # Explicit count query, not current_user.sessions — touching a lazy
+        # relationship here raises MissingGreenlet inside an async function.
+        existing_count = await db.scalar(
+            select(func.count()).select_from(SessionModel).where(SessionModel.user_id == current_user.id)
+        )
+        if existing_count and existing_count > 0:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="guest_session_limit_reached")
+
     session = SessionModel(user_id=current_user.id)
     db.add(session)
     await db.commit()
     await db.refresh(session)
     return session
+
+
+@router.get("", response_model=list[SessionRead])
+async def list_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionModel]:
+    stmt = (
+        select(SessionModel)
+        .where(SessionModel.user_id == current_user.id)
+        .order_by(SessionModel.created_at.desc())
+    )
+    return list((await db.execute(stmt)).scalars().all())
 
 
 @router.get("/{session_id}", response_model=SessionContextRead)

@@ -125,3 +125,69 @@ def test_logout_requires_authentication(client):
     resp = client.post("/api/v1/auth/logout")
 
     assert resp.status_code == 401
+
+
+def test_guest_login_returns_token_and_guest_flag(client):
+    resp = client.post("/api/v1/auth/guest")
+
+    assert resp.status_code == 200
+    assert resp.json()["token_type"] == "bearer"
+    access_token = resp.json()["access_token"]
+
+    me_resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {access_token}"})
+    assert me_resp.status_code == 200
+    assert me_resp.json()["is_guest"] is True
+    assert me_resp.json()["email"] is None
+
+
+def test_guest_register_upgrades_same_user_without_new_token(client):
+    guest_token = client.post("/api/v1/auth/guest").json()["access_token"]
+
+    resp = _register(client)
+    assert resp.status_code == 201
+
+    register_resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": "alice@example.com", "password": "password123", "nickname": "Alice"},
+        headers={"Authorization": f"Bearer {guest_token}"},
+    )
+    assert register_resp.status_code == 409  # email already taken by the prior register call
+    assert register_resp.json()["detail"] == "email_already_exists"
+
+    register_resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": "guest-upgraded@example.com", "password": "password123", "nickname": "Upgraded"},
+        headers={"Authorization": f"Bearer {guest_token}"},
+    )
+    assert register_resp.status_code == 201
+
+    # Same access token still works and now reflects the upgraded, non-guest identity.
+    me_resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {guest_token}"})
+    assert me_resp.status_code == 200
+    assert me_resp.json()["is_guest"] is False
+    assert me_resp.json()["email"] == "guest-upgraded@example.com"
+    assert me_resp.json()["nickname"] == "Upgraded"
+
+
+def test_register_while_already_registered_returns_409(client):
+    _register(client)
+    access_token = _login(client).json()["access_token"]
+
+    resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": "someone-else@example.com", "password": "password123", "nickname": "Someone"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "already_registered"
+
+
+def test_register_with_garbage_token_returns_401(client):
+    resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": "alice@example.com", "password": "password123", "nickname": "Alice"},
+        headers={"Authorization": "Bearer not-a-real-token"},
+    )
+
+    assert resp.status_code == 401
