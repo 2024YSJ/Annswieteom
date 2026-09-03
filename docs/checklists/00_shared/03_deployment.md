@@ -9,8 +9,8 @@
 
 브랜치 전략([01_repo_and_env_setup.md](01_repo_and_env_setup.md) 4절)에 따라 Vercel·Railway는 `dev`가 아니라 **`main`**을 추적한다. 아래 1·2번을 진행하기 전에 먼저:
 
-- [ ] 마일스톤 4까지의 작업이 `dev`에서 검증 기준을 통과했는지 확인
-- [ ] `dev → main` PR을 만들어 A·B가 함께 리뷰 후 병합 (이 시점부터 `main`이 처음으로 "배포 가능한 상태"가 된다)
+- [x] 마일스톤 4까지의 작업이 `dev`에서 검증 기준을 통과했는지 확인 — 백엔드 테스트 69개, 실 Supabase + 실 로컬 LLM으로 전체 브라우저 완주 2회(2026-09-03)
+- [x] `dev → main` PR을 만들어 A·B가 함께 리뷰 후 병합 (이 시점부터 `main`이 처음으로 "배포 가능한 상태"가 된다) — [PR #4](https://github.com/2024YSJ/Annswieteom/pull/4) 병합 완료(2026-09-03)
 - [ ] 이후 마일스톤 5에서 버그를 고칠 때도 같은 흐름 반복: `feature/*` 또는 `fix/*` → `dev` → (확인 후) `main`
 
 ## 1. 프론트엔드 배포 (Vercel)

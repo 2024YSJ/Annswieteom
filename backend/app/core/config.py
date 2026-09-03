@@ -4,6 +4,11 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     environment: str = "development"
 
+    # Comma-separated list of allowed frontend origins for CORS. Local dev
+    # only needs localhost:3000; deployed environments (Railway) must add
+    # the Vercel domains via this env var — see app/main.py.
+    cors_allow_origins: str = "http://localhost:3000"
+
     database_url: str
     jwt_secret: str
     jwt_access_expire_minutes: int = 30
