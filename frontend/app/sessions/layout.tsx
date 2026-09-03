@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { pathForStatus } from "@/lib/session-routes";
 import { queryKeys } from "@/lib/query-keys";
 import { useSessionsList } from "@/lib/use-sessions-list";
 
@@ -56,7 +55,7 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
             {sessions.map((session) => (
               <li key={session.id}>
                 <Link
-                  href={pathForStatus(session.id, session.status)}
+                  href={`/sessions/${session.id}`}
                   style={{
                     display: "block",
                     padding: "8px 10px",

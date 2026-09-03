@@ -1,18 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { documentApi, type DocumentRead, type SentenceRead, type Tone } from "@/lib/api-client";
+import { documentApi, type DocumentRead, type SentenceRead, type SessionStatus, type Tone } from "@/lib/api-client";
 import { errorMessage } from "@/lib/error-messages";
-import { pathForStatus } from "@/lib/session-routes";
 import { queryKeys } from "@/lib/query-keys";
-import { useSessionContext } from "@/lib/use-session-context";
-import { useAuth } from "@/lib/auth-context";
 import { EvidenceTag } from "@/components/EvidenceTag";
 import { ToneSlider } from "@/components/ToneSlider";
-
-const RESULT_STATUSES = new Set(["RESULT_GENERATE", "RESULT_REVIEW"]);
+import { ChatBubble } from "@/components/ChatBubble";
 
 function SentenceRow({
   sentence,
@@ -82,12 +77,16 @@ function SentenceRow({
   );
 }
 
-export default function ResultPage() {
-  const { id: sessionId } = useParams<{ id: string }>();
-  const router = useRouter();
-  const { accessToken } = useAuth();
+export function ResultSection({
+  sessionId,
+  accessToken,
+  status,
+}: {
+  sessionId: string;
+  accessToken: string;
+  status: SessionStatus;
+}) {
   const queryClient = useQueryClient();
-  const { data: ctx, isLoading: ctxLoading, error: ctxError } = useSessionContext(sessionId);
 
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -100,27 +99,22 @@ export default function ResultPage() {
     error: docError,
   } = useQuery({
     queryKey: queryKeys.document(sessionId),
-    queryFn: () => documentApi.get(sessionId, accessToken!),
-    enabled: !!accessToken && ctx?.status === "RESULT_REVIEW",
+    queryFn: () => documentApi.get(sessionId, accessToken),
+    enabled: status === "RESULT_REVIEW",
   });
 
   useEffect(() => {
-    if (!ctx) return;
-    if (!RESULT_STATUSES.has(ctx.status)) {
-      router.replace(pathForStatus(sessionId, ctx.status));
-      return;
-    }
-    if (ctx.status !== "RESULT_GENERATE" || generateFiredRef.current) return;
+    if (status !== "RESULT_GENERATE" || generateFiredRef.current) return;
     generateFiredRef.current = true;
 
     documentApi
-      .generate(sessionId, "neutral", accessToken!)
+      .generate(sessionId, "neutral", accessToken)
       .then((doc) => {
         queryClient.setQueryData(queryKeys.document(sessionId), doc);
         queryClient.invalidateQueries({ queryKey: queryKeys.session(sessionId) });
       })
       .catch((err) => setError(errorMessage(err)));
-  }, [ctx, sessionId, accessToken, router, queryClient]);
+  }, [status, sessionId, accessToken, queryClient]);
 
   function setDocument(doc: DocumentRead) {
     queryClient.setQueryData(queryKeys.document(sessionId), doc);
@@ -130,7 +124,7 @@ export default function ResultPage() {
     setError(null);
     setIsBusy(true);
     try {
-      const doc = await documentApi.regenerate(sessionId, tone, accessToken!);
+      const doc = await documentApi.regenerate(sessionId, tone, accessToken);
       setDocument(doc);
     } catch (err) {
       setError(errorMessage(err));
@@ -142,7 +136,7 @@ export default function ResultPage() {
   async function handleSaveSentence(sentenceId: string, text: string) {
     if (!document) return;
     try {
-      const updated = await documentApi.updateSentence(sessionId, sentenceId, text, accessToken!);
+      const updated = await documentApi.updateSentence(sessionId, sentenceId, text, accessToken);
       setDocument({ ...document, sentences: document.sentences.map((s) => (s.id === sentenceId ? updated : s)) });
     } catch (err) {
       setError(errorMessage(err));
@@ -154,7 +148,7 @@ export default function ResultPage() {
     setError(null);
     setIsBusy(true);
     try {
-      const updated = await documentApi.regenerateSentence(sessionId, sentenceId, accessToken!);
+      const updated = await documentApi.regenerateSentence(sessionId, sentenceId, accessToken);
       setDocument({ ...document, sentences: document.sentences.map((s) => (s.id === sentenceId ? updated : s)) });
     } catch (err) {
       setError(errorMessage(err));
@@ -167,7 +161,7 @@ export default function ResultPage() {
     setError(null);
     setIsBusy(true);
     try {
-      const doc = await documentApi.finalize(sessionId, accessToken!);
+      const doc = await documentApi.finalize(sessionId, accessToken);
       setDocument(doc);
     } catch (err) {
       setError(errorMessage(err));
@@ -179,7 +173,7 @@ export default function ResultPage() {
   async function handleExport() {
     setError(null);
     try {
-      const text = await documentApi.exportText(sessionId, accessToken!);
+      const text = await documentApi.exportText(sessionId, accessToken);
       setExportedText(text);
     } catch (err) {
       setError(errorMessage(err));
@@ -190,32 +184,17 @@ export default function ResultPage() {
     if (exportedText) await navigator.clipboard.writeText(exportedText);
   }
 
-  if (ctxLoading || !ctx) return <main style={{ maxWidth: 720, margin: "80px auto" }}>불러오는 중...</main>;
-  if (ctxError) {
-    return (
-      <main style={{ maxWidth: 720, margin: "80px auto", padding: "0 16px" }}>
-        <p style={{ color: "crimson" }}>{errorMessage(ctxError)}</p>
-      </main>
-    );
+  if (status === "RESULT_GENERATE" && !document) {
+    return <ChatBubble side="left">초안을 생성하는 중이에요...</ChatBubble>;
   }
-
-  if (ctx.status === "RESULT_GENERATE" && !document) {
-    return <main style={{ maxWidth: 720, margin: "80px auto", padding: "0 16px" }}>초안을 생성하는 중이에요...</main>;
-  }
-  if (docLoading && !document) return <main style={{ maxWidth: 720, margin: "80px auto" }}>불러오는 중...</main>;
+  if (docLoading && !document) return <ChatBubble side="left">불러오는 중...</ChatBubble>;
   if (docError && !document) {
-    return (
-      <main style={{ maxWidth: 720, margin: "80px auto", padding: "0 16px" }}>
-        <p style={{ color: "crimson" }}>{errorMessage(docError)}</p>
-      </main>
-    );
+    return <ChatBubble side="left"><p style={{ color: "crimson", margin: 0 }}>{errorMessage(docError)}</p></ChatBubble>;
   }
   if (!document) return null;
 
   return (
-    <main style={{ maxWidth: 720, margin: "80px auto", padding: "0 16px" }}>
-      <h1>완성된 커리어 내러티브</h1>
-
+    <ChatBubble side="left" label="완성된 커리어 내러티브">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <ToneSlider value={document.tone} onChange={handleToneChange} disabled={isBusy || document.status === "FINAL"} />
         <span style={{ fontSize: 12, color: "#888" }}>버전 {document.version} · {document.status === "FINAL" ? "확정됨" : "초안"}</span>
@@ -256,6 +235,6 @@ export default function ResultPage() {
           </button>
         </div>
       )}
-    </main>
+    </ChatBubble>
   );
 }

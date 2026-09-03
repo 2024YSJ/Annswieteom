@@ -17,7 +17,7 @@ test.describe("guest sessions", () => {
     ]);
     expect(createResponse.status()).toBe(201);
 
-    await expect(page).toHaveURL(/\/sessions\/[^/]+\/period$/);
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
     await expect(page.getByText("내 세션")).toBeVisible();
 
     // A guest is already logged in now (with one session) - going back to "/"
@@ -37,7 +37,7 @@ test.describe("guest sessions", () => {
 
     await page.goto("/");
     await page.getByRole("button", { name: /게스트로 시작하기/ }).click();
-    await expect(page).toHaveURL(/\/sessions\/[^/]+\/period$/);
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
     await page.getByRole("link", { name: "회원가입하고 저장하기" }).click();
     await expect(page).toHaveURL(/\/register$/);

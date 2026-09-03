@@ -18,7 +18,7 @@ export default function Home() {
     setIsCreating(true);
     try {
       const session = await sessionApi.create(accessToken!);
-      router.push(`/sessions/${session.id}/period`);
+      router.push(`/sessions/${session.id}`);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -32,7 +32,7 @@ export default function Home() {
     try {
       const guestAccessToken = await guestLogin();
       const session = await sessionApi.create(guestAccessToken);
-      router.push(`/sessions/${session.id}/period`);
+      router.push(`/sessions/${session.id}`);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
