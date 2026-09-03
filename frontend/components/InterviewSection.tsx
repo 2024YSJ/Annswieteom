@@ -127,7 +127,7 @@ export function InterviewSection({
 function ManualConfirmFallback({ stepLabel, onConfirm }: { stepLabel: string; onConfirm: (text: string) => void }) {
   const [text, setText] = useState("");
   return (
-    <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, marginTop: 12 }}>
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12, marginTop: 12 }}>
       <p style={{ fontSize: 13, color: "#888" }}>
         새로고침으로 이전 AI 초안을 다시 보여드릴 수 없어요. &quot;{stepLabel}&quot;에 대한 답변을 직접 적어주세요.
       </p>

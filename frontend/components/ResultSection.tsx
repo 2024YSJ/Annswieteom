@@ -8,6 +8,7 @@ import { queryKeys } from "@/lib/query-keys";
 import { EvidenceTag } from "@/components/EvidenceTag";
 import { ToneSlider } from "@/components/ToneSlider";
 import { ChatBubble } from "@/components/ChatBubble";
+import { LoadingNotice } from "@/components/LoadingNotice";
 
 function SentenceRow({
   sentence,
@@ -29,8 +30,9 @@ function SentenceRow({
         padding: 12,
         borderRadius: 8,
         marginBottom: 8,
-        background: sentence.consistency_check_passed ? "#fff" : "#fff8e1",
-        border: sentence.consistency_check_passed ? "1px solid #eee" : "1px solid #f0c36d",
+        background: sentence.consistency_check_passed ? "var(--surface-strong)" : "var(--surface-warn)",
+        color: sentence.consistency_check_passed ? "var(--surface-strong-text)" : "var(--surface-warn-text)",
+        border: sentence.consistency_check_passed ? "1px solid var(--border)" : "1px solid #f0c36d",
       }}
     >
       {!sentence.consistency_check_passed && (
@@ -185,9 +187,19 @@ export function ResultSection({
   }
 
   if (status === "RESULT_GENERATE" && !document) {
-    return <ChatBubble side="left" variant="card">초안을 생성하는 중이에요...</ChatBubble>;
+    return (
+      <ChatBubble side="left" variant="card">
+        <LoadingNotice label="초안을 생성하는 중이에요..." />
+      </ChatBubble>
+    );
   }
-  if (docLoading && !document) return <ChatBubble side="left" variant="card">불러오는 중...</ChatBubble>;
+  if (docLoading && !document) {
+    return (
+      <ChatBubble side="left" variant="card">
+        <LoadingNotice />
+      </ChatBubble>
+    );
+  }
   if (docError && !document) {
     return <ChatBubble side="left" variant="card"><p style={{ color: "crimson", margin: 0 }}>{errorMessage(docError)}</p></ChatBubble>;
   }

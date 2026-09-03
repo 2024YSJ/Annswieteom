@@ -11,7 +11,16 @@ const SOURCE_LABELS: Record<EvidenceRead["source_type"], string> = {
 
 function EvidenceDetail({ evidence }: { evidence: EvidenceRead }) {
   return (
-    <div style={{ background: "#fff", border: "1px solid #ddd", borderRadius: 6, padding: 8, fontSize: 13 }}>
+    <div
+      style={{
+        background: "var(--surface-strong)",
+        color: "var(--surface-strong-text)",
+        border: "1px solid var(--border-strong)",
+        borderRadius: 6,
+        padding: 8,
+        fontSize: 13,
+      }}
+    >
       <div style={{ color: "#666" }}>{evidence.content}</div>
       {evidence.citation ? (
         <div style={{ marginTop: 4 }}>

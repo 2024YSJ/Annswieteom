@@ -83,7 +83,15 @@ export function InterviewChatThread({
           {category.id === currentCategoryId && pending && (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }} aria-live="polite">
               <ChatBubble side="left">{pending.stepLabel}</ChatBubble>
-              <div style={{ background: "#f1f1f1", padding: "12px", borderRadius: 12, marginBottom: 8 }}>
+              <div
+                style={{
+                  background: "var(--surface)",
+                  color: "var(--surface-text)",
+                  padding: "12px",
+                  borderRadius: 12,
+                  marginBottom: 8,
+                }}
+              >
                 <div style={{ marginBottom: 8 }}>
                   <BasedOnBadge basedOn={pending.basedOn} />
                 </div>

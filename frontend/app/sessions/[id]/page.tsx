@@ -14,6 +14,7 @@ import { RecordsSection } from "@/components/RecordsSection";
 import { InterviewSection } from "@/components/InterviewSection";
 import { ResultSection } from "@/components/ResultSection";
 import { ChatComposer, type ActiveStep, type ComposerEvent } from "@/components/ChatComposer";
+import { LoadingNotice } from "@/components/LoadingNotice";
 
 export default function SessionChatPage() {
   const { id: sessionId } = useParams<{ id: string }>();
@@ -39,7 +40,13 @@ export default function SessionChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [ctx?.status]);
 
-  if (isLoading || !ctx) return <main style={{ maxWidth: 640, margin: "80px auto" }}>불러오는 중...</main>;
+  if (isLoading || !ctx) {
+    return (
+      <main style={{ maxWidth: 640, margin: "80px auto" }}>
+        <LoadingNotice />
+      </main>
+    );
+  }
   if (loadError) {
     return (
       <main style={{ maxWidth: 640, margin: "80px auto", padding: "0 16px" }}>
