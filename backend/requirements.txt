@@ -1,0 +1,23 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+alembic==1.13.3
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+pydantic==2.9.2
+pydantic-settings==2.5.2
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1  # passlib 1.7.4 crashes on bcrypt>=4.1 (reads a __about__.__version__ attr that was removed)
+email-validator==2.2.0  # required for pydantic's EmailStr
+python-jose[cryptography]==3.3.0
+httpx==0.28.1  # must satisfy google-genai's httpx>=0.28.1 requirement (bumped from 0.27.2, which pip's resolver only let through on a stale venv)
+python-multipart==0.0.12
+Jinja2==3.1.4
+google-genai==2.21.0
+pgvector==0.3.5
+beautifulsoup4==4.12.3
+lxml==5.3.0
+trafilatura==2.0.0
+pytest==8.3.3
+pytest-asyncio==0.24.0
+aiosqlite==0.20.0  # in-memory SQLite for auth API tests (no network DB needed)
