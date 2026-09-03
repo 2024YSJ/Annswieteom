@@ -37,6 +37,12 @@ class DraftDocument:
 
 
 @dataclass
+class CategorySuggestion:
+    category_type: str
+    custom_label: str
+
+
+@dataclass
 class ConfirmedFact:
     id: str
     content: str
@@ -66,4 +72,7 @@ class AllProvidersFailedError(Exception):
 class LLMProvider(Protocol):
     async def draft_suggestion(self, context: InterviewContext, step: str) -> Suggestion: ...
     async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument: ...
+    async def extract_categories(
+        self, free_text: str, gap_start: date, gap_end: date
+    ) -> list[CategorySuggestion]: ...
     async def health_check(self) -> bool: ...

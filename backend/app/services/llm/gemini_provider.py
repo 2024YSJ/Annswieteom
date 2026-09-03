@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 from google import genai
@@ -8,8 +9,10 @@ from google.genai import types
 from jinja2 import Environment, FileSystemLoader
 
 from app.core.config import settings
+from app.models.activity_category import CATEGORY_TYPES
 from app.services.llm.base import (
     BasedOn,
+    CategorySuggestion,
     ConfirmedFact,
     DraftDocument,
     InterviewContext,
@@ -48,6 +51,23 @@ class GeminiProvider:
             else:
                 based_on = BasedOn(type=based_on_raw.get("type", "generic_pattern"))
             return Suggestion(draft_text=data["draft_text"], based_on=based_on)
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
+    async def extract_categories(
+        self, free_text: str, gap_start: date, gap_end: date
+    ) -> list[CategorySuggestion]:
+        prompt = _render("extract_categories.jinja", free_text=free_text, gap_start=gap_start, gap_end=gap_end)
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            return [
+                CategorySuggestion(
+                    category_type=c["category_type"] if c["category_type"] in CATEGORY_TYPES else "other",
+                    custom_label=c["custom_label"],
+                )
+                for c in data["categories"]
+            ]
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
 

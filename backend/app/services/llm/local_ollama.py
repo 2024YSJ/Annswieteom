@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import httpx
 from jinja2 import Environment, FileSystemLoader
 
 from app.core.config import settings
+from app.models.activity_category import CATEGORY_TYPES
 from app.services.llm.base import (
     AllProvidersFailedError,
     BasedOn,
+    CategorySuggestion,
     ConfirmedFact,
     DraftDocument,
     InterviewContext,
@@ -74,6 +77,23 @@ class LocalOllamaProvider:
             # The model didn't follow the requested JSON schema — treat this
             # like any other provider failure so FallbackProvider moves on
             # to the next provider instead of a raw 500.
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def extract_categories(
+        self, free_text: str, gap_start: date, gap_end: date
+    ) -> list[CategorySuggestion]:
+        prompt = _render("extract_categories.jinja", free_text=free_text, gap_start=gap_start, gap_end=gap_end)
+        response_text = await self._generate(prompt, timeout=20.0)
+        try:
+            data = json.loads(response_text)
+            return [
+                CategorySuggestion(
+                    category_type=c["category_type"] if c["category_type"] in CATEGORY_TYPES else "other",
+                    custom_label=c["custom_label"],
+                )
+                for c in data["categories"]
+            ]
+        except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument:
