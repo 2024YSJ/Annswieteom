@@ -30,7 +30,9 @@ export function ChatBubble({
     return (
       <div style={{ alignSelf: "flex-end", maxWidth: "80%" }}>
         {label && <div style={{ fontSize: 12, color: "#888", textAlign: "right" }}>{label}</div>}
-        <div style={{ background: "#daf1ff", padding: "8px 12px", borderRadius: 12 }}>{children}</div>
+        <div style={{ background: "var(--accent-surface)", color: "var(--accent-surface-text)", padding: "8px 12px", borderRadius: 12 }}>
+          {children}
+        </div>
       </div>
     );
   }
@@ -39,7 +41,17 @@ export function ChatBubble({
     return (
       <div style={{ alignSelf: "flex-start", width: "100%" }}>
         {label && <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>{label}</div>}
-        <div style={{ background: "#fff", border: "1px solid #eee", borderRadius: 12, padding: 16 }}>{children}</div>
+        <div
+          style={{
+            background: "var(--surface-strong)",
+            color: "var(--surface-strong-text)",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            padding: 16,
+          }}
+        >
+          {children}
+        </div>
       </div>
     );
   }
@@ -47,7 +59,9 @@ export function ChatBubble({
   return (
     <div style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
       {label && <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>{label}</div>}
-      <div style={{ background: "#f1f1f1", padding: "12px", borderRadius: 12 }}>{children}</div>
+      <div style={{ background: "var(--surface)", color: "var(--surface-text)", padding: "12px", borderRadius: 12 }}>
+        {children}
+      </div>
     </div>
   );
 }

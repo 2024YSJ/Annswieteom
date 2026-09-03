@@ -41,7 +41,7 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
         style={{
           width: 220,
           flexShrink: 0,
-          borderLeft: "1px solid #eee",
+          borderLeft: "1px solid var(--border)",
           padding: "80px 16px 16px",
           minHeight: "100vh",
           boxSizing: "border-box",
@@ -62,7 +62,8 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
                     borderRadius: 6,
                     fontSize: 13,
                     textDecoration: "none",
-                    background: session.id === params.id ? "#f0f0f0" : "transparent",
+                    background: session.id === params.id ? "var(--hover-surface)" : "transparent",
+                    color: session.id === params.id ? "var(--hover-surface-text)" : "inherit",
                   }}
                 >
                   <div>{new Date(session.created_at).toLocaleDateString("ko-KR")}</div>
