@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -23,6 +24,8 @@ from app.schemas.session import (
     InterviewConfirm,
     InterviewConfirmRead,
     InterviewNextRead,
+    PeriodExtractRead,
+    PeriodExtractRequest,
     RecordExcerptRead,
     RecordsSkipRead,
     StatusRead,
@@ -76,6 +79,29 @@ async def set_period(
     session.status = next_status
     await db.commit()
     return StatusRead(status=session.status)
+
+
+@router.post("/{session_id}/period/extract", response_model=PeriodExtractRead)
+async def extract_period(
+    payload: PeriodExtractRequest,
+    session: SessionModel = Depends(get_owned_session),
+    llm: LLMProvider = Depends(get_llm_provider),
+) -> PeriodExtractRead:
+    try:
+        orchestrator.require_status("period_extract", session.status, "PERIOD_INPUT")
+    except orchestrator.StateMachineViolation as exc:
+        raise _violation_to_409(exc) from exc
+
+    # Nothing is written to the DB here — same honesty-guardrail reasoning as
+    # categories/extract. The real POST /period still owns persisting.
+    try:
+        suggestion = await llm.extract_period(payload.text, date.today())
+    except AllProvidersFailedError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
+
+    if suggestion is None:
+        return PeriodExtractRead(start_date=None, end_date=None)
+    return PeriodExtractRead(start_date=suggestion.start_date, end_date=suggestion.end_date)
 
 
 @router.post("/{session_id}/categories", response_model=StatusRead)

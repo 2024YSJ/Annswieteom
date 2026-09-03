@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { ActivityCategoryRead, BasedOnRead } from "@/lib/api-client";
-import { CATEGORY_LABELS } from "@/lib/session-routes";
+import { CATEGORY_LABELS, QUESTION_BY_FACT_TYPE } from "@/lib/session-routes";
+import { ChatBubble } from "@/components/ChatBubble";
 
 const FACT_TYPE_LABELS: Record<string, string> = {
   frequency: "빈도",
@@ -71,15 +72,17 @@ export function InterviewChatThread({
             ▸ {category.custom_label ?? CATEGORY_LABELS[category.category_type]}
           </div>
           {category.confirmed_facts.map((fact) => (
-            <div key={fact.id} style={{ alignSelf: "flex-end", maxWidth: "80%" }}>
-              <div style={{ fontSize: 12, color: "#888", textAlign: "right" }}>{FACT_TYPE_LABELS[fact.fact_type]} · 확인됨</div>
-              <div style={{ background: "#daf1ff", padding: "8px 12px", borderRadius: 12 }}>{fact.content}</div>
+            <div key={fact.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <ChatBubble side="left">{QUESTION_BY_FACT_TYPE[fact.fact_type]}</ChatBubble>
+              <ChatBubble side="right" label={`${FACT_TYPE_LABELS[fact.fact_type]} · 확인됨`}>
+                {fact.content}
+              </ChatBubble>
             </div>
           ))}
 
           {category.id === currentCategoryId && pending && (
-            <div style={{ alignSelf: "flex-start", maxWidth: "85%" }} aria-live="polite">
-              <div style={{ fontSize: 12, color: "#888" }}>{pending.stepLabel}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }} aria-live="polite">
+              <ChatBubble side="left">{pending.stepLabel}</ChatBubble>
               <div style={{ background: "#f1f1f1", padding: "12px", borderRadius: 12, marginBottom: 8 }}>
                 <div style={{ marginBottom: 8 }}>
                   <BasedOnBadge basedOn={pending.basedOn} />
