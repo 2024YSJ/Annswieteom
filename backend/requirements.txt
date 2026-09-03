@@ -4,8 +4,8 @@ sqlalchemy==2.0.35
 alembic==1.13.3
 asyncpg==0.29.0
 psycopg2-binary==2.9.9
-pydantic==2.9.2
-pydantic-settings==2.5.2
+pydantic==2.13.5  # must satisfy google-genai's pydantic>=2.12.5 requirement (bumped from 2.9.2)
+pydantic-settings==2.15.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1  # passlib 1.7.4 crashes on bcrypt>=4.1 (reads a __about__.__version__ attr that was removed)
 email-validator==2.2.0  # required for pydantic's EmailStr
