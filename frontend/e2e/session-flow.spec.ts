@@ -43,6 +43,19 @@ test.describe("unified session chat flow", () => {
       }),
     );
 
+    // Category extraction also calls the LLM — mocked for the same reason
+    // interview/next is (deterministic without a local Ollama/Gemini). Unlike
+    // interview/next, this call never mutates session state server-side
+    // (nothing is persisted until the real, unmocked POST /categories call
+    // below), so mocking it doesn't risk desyncing real vs. mocked state.
+    await page.route("**/api/v1/sessions/*/categories/extract", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [{ category_type: "part_time", custom_label: "아르바이트" }] }),
+      }),
+    );
+
     await page.goto("/register");
     await page.getByLabel("이메일").fill(email);
     await page.getByLabel("닉네임").fill("Flow Tester");
@@ -67,8 +80,10 @@ test.describe("unified session chat flow", () => {
 
     // --- Period completed, Category section (active) ---
     await expect(page.getByText("공백기: 2024-01-01 ~ 2024-06-30")).toBeVisible();
-    await page.getByRole("checkbox", { name: "아르바이트" }).check();
-    await page.getByRole("button", { name: "다음" }).click();
+    await page.getByPlaceholder(/편의점에서/).fill("편의점에서 6개월 정도 아르바이트를 했어요.");
+    await page.getByRole("button", { name: "카테고리 찾기" }).click();
+    await expect(page.locator('input[type="text"]')).toHaveValue("아르바이트");
+    await page.getByRole("button", { name: "확인" }).click();
 
     // --- Category completed, Records section (active) ---
     await expect(page.getByText("선택한 활동: 아르바이트")).toBeVisible();

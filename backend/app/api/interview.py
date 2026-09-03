@@ -15,7 +15,10 @@ from app.models.gap_period import GapPeriod
 from app.models.session import Session as SessionModel
 from app.schemas.session import (
     BasedOnRead,
+    CategoryExtractRead,
+    CategoryExtractRequest,
     CategorySelect,
+    CategorySuggestionRead,
     GapPeriodSet,
     InterviewConfirm,
     InterviewConfirmRead,
@@ -87,10 +90,48 @@ async def select_categories(
         raise _violation_to_409(exc) from exc
 
     for idx, item in enumerate(payload.categories):
-        db.add(ActivityCategory(session_id=session.id, category_type=item.category_type, order_index=idx))
+        db.add(
+            ActivityCategory(
+                session_id=session.id,
+                category_type=item.category_type,
+                custom_label=item.custom_label,
+                order_index=idx,
+            )
+        )
     session.status = next_status
     await db.commit()
     return StatusRead(status=session.status)
+
+
+@router.post("/{session_id}/categories/extract", response_model=CategoryExtractRead)
+async def extract_categories(
+    payload: CategoryExtractRequest,
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMProvider = Depends(get_llm_provider),
+) -> CategoryExtractRead:
+    try:
+        orchestrator.require_status("categories_extract", session.status, "CATEGORY_SELECT")
+    except orchestrator.StateMachineViolation as exc:
+        raise _violation_to_409(exc) from exc
+
+    gap_period = (
+        await db.execute(select(GapPeriod).where(GapPeriod.session_id == session.id))
+    ).scalar_one()
+
+    # Nothing is written to the DB here — these are only suggestions. The
+    # user must review/edit them and call POST /categories to actually
+    # persist anything (honesty guardrail: an AI guess is not a confirmed fact).
+    try:
+        suggestions = await llm.extract_categories(payload.text, gap_period.start_date, gap_period.end_date)
+    except AllProvidersFailedError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
+
+    return CategoryExtractRead(
+        suggestions=[
+            CategorySuggestionRead(category_type=s.category_type, custom_label=s.custom_label) for s in suggestions
+        ]
+    )
 
 
 @router.post("/{session_id}/records/skip", response_model=RecordsSkipRead)

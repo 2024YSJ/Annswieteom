@@ -33,10 +33,24 @@ class GapPeriodRead(BaseModel):
 
 class CategoryInput(BaseModel):
     category_type: str
+    custom_label: str | None = None
 
 
 class CategorySelect(BaseModel):
     categories: list[CategoryInput]
+
+
+class CategoryExtractRequest(BaseModel):
+    text: str
+
+
+class CategorySuggestionRead(BaseModel):
+    category_type: str
+    custom_label: str
+
+
+class CategoryExtractRead(BaseModel):
+    suggestions: list[CategorySuggestionRead]
 
 
 class ConfirmedFactRead(BaseModel):

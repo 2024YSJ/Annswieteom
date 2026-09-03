@@ -209,6 +209,20 @@ export interface ActivityCategoryRead {
   confirmed_facts: ConfirmedFactRead[];
 }
 
+export interface CategoryInput {
+  category_type: CategoryType;
+  custom_label?: string;
+}
+
+export interface CategorySuggestion {
+  category_type: CategoryType;
+  custom_label: string;
+}
+
+export interface CategoryExtractRead {
+  suggestions: CategorySuggestion[];
+}
+
 export interface RecordChunkExcerptRead {
   chunk_id: string;
   text: string;
@@ -290,11 +304,18 @@ export const sessionApi = {
       body: JSON.stringify({ start_date: startDate, end_date: endDate }),
     }),
 
-  selectCategories: (sessionId: string, categoryTypes: CategoryType[], accessToken: string) =>
+  selectCategories: (sessionId: string, categories: CategoryInput[], accessToken: string) =>
     request<StatusRead>(`/api/v1/sessions/${sessionId}/categories`, {
       method: "POST",
       headers: authHeaders(accessToken),
-      body: JSON.stringify({ categories: categoryTypes.map((category_type) => ({ category_type })) }),
+      body: JSON.stringify({ categories }),
+    }),
+
+  extractCategories: (sessionId: string, text: string, accessToken: string) =>
+    request<CategoryExtractRead>(`/api/v1/sessions/${sessionId}/categories/extract`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ text }),
     }),
 
   skipRecords: (sessionId: string, accessToken: string) =>

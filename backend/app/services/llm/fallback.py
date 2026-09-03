@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import date
+
 from app.core.config import settings
 from app.services.llm.base import (
     AllProvidersFailedError,
+    CategorySuggestion,
     ConfirmedFact,
     DraftDocument,
     InterviewContext,
@@ -31,6 +34,16 @@ class FallbackProvider:
         for provider in self.providers:
             try:
                 return await provider.draft_suggestion(context, step)
+            except (TimeoutError, ProviderUnavailableError):
+                continue
+        raise AllProvidersFailedError()
+
+    async def extract_categories(
+        self, free_text: str, gap_start: date, gap_end: date
+    ) -> list[CategorySuggestion]:
+        for provider in self.providers:
+            try:
+                return await provider.extract_categories(free_text, gap_start, gap_end)
             except (TimeoutError, ProviderUnavailableError):
                 continue
         raise AllProvidersFailedError()
