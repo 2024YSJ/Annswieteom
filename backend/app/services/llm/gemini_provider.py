@@ -40,13 +40,16 @@ class GeminiProvider:
             step_label=step,
         )
         text = await self._call(prompt)
-        data = json.loads(text)
-        based_on_raw = data.get("based_on", "generic_pattern")
-        if isinstance(based_on_raw, str):
-            based_on = BasedOn(type=based_on_raw)
-        else:
-            based_on = BasedOn(type=based_on_raw.get("type", "generic_pattern"))
-        return Suggestion(draft_text=data["draft_text"], based_on=based_on)
+        try:
+            data = json.loads(text)
+            based_on_raw = data.get("based_on", "generic_pattern")
+            if isinstance(based_on_raw, str):
+                based_on = BasedOn(type=based_on_raw)
+            else:
+                based_on = BasedOn(type=based_on_raw.get("type", "generic_pattern"))
+            return Suggestion(draft_text=data["draft_text"], based_on=based_on)
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
 
     async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument:
         category_label = facts[0].fact_type if facts else ""
@@ -57,12 +60,15 @@ class GeminiProvider:
             category_label=category_label,
         )
         text = await self._call(prompt)
-        data = json.loads(text)
-        sentences = [
-            SentenceWithEvidence(text=s["text"], fact_indices=s["fact_indices"])
-            for s in data["sentences"]
-        ]
-        return DraftDocument(sentences=sentences)
+        try:
+            data = json.loads(text)
+            sentences = [
+                SentenceWithEvidence(text=s["text"], fact_indices=s["fact_indices"])
+                for s in data["sentences"]
+            ]
+            return DraftDocument(sentences=sentences)
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
 
     async def health_check(self) -> bool:
         return bool(settings.gemini_api_key)

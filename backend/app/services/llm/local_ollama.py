@@ -64,11 +64,17 @@ class LocalOllamaProvider:
             step_label=step,
         )
         response_text = await self._generate(prompt, timeout=20.0)
-        data = json.loads(response_text)
-        return Suggestion(
-            draft_text=data["draft_text"],
-            based_on=_parse_based_on(data.get("based_on", "generic_pattern")),
-        )
+        try:
+            data = json.loads(response_text)
+            return Suggestion(
+                draft_text=data["draft_text"],
+                based_on=_parse_based_on(data.get("based_on", "generic_pattern")),
+            )
+        except (json.JSONDecodeError, KeyError) as exc:
+            # The model didn't follow the requested JSON schema — treat this
+            # like any other provider failure so FallbackProvider moves on
+            # to the next provider instead of a raw 500.
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument:
         category_label = facts[0].fact_type if facts else ""
@@ -79,12 +85,15 @@ class LocalOllamaProvider:
             category_label=category_label,
         )
         response_text = await self._generate(prompt, timeout=20.0)
-        data = json.loads(response_text)
-        sentences = [
-            SentenceWithEvidence(text=s["text"], fact_indices=s["fact_indices"])
-            for s in data["sentences"]
-        ]
-        return DraftDocument(sentences=sentences)
+        try:
+            data = json.loads(response_text)
+            sentences = [
+                SentenceWithEvidence(text=s["text"], fact_indices=s["fact_indices"])
+                for s in data["sentences"]
+            ]
+            return DraftDocument(sentences=sentences)
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def health_check(self) -> bool:
         try:
