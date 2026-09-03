@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { errorMessage } from "@/lib/error-messages";
@@ -13,6 +13,7 @@ import { CategorySection } from "@/components/CategorySection";
 import { RecordsSection } from "@/components/RecordsSection";
 import { InterviewSection } from "@/components/InterviewSection";
 import { ResultSection } from "@/components/ResultSection";
+import { ChatComposer, type ActiveStep, type ComposerEvent } from "@/components/ChatComposer";
 
 export default function SessionChatPage() {
   const { id: sessionId } = useParams<{ id: string }>();
@@ -20,6 +21,7 @@ export default function SessionChatPage() {
   const queryClient = useQueryClient();
   const { data: ctx, isLoading, error: loadError } = useSessionContext(sessionId);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [composerEvent, setComposerEvent] = useState<ComposerEvent | null>(null);
 
   useEffect(() => {
     if (!ctx) return;
@@ -52,6 +54,14 @@ export default function SessionChatPage() {
   const interviewActive = INTERVIEW_STATUSES.has(ctx.status);
   const resultActive = RESULT_STATUSES.has(ctx.status);
 
+  const activeStep: ActiveStep | null = !periodDone
+    ? "period"
+    : !categoriesDone
+      ? "categories"
+      : !recordsDone
+        ? "records"
+        : null;
+
   return (
     <main style={{ maxWidth: 640, margin: "80px auto 40px", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
       <PeriodSection
@@ -59,6 +69,7 @@ export default function SessionChatPage() {
         accessToken={accessToken!}
         mode={periodDone ? "completed" : "active"}
         gapPeriod={ctx.gap_period}
+        composerEvent={composerEvent?.forStep === "period" ? composerEvent : null}
       />
 
       {(periodDone || categoriesDone) && (
@@ -67,11 +78,17 @@ export default function SessionChatPage() {
           accessToken={accessToken!}
           mode={categoriesDone ? "completed" : "active"}
           categories={ctx.categories}
+          composerEvent={composerEvent?.forStep === "categories" ? composerEvent : null}
         />
       )}
 
       {categoriesDone && (
-        <RecordsSection sessionId={sessionId} accessToken={accessToken!} mode={recordsDone ? "completed" : "active"} />
+        <RecordsSection
+          sessionId={sessionId}
+          accessToken={accessToken!}
+          mode={recordsDone ? "completed" : "active"}
+          composerEvent={composerEvent?.forStep === "records" ? composerEvent : null}
+        />
       )}
 
       {(interviewActive || resultActive) && (
@@ -85,6 +102,8 @@ export default function SessionChatPage() {
       )}
 
       {resultActive && <ResultSection sessionId={sessionId} accessToken={accessToken!} status={ctx.status} />}
+
+      {activeStep && <ChatComposer key={activeStep} activeStep={activeStep} onSend={setComposerEvent} />}
 
       <div ref={bottomRef} />
     </main>

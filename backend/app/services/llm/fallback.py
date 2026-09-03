@@ -10,6 +10,7 @@ from app.services.llm.base import (
     DraftDocument,
     InterviewContext,
     LLMProvider,
+    PeriodSuggestion,
     ProviderUnavailableError,
     Suggestion,
 )
@@ -44,6 +45,18 @@ class FallbackProvider:
         for provider in self.providers:
             try:
                 return await provider.extract_categories(free_text, gap_start, gap_end)
+            except (TimeoutError, ProviderUnavailableError):
+                continue
+        raise AllProvidersFailedError()
+
+    async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None:
+        # A provider returning None (couldn't confidently parse dates) is a
+        # successful result, not a failure — it's returned immediately here,
+        # same as extract_categories returning an empty list. Only an actual
+        # exception triggers falling through to the next provider.
+        for provider in self.providers:
+            try:
+                return await provider.extract_period(free_text, today)
             except (TimeoutError, ProviderUnavailableError):
                 continue
         raise AllProvidersFailedError()

@@ -31,6 +31,22 @@ class GapPeriodRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PeriodExtractRequest(BaseModel):
+    text: str
+
+
+class PeriodExtractRead(BaseModel):
+    """Response of `POST /period/extract`.
+
+    Invariant: either both fields are populated (a confident guess) or both
+    are null (the model couldn't confidently determine a range) — never one
+    without the other.
+    """
+
+    start_date: date | None
+    end_date: date | None
+
+
 class CategoryInput(BaseModel):
     category_type: str
     custom_label: str | None = None

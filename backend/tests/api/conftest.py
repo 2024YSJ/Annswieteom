@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,7 +23,16 @@ from app.models.refresh_token import RefreshToken
 from app.models.session import Session as SessionModel
 from app.models.user import User
 from app.services.embedding import get_embedding_provider
-from app.services.llm.base import BasedOn, CategorySuggestion, DraftDocument, SentenceWithEvidence, Suggestion
+from app.services.llm.base import (
+    BasedOn,
+    CategorySuggestion,
+    DraftDocument,
+    PeriodSuggestion,
+    SentenceWithEvidence,
+    Suggestion,
+)
+
+_DEFAULT_PERIOD_SUGGESTION = object()  # sentinel: "use the built-in default", distinct from an explicit None
 from app.services.record_pipeline.citation import get_fact_citation
 from app.services.record_pipeline.search import get_chunk_search
 from app.services.storage import get_storage
@@ -75,13 +85,16 @@ class FakeLLMProvider:
         suggestions: list[Suggestion] | None = None,
         documents: list[DraftDocument] | None = None,
         category_suggestions: list | None = None,
+        period_suggestion=_DEFAULT_PERIOD_SUGGESTION,
     ):
         self._queue = list(suggestions) if suggestions else None
         self._document_queue = list(documents) if documents else None
         self._category_suggestions = category_suggestions
+        self._period_suggestion = period_suggestion
         self.calls: list[tuple[str, str]] = []
         self.document_calls: list[tuple[list[str], str]] = []
         self.extract_calls: list[str] = []
+        self.period_calls: list[str] = []
 
     async def draft_suggestion(self, context, step):
         self.calls.append((context.category_label, step))
@@ -104,6 +117,12 @@ class FakeLLMProvider:
         if self._category_suggestions is not None:
             return self._category_suggestions
         return [CategorySuggestion(category_type="part_time", custom_label="편의점 아르바이트")]
+
+    async def extract_period(self, free_text, today):
+        self.period_calls.append(free_text)
+        if self._period_suggestion is _DEFAULT_PERIOD_SUGGESTION:
+            return PeriodSuggestion(start_date=date(2025, 1, 1), end_date=date(2025, 6, 30))
+        return self._period_suggestion
 
     async def health_check(self) -> bool:
         return True

@@ -43,6 +43,12 @@ class CategorySuggestion:
 
 
 @dataclass
+class PeriodSuggestion:
+    start_date: date
+    end_date: date
+
+
+@dataclass
 class ConfirmedFact:
     id: str
     content: str
@@ -75,4 +81,5 @@ class LLMProvider(Protocol):
     async def extract_categories(
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]: ...
+    async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None: ...
     async def health_check(self) -> bool: ...

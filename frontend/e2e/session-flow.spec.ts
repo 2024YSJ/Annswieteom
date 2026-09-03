@@ -5,14 +5,15 @@ function uniqueEmail(): string {
 }
 
 /**
- * Drives the unified /sessions/{id} chat page through period -> categories ->
- * records(skip) -> arrival at the interview section, all against the real
+ * Drives the unified /sessions/{id} chat page — now with a single shared
+ * ChatComposer for period/categories/records — through period -> categories
+ * -> records(skip) -> arrival at the interview section, all against the real
  * local backend/DB (none of these calls touch an LLM, so this part is
  * deterministic without a local Ollama/Gemini running).
  *
- * The one LLM-touching call in this range, `GET interview/next`, is mocked
- * just enough to render a draft — but the test stops there rather than
- * clicking "확인" and continuing. Confirming a fact would call the *real*
+ * The two LLM-touching calls in this range, `POST period/extract` and
+ * `POST categories/extract`, are mocked — but the test stops before clicking
+ * "확인" on the interview draft. Confirming a fact would call the *real*
  * `interview/confirm`, which requires a real `pending_draft` row that only a
  * real (unmocked) `interview/next` call would have written server-side; since
  * that call is mocked here, the DB was never actually transitioned, and a
@@ -24,11 +25,32 @@ function uniqueEmail(): string {
  * itself is already thoroughly covered by the backend's own pytest suite
  * (unchanged in this phase) — this test's job is only to prove the new
  * unified-page wiring is correct, not to re-prove backend logic.
+ *
+ * `period/extract` and `categories/extract` never mutate session state
+ * server-side (nothing is persisted until the real, unmocked POST
+ * /period / POST /categories calls below), so mocking them doesn't risk
+ * desyncing real vs. mocked state the way mocking interview/next would.
  */
 test.describe("unified session chat flow", () => {
   test("period -> categories -> records -> interview section, on one URL", async ({ page }) => {
     const email = uniqueEmail();
     const password = "password123";
+
+    await page.route("**/api/v1/sessions/*/period/extract", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ start_date: "2024-01-01", end_date: "2024-06-30" }),
+      }),
+    );
+
+    await page.route("**/api/v1/sessions/*/categories/extract", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [{ category_type: "part_time", custom_label: "아르바이트" }] }),
+      }),
+    );
 
     await page.route("**/api/v1/sessions/*/interview/next", (route) =>
       route.fulfill({
@@ -40,19 +62,6 @@ test.describe("unified session chat flow", () => {
           ai_draft: "이 활동을 주 3회 정도 하신 것으로 보여요.",
           based_on: { type: "generic_pattern", excerpts: [] },
         }),
-      }),
-    );
-
-    // Category extraction also calls the LLM — mocked for the same reason
-    // interview/next is (deterministic without a local Ollama/Gemini). Unlike
-    // interview/next, this call never mutates session state server-side
-    // (nothing is persisted until the real, unmocked POST /categories call
-    // below), so mocking it doesn't risk desyncing real vs. mocked state.
-    await page.route("**/api/v1/sessions/*/categories/extract", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ suggestions: [{ category_type: "part_time", custom_label: "아르바이트" }] }),
       }),
     );
 
@@ -71,18 +80,20 @@ test.describe("unified session chat flow", () => {
     await page.getByRole("button", { name: "새로 시작하기" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
+    const composerInput = page.getByPlaceholder("메시지를 입력하세요");
+
     // --- Period section (active) ---
-    await expect(page.getByText("공백기 기간을 알려주세요")).toBeVisible();
-    const [startDate, endDate] = await page.locator('input[type="date"]').all();
-    await startDate.fill("2024-01-01");
-    await endDate.fill("2024-06-30");
-    await page.getByRole("button", { name: "다음" }).click();
+    await expect(page.getByText("공백기가 언제부터 언제까지였나요?", { exact: false })).toBeVisible();
+    await composerInput.fill("작년 1월부터 6월까지요");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await expect(page.getByText("다음 기간으로 이해했어요: 2024-01-01 ~ 2024-06-30", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "확인" }).click();
 
     // --- Period completed, Category section (active) ---
     await expect(page.getByText("공백기: 2024-01-01 ~ 2024-06-30")).toBeVisible();
-    await page.getByPlaceholder(/편의점에서/).fill("편의점에서 6개월 정도 아르바이트를 했어요.");
-    await page.getByRole("button", { name: "카테고리 찾기" }).click();
-    await expect(page.locator('input[type="text"]')).toHaveValue("아르바이트");
+    await composerInput.fill("편의점에서 6개월 정도 아르바이트를 했어요.");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await expect(page.locator('input[type="text"]').first()).toHaveValue("아르바이트");
     await page.getByRole("button", { name: "확인" }).click();
 
     // --- Category completed, Records section (active) ---
@@ -95,6 +106,9 @@ test.describe("unified session chat flow", () => {
     await expect(page.getByText("▸ 아르바이트")).toBeVisible();
     await expect(page.getByText("이 활동을 주 3회 정도 하신 것으로 보여요.")).toBeVisible();
     await expect(page.getByRole("button", { name: "맞아요, 이대로 확인" })).toBeVisible();
+
+    // The shared composer is gone once there's no more free-text step active.
+    await expect(composerInput).not.toBeVisible();
 
     // Sidebar reflects progress without a URL change.
     await expect(page.getByText("내 세션")).toBeVisible();

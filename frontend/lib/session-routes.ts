@@ -40,3 +40,13 @@ export const CONFIRM_STEP_BY_DRAFT_STEP: Record<string, "FREQ_CONFIRM" | "TASK_C
   TASK_DRAFT: "TASK_CONFIRM",
   ACHIEVEMENT_DRAFT: "ACHIEVEMENT_CONFIRM",
 };
+
+/** Lets InterviewChatThread show the actual question for an already-confirmed
+ * fact (only its fact_type is available at that point, not the step it was
+ * asked from) — same three strings as STEP_LABELS, keyed differently.
+ */
+export const QUESTION_BY_FACT_TYPE: Record<"frequency" | "task" | "achievement", string> = {
+  frequency: STEP_LABELS.FREQ_DRAFT,
+  task: STEP_LABELS.TASK_DRAFT,
+  achievement: STEP_LABELS.ACHIEVEMENT_DRAFT,
+};

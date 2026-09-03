@@ -192,6 +192,11 @@ export interface GapPeriodRead {
   end_date: string;
 }
 
+export interface PeriodExtractRead {
+  start_date: string | null;
+  end_date: string | null;
+}
+
 export interface ConfirmedFactRead {
   id: string;
   fact_type: "frequency" | "task" | "achievement";
@@ -302,6 +307,13 @@ export const sessionApi = {
       method: "POST",
       headers: authHeaders(accessToken),
       body: JSON.stringify({ start_date: startDate, end_date: endDate }),
+    }),
+
+  extractPeriod: (sessionId: string, text: string, accessToken: string) =>
+    request<PeriodExtractRead>(`/api/v1/sessions/${sessionId}/period/extract`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ text }),
     }),
 
   selectCategories: (sessionId: string, categories: CategoryInput[], accessToken: string) =>

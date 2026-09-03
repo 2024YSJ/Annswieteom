@@ -16,6 +16,7 @@ from app.services.llm.base import (
     ConfirmedFact,
     DraftDocument,
     InterviewContext,
+    PeriodSuggestion,
     ProviderUnavailableError,
     RecordExcerpt,
     SentenceWithEvidence,
@@ -94,6 +95,21 @@ class LocalOllamaProvider:
                 for c in data["categories"]
             ]
         except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None:
+        prompt = _render("extract_period.jinja", free_text=free_text, today=today)
+        response_text = await self._generate(prompt, timeout=20.0)
+        try:
+            data = json.loads(response_text)
+            if data["start_date"] is None or data["end_date"] is None:
+                return None
+            start = date.fromisoformat(data["start_date"])
+            end = date.fromisoformat(data["end_date"])
+            if start > end:
+                return None
+            return PeriodSuggestion(start_date=start, end_date=end)
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument:

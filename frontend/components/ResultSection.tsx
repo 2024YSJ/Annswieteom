@@ -185,16 +185,16 @@ export function ResultSection({
   }
 
   if (status === "RESULT_GENERATE" && !document) {
-    return <ChatBubble side="left">초안을 생성하는 중이에요...</ChatBubble>;
+    return <ChatBubble side="left" variant="card">초안을 생성하는 중이에요...</ChatBubble>;
   }
-  if (docLoading && !document) return <ChatBubble side="left">불러오는 중...</ChatBubble>;
+  if (docLoading && !document) return <ChatBubble side="left" variant="card">불러오는 중...</ChatBubble>;
   if (docError && !document) {
-    return <ChatBubble side="left"><p style={{ color: "crimson", margin: 0 }}>{errorMessage(docError)}</p></ChatBubble>;
+    return <ChatBubble side="left" variant="card"><p style={{ color: "crimson", margin: 0 }}>{errorMessage(docError)}</p></ChatBubble>;
   }
   if (!document) return null;
 
   return (
-    <ChatBubble side="left" label="완성된 커리어 내러티브">
+    <ChatBubble side="left" variant="card" label="완성된 커리어 내러티브">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <ToneSlider value={document.tone} onChange={handleToneChange} disabled={isBusy || document.status === "FINAL"} />
         <span style={{ fontSize: 12, color: "#888" }}>버전 {document.version} · {document.status === "FINAL" ? "확정됨" : "초안"}</span>
