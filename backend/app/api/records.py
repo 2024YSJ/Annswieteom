@@ -31,9 +31,9 @@ def get_process_image_record():
     return process_image_record
 
 
-def _require_record_upload_status(session: SessionModel) -> None:
+def _require_record_creatable(session: SessionModel) -> None:
     try:
-        orchestrator.require_status("records", session.status, "RECORD_UPLOAD")
+        orchestrator.require_record_creatable(session.status)
     except orchestrator.StateMachineViolation as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
@@ -53,7 +53,7 @@ async def create_blog_record(
     db: AsyncSession = Depends(get_db),
     process_record_fn=Depends(get_process_record),
 ) -> Record:
-    _require_record_upload_status(session)
+    _require_record_creatable(session)
 
     record = Record(session_id=session.id, record_type="blog_url", source_url=payload.source_url)
     db.add(record)
@@ -72,7 +72,7 @@ async def create_text_record(
     db: AsyncSession = Depends(get_db),
     process_record_fn=Depends(get_process_record),
 ) -> Record:
-    _require_record_upload_status(session)
+    _require_record_creatable(session)
 
     record = Record(session_id=session.id, record_type="text", raw_text=payload.text)
     db.add(record)
@@ -94,7 +94,7 @@ async def upload_image_record(
     storage: SupabaseStorage = Depends(get_storage),
     process_image_record_fn=Depends(get_process_image_record),
 ) -> Record:
-    _require_record_upload_status(session)
+    _require_record_creatable(session)
 
     extension = _ALLOWED_IMAGE_CONTENT_TYPES.get(file.content_type or "")
     if extension is None:

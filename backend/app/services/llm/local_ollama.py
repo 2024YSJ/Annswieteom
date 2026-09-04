@@ -15,12 +15,13 @@ from app.services.llm.base import (
     CategorySuggestion,
     ConfirmedFact,
     DraftDocument,
+    FactCandidate,
     InterviewContext,
     PeriodSuggestion,
     ProviderUnavailableError,
     RecordExcerpt,
     SentenceWithEvidence,
-    Suggestion,
+    SufficiencyResult,
 )
 
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
@@ -58,26 +59,65 @@ class LocalOllamaProvider:
         self._base_url = settings.local_llm_base_url.rstrip("/")
         self._model = settings.local_llm_model_name
 
-    async def draft_suggestion(self, context: InterviewContext, step: str) -> Suggestion:
+    async def extract_facts(
+        self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
+    ) -> list[FactCandidate]:
         prompt = _render(
-            "draft_suggestion.jinja",
+            "interview_extract_facts.jinja",
             category_label=context.category_label,
-            gap_period=context,
+            gap_start=context.gap_start,
+            gap_end=context.gap_end,
             confirmed_facts_so_far=context.confirmed_facts_so_far,
             record_excerpts=context.record_excerpts,
-            step_label=step,
+            question_text=question_text,
+            answer_text=answer_text,
+            fact_type_hint=fact_type_hint,
         )
         response_text = await self._generate(prompt, timeout=45.0)
         try:
             data = json.loads(response_text)
-            return Suggestion(
-                draft_text=data["draft_text"],
-                based_on=_parse_based_on(data.get("based_on", "generic_pattern")),
-            )
+            return [
+                FactCandidate(
+                    content=f["content"],
+                    fact_type=f["fact_type"],
+                    based_on=_parse_based_on(f.get("based_on", "generic_pattern")),
+                )
+                for f in data["facts"]
+            ]
         except (json.JSONDecodeError, KeyError) as exc:
             # The model didn't follow the requested JSON schema — treat this
             # like any other provider failure so FallbackProvider moves on
             # to the next provider instead of a raw 500.
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def followup_question(self, context: InterviewContext) -> str:
+        prompt = _render(
+            "interview_followup_question.jinja",
+            category_label=context.category_label,
+            gap_start=context.gap_start,
+            gap_end=context.gap_end,
+            confirmed_facts_so_far=context.confirmed_facts_so_far,
+            record_excerpts=context.record_excerpts,
+            asked_questions=context.asked_questions,
+        )
+        response_text = await self._generate(prompt, timeout=45.0)
+        try:
+            data = json.loads(response_text)
+            return data["question_text"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def judge_sufficiency(self, context: InterviewContext) -> SufficiencyResult:
+        prompt = _render(
+            "interview_sufficiency.jinja",
+            category_label=context.category_label,
+            confirmed_facts_so_far=context.confirmed_facts_so_far,
+        )
+        response_text = await self._generate(prompt, timeout=45.0)
+        try:
+            data = json.loads(response_text)
+            return SufficiencyResult(sufficient=bool(data["sufficient"]), reason=data.get("reason", ""))
+        except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def extract_categories(

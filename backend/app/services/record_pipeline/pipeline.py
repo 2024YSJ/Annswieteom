@@ -12,7 +12,7 @@ from app.models.gap_period import GapPeriod
 from app.services.embedding import FallbackEmbedding
 from app.services.record_pipeline.chunker import chunk_text
 from app.services.record_pipeline.ocr import MIME_TYPES_BY_EXTENSION, extract_text_from_image
-from app.services.record_pipeline.parsers import generic, naver_blog, tistory
+from app.services.record_pipeline.parsers import generic, naver_blog, tistory, velog
 from app.services.record_pipeline.platform_detector import detect_platform
 from app.services.storage import get_storage
 
@@ -105,7 +105,9 @@ async def _fetch_text(record: Record) -> tuple[str, date | None]:
         return await naver_blog.parse(url)
     if platform == "tistory":
         return await tistory.parse(url)
-    # velog, brunch, other → generic
+    if platform == "velog":
+        return await velog.parse(url)
+    # brunch, other → generic
     return await generic.parse(url)
 
 
@@ -153,4 +155,6 @@ def _user_message(exc: Exception) -> str:
         return "블로그 응답이 너무 느려요. 잠시 후 다시 시도해주세요."
     if "403" in msg or "404" in msg:
         return "게시물에 접근할 수 없어요. 주소를 확인해주세요."
+    if "unrecognized velog url" in msg.lower():
+        return "velog 게시물 주소 형식을 확인해주세요. (예: https://velog.io/@아이디/글제목)"
     return "기록물을 가져오는 중 오류가 발생했어요."

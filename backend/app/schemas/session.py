@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.schemas.interview import GapPeriodRead
+from app.schemas.interview import ConfirmedFactRead, GapPeriodRead
 
 
 class SessionCreate(BaseModel):
@@ -23,16 +23,6 @@ class SessionRead(BaseModel):
 
 class SessionRename(BaseModel):
     title: str = Field(max_length=200)
-
-
-class ConfirmedFactRead(BaseModel):
-    id: uuid.UUID
-    fact_type: str
-    content: str
-    source_type: str
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 class ActivityCategoryRead(BaseModel):

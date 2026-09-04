@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import uuid
 
-from app.services.llm.base import BasedOn, RecordExcerpt, Suggestion
+from app.main import app
+from app.services.interview_orchestrator import MAX_FOLLOWUPS_PER_CATEGORY
+from app.services.interview_question_bank import BASE_QUESTIONS
+from app.services.llm.base import BasedOn, FactCandidate, RecordExcerpt, SufficiencyResult
+from app.services.record_pipeline.search import RecordChunkExcerpt, get_chunk_search
 
 
 def _register_and_login(client, email="alice@example.com"):
@@ -40,91 +44,198 @@ def _advance_to_first_category(client, headers, session_id, category_types=("par
 
     resp = client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
     assert resp.status_code == 200
-    assert resp.json()["status"] == "FREQ_DRAFT"
+    assert resp.json()["status"] == "INTERVIEWING"
     return resp.json()["current_category_id"]
 
 
-def _do_confirm_round(client, headers, session_id, draft_step, confirm_step, final_text="답변입니다", was_edited=False):
-    resp = client.get(f"/api/v1/sessions/{session_id}/interview/next", headers=headers)
+def _do_turn(client, headers, session_id, answer_text="답변입니다", was_edited=False, include=True):
+    """One full ask -> answer -> confirm round trip, confirming every extracted candidate."""
+    resp = client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
     assert resp.status_code == 200
-    assert resp.json()["step"] == draft_step
+    ask_body = resp.json()
+
+    resp = client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": answer_text}
+    )
+    assert resp.status_code == 200
+    candidates = resp.json()["candidates"]
 
     resp = client.post(
         f"/api/v1/sessions/{session_id}/interview/confirm",
         headers=headers,
-        json={"step": confirm_step, "final_text": final_text, "was_edited": was_edited},
+        json={
+            "confirmations": [
+                {"index": c["index"], "final_text": c["content"], "was_edited": was_edited, "include": include}
+                for c in candidates
+            ]
+        },
     )
     assert resp.status_code == 200
-    return resp.json()
+    return ask_body, candidates, resp.json()
 
 
-def test_full_category_round_creates_three_confirmed_facts(session_client):
+def test_base_questions_asked_in_order_for_part_time(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
-    _advance_to_first_category(session_client, headers, session_id)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
 
-    _do_confirm_round(session_client, headers, session_id, "FREQ_DRAFT", "FREQ_CONFIRM")
-    _do_confirm_round(session_client, headers, session_id, "TASK_DRAFT", "TASK_CONFIRM")
-    result = _do_confirm_round(session_client, headers, session_id, "ACHIEVEMENT_DRAFT", "ACHIEVEMENT_CONFIRM")
+    # Sufficiency is judged the moment the base set is exhausted (not after an
+    # extra follow-up round) — the fake defaults to sufficient=True, so the
+    # very last base question's own confirm call already marks the category done.
+    expected_questions = BASE_QUESTIONS["part_time"]
+    confirm_body = None
+    for i, expected in enumerate(expected_questions):
+        ask_body, _, confirm_body = _do_turn(session_client, headers, session_id)
+        assert ask_body["question_text"] == expected.text
+        assert ask_body["question_source"] == "base"
+        is_last = i == len(expected_questions) - 1
+        assert confirm_body["category_done"] is is_last
 
-    assert result["status"] == "RESULT_GENERATE"
-    assert result["current_category_id"] is None
+    assert confirm_body["status"] == "RESULT_GENERATE"
+    assert confirm_body["current_category_id"] is None
 
     ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
-    assert len(ctx["confirmed_facts"]) == 3
-    assert {f["fact_type"] for f in ctx["confirmed_facts"]} == {"frequency", "task", "achievement"}
+    fact_types = {f["fact_type"] for f in ctx["confirmed_facts"]}
+    assert fact_types == {q.fact_type for q in expected_questions}
+    assert len(ctx["confirmed_facts"]) == len(expected_questions)
 
 
-def test_two_categories_second_starts_at_freq_draft(session_client):
+def test_followup_question_asked_when_sufficiency_says_not_enough_yet(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
+
+    session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="아직 부족함")]
+
+    for _ in BASE_QUESTIONS["part_time"]:
+        _do_turn(session_client, headers, session_id)
+
+    ask_body, _, confirm_body = _do_turn(session_client, headers, session_id)
+    assert ask_body["question_source"] == "followup"
+    assert confirm_body["category_done"] is True  # second judge_sufficiency call defaults to True
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    fact_types = [f["fact_type"] for f in ctx["confirmed_facts"]]
+    assert fact_types.count("followup") == 1
+    assert len(ctx["confirmed_facts"]) == len(BASE_QUESTIONS["part_time"]) + 1
+
+
+def test_deeper_category_specific_questions_for_study_and_part_time_differ(session_client):
+    """Requirement: different categories get different, domain-tailored questions —
+    not the same generic frequency/task/achievement triad for everything."""
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id, category_types=("part_time", "study"))
 
-    _do_confirm_round(session_client, headers, session_id, "FREQ_DRAFT", "FREQ_CONFIRM")
-    _do_confirm_round(session_client, headers, session_id, "TASK_DRAFT", "TASK_CONFIRM")
-    result = _do_confirm_round(session_client, headers, session_id, "ACHIEVEMENT_DRAFT", "ACHIEVEMENT_CONFIRM")
+    part_time_first_question = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/ask", headers=headers
+    ).json()["question_text"]
 
-    assert result["status"] == "FREQ_DRAFT"
-    assert result["current_category_id"] is not None
+    assert part_time_first_question == BASE_QUESTIONS["part_time"][0].text
+    assert part_time_first_question != BASE_QUESTIONS["study"][0].text
+
+
+def test_two_categories_second_starts_fresh_after_first_done(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("part_time", "study"))
+
+    confirm_body = None
+    for _ in BASE_QUESTIONS["part_time"]:
+        # The last of these turns exhausts part_time's base set, triggers
+        # sufficiency (fake defaults to True), and advances to the next category.
+        _, _, confirm_body = _do_turn(session_client, headers, session_id)
+
+    assert confirm_body["status"] == "INTERVIEWING"
+    assert confirm_body["current_category_id"] is not None
 
     ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
     assert ctx["current_category"]["category_type"] == "study"
     part_time = next(c for c in ctx["categories"] if c["category_type"] == "part_time")
     assert part_time["status"] == "DONE"
 
-
-def test_confirm_before_any_draft_returns_409(session_client):
-    headers = _register_and_login(session_client)
-    session_id = _create_session(session_client, headers)
-
-    resp = session_client.post(
-        f"/api/v1/sessions/{session_id}/interview/confirm",
-        headers=headers,
-        json={"step": "FREQ_CONFIRM", "final_text": "x", "was_edited": False},
-    )
-    assert resp.status_code == 409
+    # The new category asks its own first base question, not a continuation of part_time's.
+    ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert ask["question_text"] == BASE_QUESTIONS["study"][0].text
 
 
-def test_interview_next_before_period_returns_409(session_client):
-    headers = _register_and_login(session_client)
-    session_id = _create_session(session_client, headers)
-
-    resp = session_client.get(f"/api/v1/sessions/{session_id}/interview/next", headers=headers)
-    assert resp.status_code == 409
-
-
-def test_confirm_step_mismatch_returns_409(session_client):
+def test_ask_is_idempotent_without_calling_llm_twice(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
-    session_client.get(f"/api/v1/sessions/{session_id}/interview/next", headers=headers)
 
+    first = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    second = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert first == second
+
+
+def test_answer_before_ask_returns_409(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "x"}
+    )
+    assert resp.status_code == 409
+
+
+def test_confirm_before_answer_returns_409(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm", headers=headers, json={"confirmations": []}
+    )
+    assert resp.status_code == 409
+
+
+def test_ask_before_period_returns_409(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.status_code == 409
+
+
+def test_confirm_with_out_of_range_index_returns_409(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "답변"})
     resp = session_client.post(
         f"/api/v1/sessions/{session_id}/interview/confirm",
         headers=headers,
-        json={"step": "TASK_CONFIRM", "final_text": "x", "was_edited": False},
+        json={"confirmations": [{"index": 99, "final_text": "x", "was_edited": False}]},
     )
     assert resp.status_code == 409
+
+
+def test_empty_answer_yields_no_candidates_and_does_not_get_stuck(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "   "}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["candidates"] == []
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm", headers=headers, json={"confirmations": []}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["category_done"] is False
+
+    # Loop isn't stuck: the same (still-unanswered) base question comes back.
+    ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert ask["question_text"] == BASE_QUESTIONS["part_time"][0].text
 
 
 def test_other_users_session_returns_403_on_every_endpoint(session_client):
@@ -151,13 +262,11 @@ def test_other_users_session_returns_403_on_every_endpoint(session_client):
     resp = session_client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers_b)
     assert resp.status_code == 403
 
-    resp = session_client.get(f"/api/v1/sessions/{session_id}/interview/next", headers=headers_b)
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers_b)
     assert resp.status_code == 403
 
     resp = session_client.post(
-        f"/api/v1/sessions/{session_id}/interview/confirm",
-        headers=headers_b,
-        json={"step": "FREQ_CONFIRM", "final_text": "x", "was_edited": False},
+        f"/api/v1/sessions/{session_id}/interview/confirm", headers=headers_b, json={"confirmations": []}
     )
     assert resp.status_code == 403
 
@@ -173,44 +282,118 @@ def test_was_edited_true_sets_source_type_user_edited(session_client):
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
 
-    _do_confirm_round(session_client, headers, session_id, "FREQ_DRAFT", "FREQ_CONFIRM", was_edited=True)
+    _do_turn(session_client, headers, session_id, was_edited=True)
 
     ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
     assert ctx["confirmed_facts"][0]["source_type"] == "user_edited"
 
 
-def test_record_based_draft_confirmed_unedited_is_record_cited(session_client):
+def test_record_based_candidate_confirmed_unedited_is_record_cited(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
 
     # Must contain a non-digit hex character - an all-digit UUID string gets
-    # silently mangled by SQLite's NUMERIC column-affinity conversion (the
-    # postgresql.UUID DDL type name doesn't match any of SQLite's affinity
-    # keywords, so it falls back to NUMERIC). Real Postgres has no such issue.
+    # silently mangled by SQLite's NUMERIC column-affinity conversion.
     chunk_id = str(uuid.uuid4())
-    session_client.fake_llm._queue = [
-        Suggestion(
-            draft_text="주 3회 카페 아르바이트를 했다",
-            based_on=BasedOn(type="record", excerpts=[RecordExcerpt(chunk_id=chunk_id, text="근무 기록", published_at=None)]),
-        )
-    ]
 
-    _do_confirm_round(session_client, headers, session_id, "FREQ_DRAFT", "FREQ_CONFIRM", was_edited=False)
+    async def fake_chunk_search(session_id_arg, label):
+        return [RecordChunkExcerpt(chunk_id=uuid.UUID(chunk_id), text="근무 기록", published_at=None)]
+
+    app.dependency_overrides[get_chunk_search] = lambda: fake_chunk_search
+    session_client.fake_llm._facts_queue = [
+        [
+            FactCandidate(
+                content="주 3회 카페 아르바이트를 했다",
+                fact_type="frequency",
+                based_on=BasedOn(type="record", excerpts=[RecordExcerpt(chunk_id=chunk_id, text="근무 기록", published_at=None)]),
+            )
+        ]
+    ]
+    _do_turn(session_client, headers, session_id, was_edited=False)
 
     ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
     assert ctx["confirmed_facts"][0]["source_type"] == "record_cited"
 
 
-def test_generic_pattern_draft_confirmed_unedited_is_user_confirmed(session_client):
+def test_record_cited_claim_for_unshown_chunk_id_is_downgraded_to_generic_pattern(session_client):
+    """Honesty guardrail: the LLM cannot claim record_cited for a chunk_id that
+    wasn't actually part of this turn's context (chunk_search stubbed to []
+    by session_client, so any chunk_id the fake claims is unverifiable)."""
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
 
-    _do_confirm_round(session_client, headers, session_id, "FREQ_DRAFT", "FREQ_CONFIRM", was_edited=False)
+    fabricated_chunk_id = str(uuid.uuid4())
+    session_client.fake_llm._facts_queue = [
+        [
+            FactCandidate(
+                content="주 3회 카페 아르바이트를 했다",
+                fact_type="frequency",
+                based_on=BasedOn(
+                    type="record",
+                    excerpts=[RecordExcerpt(chunk_id=fabricated_chunk_id, text="근무 기록", published_at=None)],
+                ),
+            )
+        ]
+    ]
+    _do_turn(session_client, headers, session_id, was_edited=False)
 
     ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
     assert ctx["confirmed_facts"][0]["source_type"] == "user_confirmed"
+
+
+def test_generic_pattern_candidate_confirmed_unedited_is_user_confirmed(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    _do_turn(session_client, headers, session_id, was_edited=False)
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    assert ctx["confirmed_facts"][0]["source_type"] == "user_confirmed"
+
+
+def test_excluded_candidate_is_not_persisted(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "답변"}
+    )
+    candidates = resp.json()["candidates"]
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={"confirmations": [{"index": c["index"], "final_text": c["content"], "was_edited": False, "include": False} for c in candidates]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["confirmed_facts"] == []
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    assert ctx["confirmed_facts"] == []
+
+
+def test_max_followups_forces_advance_even_when_llm_never_says_sufficient(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
+
+    for _ in BASE_QUESTIONS["part_time"]:
+        _do_turn(session_client, headers, session_id)
+
+    # From here on, every turn is a follow-up; sufficiency always says "not enough",
+    # but MAX_FOLLOWUPS_PER_CATEGORY must still force an advance eventually.
+    confirm_body = None
+    for _ in range(MAX_FOLLOWUPS_PER_CATEGORY):
+        _, _, confirm_body = _do_turn(session_client, headers, session_id)
+
+    assert confirm_body["category_done"] is True
+    assert confirm_body["status"] == "RESULT_GENERATE"
 
 
 def test_session_create_and_delete(session_client):

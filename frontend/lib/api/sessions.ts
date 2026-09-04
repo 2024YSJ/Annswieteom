@@ -4,12 +4,7 @@ export type SessionStatus =
   | "PERIOD_INPUT"
   | "CATEGORY_SELECT"
   | "RECORD_UPLOAD"
-  | "FREQ_DRAFT"
-  | "FREQ_CONFIRM"
-  | "TASK_DRAFT"
-  | "TASK_CONFIRM"
-  | "ACHIEVEMENT_DRAFT"
-  | "ACHIEVEMENT_CONFIRM"
+  | "INTERVIEWING"
   | "RESULT_GENERATE"
   | "RESULT_REVIEW";
 
@@ -42,9 +37,10 @@ export interface PeriodExtractRead {
 
 export interface ConfirmedFactRead {
   id: string;
-  fact_type: "frequency" | "task" | "achievement";
+  fact_type: string;
   content: string;
   source_type: "user_confirmed" | "user_edited" | "record_cited";
+  source_question_text: string | null;
   created_at: string;
 }
 
@@ -107,19 +103,35 @@ export interface BasedOnRead {
   excerpts: RecordExcerptRead[];
 }
 
-export type InterviewStep = "FREQ_DRAFT" | "TASK_DRAFT" | "ACHIEVEMENT_DRAFT";
-export type InterviewConfirmStep = "FREQ_CONFIRM" | "TASK_CONFIRM" | "ACHIEVEMENT_CONFIRM";
-
-export interface InterviewNextRead {
-  step: InterviewStep;
+export interface InterviewAskRead {
   category_id: string;
-  ai_draft: string;
+  question_text: string;
+  question_source: "base" | "followup";
+}
+
+export interface FactCandidateRead {
+  index: number;
+  content: string;
+  fact_type: string;
   based_on: BasedOnRead;
+}
+
+export interface InterviewAnswerRead {
+  candidates: FactCandidateRead[];
+}
+
+export interface FactConfirmation {
+  index: number;
+  final_text: string;
+  was_edited: boolean;
+  include?: boolean;
 }
 
 export interface InterviewConfirmRead {
   status: SessionStatus;
   current_category_id: string | null;
+  category_done: boolean;
+  confirmed_facts: ConfirmedFactRead[];
 }
 
 export const sessionApi = {
@@ -186,19 +198,23 @@ export const sessionApi = {
       headers: authHeaders(accessToken),
     }),
 
-  interviewNext: (sessionId: string, accessToken: string) =>
-    request<InterviewNextRead>(`/api/v1/sessions/${sessionId}/interview/next`, {
+  interviewAsk: (sessionId: string, accessToken: string) =>
+    request<InterviewAskRead>(`/api/v1/sessions/${sessionId}/interview/ask`, {
+      method: "POST",
       headers: authHeaders(accessToken),
     }),
 
-  interviewConfirm: (
-    sessionId: string,
-    payload: { step: InterviewConfirmStep; final_text: string; was_edited: boolean },
-    accessToken: string,
-  ) =>
+  interviewAnswer: (sessionId: string, text: string, accessToken: string) =>
+    request<InterviewAnswerRead>(`/api/v1/sessions/${sessionId}/interview/answer`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ text }),
+    }),
+
+  interviewConfirm: (sessionId: string, confirmations: FactConfirmation[], accessToken: string) =>
     request<InterviewConfirmRead>(`/api/v1/sessions/${sessionId}/interview/confirm`, {
       method: "POST",
       headers: authHeaders(accessToken),
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ confirmations }),
     }),
 };

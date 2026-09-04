@@ -14,12 +14,7 @@ const STATUS_LABELS: Record<string, string> = {
   PERIOD_INPUT: "기간 입력",
   CATEGORY_SELECT: "카테고리 선택",
   RECORD_UPLOAD: "기록물 업로드",
-  FREQ_DRAFT: "인터뷰 중",
-  FREQ_CONFIRM: "인터뷰 중",
-  TASK_DRAFT: "인터뷰 중",
-  TASK_CONFIRM: "인터뷰 중",
-  ACHIEVEMENT_DRAFT: "인터뷰 중",
-  ACHIEVEMENT_CONFIRM: "인터뷰 중",
+  INTERVIEWING: "인터뷰 중",
   RESULT_GENERATE: "결과 생성 중",
   RESULT_REVIEW: "결과 확인",
 };

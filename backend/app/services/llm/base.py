@@ -14,15 +14,22 @@ class RecordExcerpt:
 
 @dataclass
 class BasedOn:
-    """Source attribution for a draft suggestion."""
+    """Source attribution for an extracted fact candidate."""
     type: str  # "record" | "generic_pattern"
     excerpts: list[RecordExcerpt] = field(default_factory=list)
 
 
 @dataclass
-class Suggestion:
-    draft_text: str
+class FactCandidate:
+    content: str
+    fact_type: str
     based_on: BasedOn
+
+
+@dataclass
+class SufficiencyResult:
+    sufficient: bool
+    reason: str
 
 
 @dataclass
@@ -53,7 +60,7 @@ class ConfirmedFact:
     id: str
     content: str
     source_type: str  # user_confirmed | user_edited | record_cited
-    fact_type: str    # frequency | task | achievement
+    fact_type: str    # see app.models.confirmed_fact.FACT_TYPES
 
 
 @dataclass
@@ -64,6 +71,7 @@ class InterviewContext:
     gap_end: date
     confirmed_facts_so_far: list[ConfirmedFact]
     record_excerpts: list[RecordExcerpt] = field(default_factory=list)
+    asked_questions: list[str] = field(default_factory=list)
 
 
 class ProviderUnavailableError(Exception):
@@ -76,7 +84,11 @@ class AllProvidersFailedError(Exception):
 
 @runtime_checkable
 class LLMProvider(Protocol):
-    async def draft_suggestion(self, context: InterviewContext, step: str) -> Suggestion: ...
+    async def extract_facts(
+        self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
+    ) -> list[FactCandidate]: ...
+    async def followup_question(self, context: InterviewContext) -> str: ...
+    async def judge_sufficiency(self, context: InterviewContext) -> SufficiencyResult: ...
     async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument: ...
     async def extract_categories(
         self, free_text: str, gap_start: date, gap_end: date

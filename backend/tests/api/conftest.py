@@ -27,9 +27,10 @@ from app.services.llm.base import (
     BasedOn,
     CategorySuggestion,
     DraftDocument,
+    FactCandidate,
     PeriodSuggestion,
     SentenceWithEvidence,
-    Suggestion,
+    SufficiencyResult,
 )
 
 _DEFAULT_PERIOD_SUGGESTION = object()  # sentinel: "use the built-in default", distinct from an explicit None
@@ -74,33 +75,55 @@ def client():
 
 
 class FakeLLMProvider:
-    """Deterministic stand-in for FallbackProvider (spec 02_interview §6:
-    the state machine must be verifiable with stub text before A's real LLM
-    is wired in). Each draft_suggestion call returns a fixed generic-pattern
-    suggestion unless a queue of canned suggestions is provided.
+    """Deterministic stand-in for FallbackProvider — the interview loop must be
+    verifiable with stub text before real Gemini/Ollama calls are involved.
+    Each extract_facts call returns a fixed single generic-pattern candidate
+    (fact_type mirrors the question's fact_type_hint isn't known to the fake,
+    so tests that care about a specific fact_type queue an explicit candidate
+    list) unless a queue of canned candidate-lists is provided.
     """
 
     def __init__(
         self,
-        suggestions: list[Suggestion] | None = None,
+        fact_candidates: list[list[FactCandidate]] | None = None,
+        followup_questions: list[str] | None = None,
+        sufficiency_results: list[SufficiencyResult] | None = None,
         documents: list[DraftDocument] | None = None,
         category_suggestions: list | None = None,
         period_suggestion=_DEFAULT_PERIOD_SUGGESTION,
     ):
-        self._queue = list(suggestions) if suggestions else None
+        self._facts_queue = list(fact_candidates) if fact_candidates else None
+        self._followup_queue = list(followup_questions) if followup_questions else None
+        self._sufficiency_queue = list(sufficiency_results) if sufficiency_results else None
         self._document_queue = list(documents) if documents else None
         self._category_suggestions = category_suggestions
         self._period_suggestion = period_suggestion
-        self.calls: list[tuple[str, str]] = []
+        self.extract_facts_calls: list[tuple[str, str, str]] = []
+        self.followup_calls: list[str] = []
+        self.sufficiency_calls: list[str] = []
         self.document_calls: list[tuple[list[str], str]] = []
         self.extract_calls: list[str] = []
         self.period_calls: list[str] = []
 
-    async def draft_suggestion(self, context, step):
-        self.calls.append((context.category_label, step))
-        if self._queue:
-            return self._queue.pop(0)
-        return Suggestion(draft_text=f"dummy {step} draft", based_on=BasedOn(type="generic_pattern"))
+    async def extract_facts(self, context, question_text, answer_text, fact_type_hint):
+        self.extract_facts_calls.append((context.category_label, question_text, answer_text))
+        if self._facts_queue:
+            return self._facts_queue.pop(0)
+        if not answer_text.strip():
+            return []
+        return [FactCandidate(content=answer_text, fact_type=fact_type_hint, based_on=BasedOn(type="generic_pattern"))]
+
+    async def followup_question(self, context):
+        self.followup_calls.append(context.category_label)
+        if self._followup_queue:
+            return self._followup_queue.pop(0)
+        return f"{context.category_label}에 대해 더 이야기해 주실 수 있나요?"
+
+    async def judge_sufficiency(self, context):
+        self.sufficiency_calls.append(context.category_label)
+        if self._sufficiency_queue:
+            return self._sufficiency_queue.pop(0)
+        return SufficiencyResult(sufficient=True, reason="충분한 정보가 모였습니다")
 
     async def generate_document(self, facts, tone):
         self.document_calls.append(([f.id for f in facts], tone))

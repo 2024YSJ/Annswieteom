@@ -67,7 +67,9 @@ export default function SessionChatPage() {
       ? "categories"
       : !recordsDone
         ? "records"
-        : null;
+        : interviewActive
+          ? "interview"
+          : null;
 
   return (
     <main style={{ maxWidth: 640, margin: "80px auto 40px", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
@@ -76,7 +78,6 @@ export default function SessionChatPage() {
         accessToken={accessToken!}
         mode={periodDone ? "completed" : "active"}
         gapPeriod={ctx.gap_period}
-        composerEvent={composerEvent?.forStep === "period" ? composerEvent : null}
       />
 
       {(periodDone || categoriesDone) && (
@@ -105,12 +106,16 @@ export default function SessionChatPage() {
           status={ctx.status}
           categories={ctx.categories}
           currentCategoryId={ctx.current_category?.id ?? null}
+          composerEvent={composerEvent?.forStep === "interview" ? composerEvent : null}
         />
       )}
 
       {resultActive && <ResultSection sessionId={sessionId} accessToken={accessToken!} status={ctx.status} />}
 
-      {activeStep && <ChatComposer key={activeStep} activeStep={activeStep} onSend={setComposerEvent} />}
+      {/* Period uses its own calendar form, not the shared free-text composer. */}
+      {activeStep && activeStep !== "period" && (
+        <ChatComposer key={activeStep} activeStep={activeStep} onSend={setComposerEvent} />
+      )}
 
       <div ref={bottomRef} />
     </main>
