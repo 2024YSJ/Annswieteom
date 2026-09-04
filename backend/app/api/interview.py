@@ -7,14 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.sessions import category_label
 from app.core.deps import get_owned_session
 from app.db.session import get_db
 from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.gap_period import GapPeriod
 from app.models.session import Session as SessionModel
-from app.schemas.session import (
+from app.schemas.interview import (
     BasedOnRead,
     CategoryExtractRead,
     CategoryExtractRequest,
@@ -40,14 +39,10 @@ from app.services.llm.base import (
     RecordExcerpt as LLMRecordExcerpt,
     Suggestion,
 )
-from app.services.llm.fallback import FallbackProvider
+from app.services.llm.fallback import get_llm_provider
 from app.services.record_pipeline.search import get_chunk_search
 
 router = APIRouter(prefix="/sessions", tags=["interview"])
-
-
-def get_llm_provider() -> LLMProvider:
-    return FallbackProvider()
 
 
 def _violation_to_409(exc: orchestrator.StateMachineViolation) -> HTTPException:
@@ -203,7 +198,7 @@ async def interview_next(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_current_category")
 
     category = await db.get(ActivityCategory, session.current_category_id)
-    label = category_label(category)
+    label = category.label
     fact_type = orchestrator.FACT_TYPE_BY_STEP[draft_step]
 
     gap_period = (

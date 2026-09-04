@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.api.interview import get_llm_provider
+from app.services.llm.fallback import get_llm_provider
 from app.api.records import get_process_image_record, get_process_record
 from app.db.session import Base, get_db
 from app.main import app

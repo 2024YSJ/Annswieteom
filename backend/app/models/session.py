@@ -34,6 +34,9 @@ class Session(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # 사용자가 사이드바에서 붙인 이름. None이면 프론트가 생성일자로 대체 표시한다
+    # (frontend/app/sessions/layout.tsx).
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="PERIOD_INPUT")
     current_category_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("activity_categories.id", ondelete="SET NULL"), nullable=True)
     # interview/next가 반환한 초안을 interview/confirm이 쓸 때까지 잠깐 들고 있는 임시 저장소

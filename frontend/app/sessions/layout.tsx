@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useParams, usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { sessionApi, type SessionRead } from "@/lib/api-client";
+import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
+import { useAuth } from "@/lib/auth-context";
 import { useSessionsList } from "@/lib/use-sessions-list";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -21,9 +24,109 @@ const STATUS_LABELS: Record<string, string> = {
   RESULT_REVIEW: "결과 확인",
 };
 
+function SessionRow({ session, isActive, accessToken }: { session: SessionRead; isActive: boolean; accessToken: string }) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(session.title ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  async function saveTitle() {
+    setIsEditing(false);
+    if (titleDraft === (session.title ?? "")) return; // no change
+    setError(null);
+    try {
+      await sessionApi.rename(session.id, titleDraft, accessToken);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions() });
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm("이 세션을 삭제할까요? 되돌릴 수 없습니다.")) return;
+    setError(null);
+    try {
+      await sessionApi.remove(session.id, accessToken);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions() });
+      if (isActive) router.push("/");
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  return (
+    <li>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        {isEditing ? (
+          <input
+            type="text"
+            autoFocus
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={saveTitle}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur(); // triggers saveTitle via onBlur
+              if (e.key === "Escape") {
+                setTitleDraft(session.title ?? "");
+                setIsEditing(false);
+              }
+            }}
+            style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "8px 10px" }}
+          />
+        ) : (
+          <Link
+            href={`/sessions/${session.id}`}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: "block",
+              padding: "8px 10px",
+              borderRadius: 6,
+              fontSize: 13,
+              textDecoration: "none",
+              background: isActive ? "var(--hover-surface)" : "transparent",
+              color: isActive ? "var(--hover-surface-text)" : "inherit",
+            }}
+          >
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {session.title ?? new Date(session.created_at).toLocaleDateString("ko-KR")}
+            </div>
+            <div style={{ color: "#888" }}>{STATUS_LABELS[session.status] ?? session.status}</div>
+          </Link>
+        )}
+        {!isEditing && (
+          <>
+            <button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              title="이름 변경"
+              aria-label="이름 변경"
+              style={{ flexShrink: 0, fontSize: 12 }}
+            >
+              ✏️
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              title="삭제"
+              aria-label="삭제"
+              style={{ flexShrink: 0, fontSize: 12 }}
+            >
+              🗑
+            </button>
+          </>
+        )}
+      </div>
+      {error && <p style={{ color: "crimson", fontSize: 11, margin: "2px 0 0" }}>{error}</p>}
+    </li>
+  );
+}
+
 export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
   const params = useParams<{ id?: string }>();
   const pathname = usePathname();
+  const { accessToken } = useAuth();
   const { data: sessions } = useSessionsList();
   const queryClient = useQueryClient();
 
@@ -52,25 +155,11 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
           <p style={{ fontSize: 13, color: "#aaa" }}>세션이 없습니다.</p>
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-            {sessions.map((session) => (
-              <li key={session.id}>
-                <Link
-                  href={`/sessions/${session.id}`}
-                  style={{
-                    display: "block",
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    fontSize: 13,
-                    textDecoration: "none",
-                    background: session.id === params.id ? "var(--hover-surface)" : "transparent",
-                    color: session.id === params.id ? "var(--hover-surface-text)" : "inherit",
-                  }}
-                >
-                  <div>{new Date(session.created_at).toLocaleDateString("ko-KR")}</div>
-                  <div style={{ color: "#888" }}>{STATUS_LABELS[session.status] ?? session.status}</div>
-                </Link>
-              </li>
-            ))}
+            {sessions.map((session) =>
+              accessToken ? (
+                <SessionRow key={session.id} session={session} isActive={session.id === params.id} accessToken={accessToken} />
+              ) : null,
+            )}
           </ul>
         )}
       </aside>

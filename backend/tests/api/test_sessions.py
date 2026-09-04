@@ -75,3 +75,57 @@ def test_list_sessions_requires_authentication(session_client):
     resp = session_client.get("/api/v1/sessions")
 
     assert resp.status_code == 401
+
+
+def test_rename_session_sets_title(session_client):
+    token = _register_and_login(session_client)
+    session_id = session_client.post("/api/v1/sessions", headers=_auth(token)).json()["id"]
+
+    resp = session_client.patch(f"/api/v1/sessions/{session_id}", headers=_auth(token), json={"title": "이직 준비 공백기"})
+
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "이직 준비 공백기"
+
+
+def test_rename_session_blank_title_clears_it(session_client):
+    token = _register_and_login(session_client)
+    session_id = session_client.post("/api/v1/sessions", headers=_auth(token)).json()["id"]
+    session_client.patch(f"/api/v1/sessions/{session_id}", headers=_auth(token), json={"title": "임시 이름"})
+
+    resp = session_client.patch(f"/api/v1/sessions/{session_id}", headers=_auth(token), json={"title": "   "})
+
+    assert resp.status_code == 200
+    assert resp.json()["title"] is None
+
+
+def test_rename_other_users_session_returns_403(session_client):
+    token_a = _register_and_login(session_client, email="alice@example.com", nickname="Alice")
+    token_b = _register_and_login(session_client, email="bob@example.com", nickname="Bob")
+    session_id = session_client.post("/api/v1/sessions", headers=_auth(token_a)).json()["id"]
+
+    resp = session_client.patch(f"/api/v1/sessions/{session_id}", headers=_auth(token_b), json={"title": "가로채기"})
+
+    assert resp.status_code == 403
+
+
+def test_delete_session_removes_it_from_list(session_client):
+    token = _register_and_login(session_client)
+    session_id = session_client.post("/api/v1/sessions", headers=_auth(token)).json()["id"]
+
+    resp = session_client.delete(f"/api/v1/sessions/{session_id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    listed = session_client.get("/api/v1/sessions", headers=_auth(token)).json()
+    assert listed == []
+
+
+def test_delete_other_users_session_returns_403(session_client):
+    token_a = _register_and_login(session_client, email="alice@example.com", nickname="Alice")
+    token_b = _register_and_login(session_client, email="bob@example.com", nickname="Bob")
+    session_id = session_client.post("/api/v1/sessions", headers=_auth(token_a)).json()["id"]
+
+    resp = session_client.delete(f"/api/v1/sessions/{session_id}", headers=_auth(token_b))
+
+    assert resp.status_code == 403
+    still_listed = session_client.get("/api/v1/sessions", headers=_auth(token_a)).json()
+    assert len(still_listed) == 1
