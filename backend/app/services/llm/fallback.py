@@ -26,8 +26,22 @@ def _build_providers() -> list[LLMProvider]:
         "local": LocalOllamaProvider(),
         "gemini": GeminiProvider(),
     }
-    order = [p.strip() for p in settings.llm_provider_order.split(",")]
-    return [mapping[name] for name in order if name in mapping]
+    # .strip().lower() so a blank, differently-cased, or trailing-comma
+    # LLM_PROVIDER_ORDER value can't silently produce an empty list — that
+    # used to skip the per-provider try/except in FallbackProvider entirely
+    # (loop body never runs), so AllProvidersFailedError fired instantly with
+    # none of the failure logging below, making it indistinguishable from a
+    # real outage in the logs (production incident, 2026-09-04).
+    order = [p.strip().lower() for p in settings.llm_provider_order.split(",") if p.strip()]
+    providers = [mapping[name] for name in order if name in mapping]
+    if not providers:
+        logger.error(
+            "LLM_PROVIDER_ORDER=%r produced zero usable providers (expected some of %s) — "
+            "every LLM call will fail instantly with AllProvidersFailedError",
+            settings.llm_provider_order,
+            list(mapping),
+        )
+    return providers
 
 
 def get_llm_provider() -> LLMProvider:
