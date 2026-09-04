@@ -29,7 +29,7 @@ export function ChatBubble({
   if (side === "right") {
     return (
       <div style={{ alignSelf: "flex-end", maxWidth: "80%" }}>
-        {label && <div style={{ fontSize: 12, color: "#888", textAlign: "right" }}>{label}</div>}
+        {label && <div style={{ fontSize: 12, color: "var(--muted-text)", textAlign: "right" }}>{label}</div>}
         <div style={{ background: "var(--accent-surface)", color: "var(--accent-surface-text)", padding: "8px 12px", borderRadius: 12 }}>
           {children}
         </div>
@@ -40,7 +40,7 @@ export function ChatBubble({
   if (variant === "card") {
     return (
       <div style={{ alignSelf: "flex-start", width: "100%" }}>
-        {label && <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>{label}</div>}
+        {label && <div style={{ fontSize: 12, color: "var(--muted-text)", marginBottom: 4 }}>{label}</div>}
         <div
           style={{
             background: "var(--surface-strong)",
@@ -58,7 +58,7 @@ export function ChatBubble({
 
   return (
     <div style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
-      {label && <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>{label}</div>}
+      {label && <div style={{ fontSize: 12, color: "var(--muted-text)", marginBottom: 4 }}>{label}</div>}
       <div style={{ background: "var(--surface)", color: "var(--surface-text)", padding: "12px", borderRadius: 12 }}>
         {children}
       </div>

@@ -21,7 +21,7 @@ export function LoadingNotice({ label = "불러오는 중..." }: { label?: strin
     <div>
       <p>{label}</p>
       {showColdStartNotice && (
-        <p style={{ fontSize: 13, color: "#888", marginTop: 8 }}>
+        <p style={{ fontSize: 13, color: "var(--muted-text)", marginTop: 8 }}>
           서버가 잠시 쉬고 있다가 깨어나는 중일 수 있어요. 최대 1분 정도 걸릴 수 있으니 조금만 기다려주세요 🙏
         </p>
       )}

@@ -169,6 +169,49 @@ def test_ask_is_idempotent_without_calling_llm_twice(session_client):
     assert first == second
 
 
+def test_ask_returns_a_draft_answer_to_prefill_the_composer(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.fake_llm._draft_answer_queue = ["주로 저녁 시간대에 근무했어요"]
+
+    ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert ask["draft_answer"] == "주로 저녁 시간대에 근무했어요"
+    assert session_client.fake_llm.draft_answer_calls == [ask["question_text"]]
+
+    # Idempotent replay (no answer/confirm yet) returns the same cached draft
+    # without calling the LLM again.
+    again = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert again["draft_answer"] == "주로 저녁 시간대에 근무했어요"
+    assert len(session_client.fake_llm.draft_answer_calls) == 1
+
+
+def test_draft_answer_prefill_does_not_bypass_candidate_confirmation(session_client):
+    """Sending the AI's draft answer unedited still goes through the normal
+    extract -> review -> confirm steps — prefilling the composer only changes
+    what's in the box before the user sends, not the honesty guardrail after."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.fake_llm._draft_answer_queue = ["주 3회 정도 일했어요"]
+    ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+
+    # User sends the draft answer completely as-is.
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer",
+        headers=headers,
+        json={"text": ask["draft_answer"]},
+    )
+    candidates = resp.json()["candidates"]
+    assert len(candidates) == 1  # extract_facts still ran on the submitted text
+
+    # Nothing is in confirmed_facts until confirm is called explicitly.
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    assert ctx["confirmed_facts"] == []
+
+
 def test_answer_before_ask_returns_409(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)

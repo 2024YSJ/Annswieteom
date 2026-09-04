@@ -53,6 +53,7 @@ test.describe("unified session chat flow", () => {
           category_id: "00000000-0000-0000-0000-000000000000",
           question_text: "이 아르바이트를 얼마나 자주, 어느 정도 기간 동안 하셨나요?",
           question_source: "base",
+          draft_answer: "주로 저녁 시간대에, 주 3~4회 정도 근무했던 것 같아요.",
         }),
       }),
     );
@@ -67,10 +68,11 @@ test.describe("unified session chat flow", () => {
     await page.getByLabel("이메일").fill(email);
     await page.getByLabel("비밀번호").fill(password);
     await page.getByRole("button", { name: "로그인" }).click();
-    await expect(page).toHaveURL(/\/$/);
 
-    await page.getByRole("button", { name: "새로 시작하기" }).click();
-    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+    // A freshly registered user has no sessions yet, so the landing page
+    // auto-creates one and redirects straight into it — there's no longer a
+    // manual "새로 시작하기" button to click through.
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
 
     // --- Period section (active): calendar date inputs, not free text ---
     await expect(page.getByText("공백기가 언제부터 언제까지였나요?", { exact: false })).toBeVisible();
@@ -101,6 +103,11 @@ test.describe("unified session chat flow", () => {
     // (📎) button is available at any point, not gated to the records step.
     await expect(composerInput).toBeVisible();
     await expect(page.getByTitle("첨부")).toBeVisible();
+
+    // The composer arrives pre-filled with the AI's draft answer (editable,
+    // not just a placeholder) and a tag marking it as a suggestion.
+    await expect(composerInput).toHaveValue("주로 저녁 시간대에, 주 3~4회 정도 근무했던 것 같아요.");
+    await expect(page.getByText("AI가 미리 써봤어요", { exact: false })).toBeVisible();
 
     // Sidebar reflects progress without a URL change.
     await expect(page.getByText("내 세션")).toBeVisible();

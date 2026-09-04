@@ -94,11 +94,18 @@ class InterviewAskRead(BaseModel):
     question_source가 "base"면 interview_question_bank.py의 고정 질문, "followup"이면
     AI가 즉흥적으로 만든 후속 질문이다. 이미 답변을 기다리는 중인 pending_turn이 있으면
     LLM을 다시 부르지 않고 같은 질문을 그대로 반환한다(서버 사이드 idempotent).
+
+    draft_answer는 사용자가 입력창에 타이핑을 시작하기 전에 미리 채워볼 수 있는 답변
+    초안이다 — 이걸 그대로 보내든, 고쳐서 보내든, 지우고 새로 쓰든 최종 판단은 여전히
+    사용자 몫이고, interview/answer -> interview/confirm의 확인 절차는 그대로 거친다
+    (정직성 가드레일은 "무엇을 답했는지"가 아니라 "그 답에서 뽑은 사실을 확인했는지"에서
+    지켜지므로 이 필드는 그 절차를 건너뛰지 않는다).
     """
 
     category_id: uuid.UUID
     question_text: str
     question_source: Literal["base", "followup"]
+    draft_answer: str
 
 
 class InterviewAnswerRequest(BaseModel):

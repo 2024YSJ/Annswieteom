@@ -107,6 +107,7 @@ export interface InterviewAskRead {
   category_id: string;
   question_text: string;
   question_source: "base" | "followup";
+  draft_answer: string;
 }
 
 export interface FactCandidateRead {

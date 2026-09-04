@@ -21,10 +21,14 @@ test.describe("guest sessions", () => {
     await expect(page.getByText("내 세션")).toBeVisible();
 
     // A guest is already logged in now (with one session) - going back to "/"
-    // and clicking "새로 시작하기" should hit the guest session limit.
+    // silently resumes that same session (no button to click through) rather
+    // than offering to start a new one.
     await page.goto("/");
-    await expect(page.getByRole("button", { name: "새로 시작하기" })).toBeVisible();
-    await page.getByRole("button", { name: "새로 시작하기" }).click();
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+
+    // The sidebar's own "+ 새 세션" button is the only remaining path to
+    // attempt a second session, and that's what should hit the guest limit.
+    await page.getByRole("button", { name: "+ 새 세션" }).click();
     await expect(
       page.getByText("비회원은 세션을 1개까지만 만들 수 있어요. 회원가입하면 계속 이어서 쓸 수 있습니다."),
     ).toBeVisible();
@@ -38,6 +42,7 @@ test.describe("guest sessions", () => {
     await page.goto("/");
     await page.getByRole("button", { name: /게스트로 시작하기/ }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+    const sessionUrl = page.url();
 
     await page.getByRole("link", { name: "회원가입하고 저장하기" }).click();
     await expect(page).toHaveURL(/\/register$/);
@@ -47,9 +52,12 @@ test.describe("guest sessions", () => {
     await page.getByLabel("비밀번호 (8자 이상)").fill("password123");
     await page.getByRole("button", { name: "가입하기" }).click();
 
-    // A guest upgrade stays logged in on the same token - no /login bounce.
-    await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByText("Upgraded Guest님, 환영합니다.")).toBeVisible();
+    // A guest upgrade stays logged in on the same token - no /login bounce -
+    // and lands back on the very same session (the home page auto-resumes
+    // whatever session already exists rather than offering a fresh one).
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
+    expect(page.url()).toBe(sessionUrl);
+    await expect(page.getByText("Upgraded Guest님")).toBeVisible();
     await expect(page.getByRole("link", { name: "회원가입하고 저장하기" })).not.toBeVisible();
   });
 });

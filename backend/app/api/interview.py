@@ -244,6 +244,7 @@ async def interview_ask(
             category_id=category.id,
             question_text=pending["question_text"],
             question_source=pending["question_source"],
+            draft_answer=pending.get("draft_answer", ""),
         )
 
     context, confirmed_so_far = await _build_context(db, session, category, chunk_search)
@@ -262,6 +263,14 @@ async def interview_ask(
         question_source = "followup"
         fact_type_hint = "followup"
 
+    try:
+        draft_answer = await llm.draft_answer(context, question_text)
+    except AllProvidersFailedError:
+        # The composer prefill is a convenience, not a required part of the
+        # flow (the user can always type from a blank box), so a failure here
+        # shouldn't block the question itself from being shown.
+        draft_answer = ""
+
     context_excerpt_ids = [e.chunk_id for e in context.record_excerpts]
 
     session.pending_turn = {
@@ -270,11 +279,14 @@ async def interview_ask(
         "question_source": question_source,
         "fact_type_hint": fact_type_hint,
         "context_excerpt_ids": context_excerpt_ids,
+        "draft_answer": draft_answer,
         "candidate_facts": None,
     }
     await db.commit()
 
-    return InterviewAskRead(category_id=category.id, question_text=question_text, question_source=question_source)
+    return InterviewAskRead(
+        category_id=category.id, question_text=question_text, question_source=question_source, draft_answer=draft_answer
+    )
 
 
 @router.post("/{session_id}/interview/answer", response_model=InterviewAnswerRead)

@@ -87,7 +87,7 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
             <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {session.title ?? new Date(session.created_at).toLocaleDateString("ko-KR")}
             </div>
-            <div style={{ color: "#888" }}>{STATUS_LABELS[session.status] ?? session.status}</div>
+            <div style={{ color: "var(--muted-text)" }}>{STATUS_LABELS[session.status] ?? session.status}</div>
           </Link>
         )}
         {!isEditing && (
@@ -127,6 +127,16 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
   const queryClient = useQueryClient();
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Navigating to a different session closes the mobile drawer — "adjust
+  // state during render" instead of an effect (desktop has no drawer, so
+  // this has no visible effect there).
+  const [lastPathname, setLastPathname] = useState(pathname);
+  if (pathname !== lastPathname) {
+    setLastPathname(pathname);
+    setIsSidebarOpen(false);
+  }
 
   useEffect(() => {
     // A step page completing (e.g. period -> categories) changes this
@@ -151,27 +161,30 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
   }
 
   return (
-    <div style={{ display: "flex" }}>
+    <div className="app-shell">
       <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
-      <aside
-        style={{
-          width: 220,
-          flexShrink: 0,
-          borderLeft: "1px solid var(--border)",
-          padding: "80px 16px 16px",
-          minHeight: "100vh",
-          boxSizing: "border-box",
-        }}
+
+      <button
+        type="button"
+        className="sidebar-toggle"
+        onClick={() => setIsSidebarOpen((v) => !v)}
+        title="내 세션 목록"
+        aria-label="내 세션 목록 열기"
       >
+        ☰
+      </button>
+      <div className={`sidebar-backdrop ${isSidebarOpen ? "is-open" : ""}`} onClick={() => setIsSidebarOpen(false)} />
+
+      <aside className={`app-sidebar ${isSidebarOpen ? "is-open" : ""}`}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ fontSize: 14, color: "#888", margin: 0 }}>내 세션</h2>
+          <h2 style={{ fontSize: 14, color: "var(--muted-text)", margin: 0 }}>내 세션</h2>
           <button type="button" onClick={handleNewSession} disabled={isCreating} title="새 세션 시작" style={{ fontSize: 12 }}>
             {isCreating ? "..." : "+ 새 세션"}
           </button>
         </div>
         {createError && <p style={{ color: "crimson", fontSize: 11, marginBottom: 8 }}>{createError}</p>}
         {!sessions || sessions.length === 0 ? (
-          <p style={{ fontSize: 13, color: "#aaa" }}>세션이 없습니다.</p>
+          <p style={{ fontSize: 13, color: "var(--muted-text)" }}>세션이 없습니다.</p>
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             {sessions.map((session) =>

@@ -84,6 +84,7 @@ class AllProvidersFailedError(Exception):
 
 @runtime_checkable
 class LLMProvider(Protocol):
+    async def draft_answer(self, context: InterviewContext, question_text: str) -> str: ...
     async def extract_facts(
         self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
     ) -> list[FactCandidate]: ...
