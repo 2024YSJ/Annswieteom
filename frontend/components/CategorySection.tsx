@@ -139,7 +139,7 @@ export function CategorySection({
             <button type="button" onClick={addManualSuggestion} style={{ alignSelf: "flex-start" }}>
               + 직접 추가
             </button>
-            <p style={{ fontSize: 12, color: "#888", margin: 0 }}>다시 설명하려면 입력창에 다시 적어 보내세요.</p>
+            <p style={{ fontSize: 12, color: "var(--muted-text)", margin: 0 }}>다시 설명하려면 입력창에 다시 적어 보내세요.</p>
           </div>
           <button type="button" onClick={handleSubmit} disabled={isSubmitting} style={{ marginTop: 12 }}>
             {isSubmitting ? "저장 중..." : "확인"}

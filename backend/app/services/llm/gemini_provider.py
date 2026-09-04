@@ -67,6 +67,23 @@ class GeminiProvider:
             self._client = genai.Client(api_key=settings.gemini_api_key)
         return self._client
 
+    async def draft_answer(self, context: InterviewContext, question_text: str) -> str:
+        prompt = _render(
+            "interview_draft_answer.jinja",
+            category_label=context.category_label,
+            gap_start=context.gap_start,
+            gap_end=context.gap_end,
+            confirmed_facts_so_far=context.confirmed_facts_so_far,
+            record_excerpts=context.record_excerpts,
+            question_text=question_text,
+        )
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            return data["draft_answer"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
     async def extract_facts(
         self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
     ) -> list[FactCandidate]:

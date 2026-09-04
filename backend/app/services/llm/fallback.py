@@ -65,6 +65,14 @@ class FallbackProvider:
         # diagnosing the 2026-09-04 llm_unavailable incident.
         logger.warning("%s.%s failed: %s: %s", type(provider).__name__, method, type(exc).__name__, exc)
 
+    async def draft_answer(self, context: InterviewContext, question_text: str) -> str:
+        for provider in self.providers:
+            try:
+                return await provider.draft_answer(context, question_text)
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("draft_answer", provider, exc)
+        raise AllProvidersFailedError()
+
     async def extract_facts(
         self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
     ) -> list[FactCandidate]:

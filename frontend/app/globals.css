@@ -1,41 +1,52 @@
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #1a1a18;
 
   /* Surfaces for bubbles/cards that sit on top of the page background —
      always paired with a matching *-text so a light surface never ends up
      with light (page-foreground) text on it, or vice versa. */
-  --surface: #f1f1f1;
-  --surface-text: #171717;
+  --surface: #f6f5f2;
+  --surface-text: #1a1a18;
   --surface-strong: #ffffff;
-  --surface-strong-text: #171717;
-  --surface-warn: #fff8e1;
-  --surface-warn-text: #171717;
-  --accent-surface: #daf1ff;
-  --accent-surface-text: #171717;
-  --hover-surface: #f0f0f0;
-  --hover-surface-text: #171717;
-  --border: #eee;
-  --border-strong: #ddd;
+  --surface-strong-text: #1a1a18;
+  --surface-warn: #fbe9e8;
+  --surface-warn-text: #8a2530;
+  --accent-surface: #1a1a18;
+  --accent-surface-text: #ffffff;
+  --hover-surface: #f6f5f2;
+  --hover-surface-text: #1a1a18;
+  --border: #e3e0da;
+  --border-strong: #cfcac0;
+
+  /* 포인트로만 쓰는 빨강 — 주요 버튼, 상태 배지, 강조 태그. */
+  --accent: #b0202f;
+  --accent-strong: #8f1826;
+  --accent-text: #fff8f7;
+  --muted-text: #6b6660;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #171613;
+    --foreground: #f1efe9;
 
-    --surface: #262626;
-    --surface-text: #ededed;
-    --surface-strong: #1c1c1c;
-    --surface-strong-text: #ededed;
-    --surface-warn: #4a3d10;
-    --surface-warn-text: #f5e6b8;
-    --accent-surface: #113a52;
-    --accent-surface-text: #ededed;
-    --hover-surface: #262626;
-    --hover-surface-text: #ededed;
-    --border: #333333;
-    --border-strong: #444444;
+    --surface: #211f1b;
+    --surface-text: #f1efe9;
+    --surface-strong: #1c1b18;
+    --surface-strong-text: #f1efe9;
+    --surface-warn: #3a1c1e;
+    --surface-warn-text: #f0a0a7;
+    --accent-surface: #f1efe9;
+    --accent-surface-text: #171613;
+    --hover-surface: #211f1b;
+    --hover-surface-text: #f1efe9;
+    --border: #37342d;
+    --border-strong: #47433a;
+
+    --accent: #e2495a;
+    --accent-strong: #ef6a79;
+    --accent-text: #171613;
+    --muted-text: #a39d92;
   }
 }
 
@@ -55,7 +66,8 @@ body {
   flex-direction: column;
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), "Malgun Gothic", sans-serif;
+  font-size: 15px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -71,8 +83,150 @@ a {
   text-decoration: none;
 }
 
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 900;
+  letter-spacing: -0.01em;
+}
+
+/* 상태값·날짜·라벨처럼 "문서스러운" 자리에 쓰는 유틸리티 서체. */
+.mono, .status-mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-sans), "Malgun Gothic", sans-serif;
+  font-size: 14px;
+}
+
+/* 사무적이되 각지지 않은 톤 — 모서리는 8~9px 정도로만 둥글리고, 그림자는 아주 옅게. */
+button {
+  cursor: pointer;
+  background: var(--surface-strong);
+  color: var(--surface-strong-text);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 9px;
+  padding: 8px 16px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--hover-surface);
+  color: var(--hover-surface-text);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input[type="text"],
+input[type="url"],
+input[type="date"],
+input[type="email"],
+input[type="password"],
+input[type="file"],
+textarea {
+  background: var(--surface-strong);
+  color: var(--surface-strong-text);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 9px;
+  padding: 8px 12px;
+}
+
+input[type="text"]:focus,
+input[type="url"]:focus,
+input[type="date"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 @media (prefers-color-scheme: dark) {
   html {
     color-scheme: dark;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    font-size: 16px; /* iOS는 16px 미만 입력창에서 자동 확대(zoom)를 트리거한다 */
+  }
+}
+
+/* --- 세션 사이드바: 넓은 화면에서는 오른쪽에 고정, 좁은 화면에서는 슬라이드
+   드로어로 바뀐다. 레이아웃에 관여하는 속성(width/position/transform 등)은
+   전부 여기서만 다뤄서 인라인 스타일과 특이도가 충돌하지 않게 한다. --- */
+.app-shell {
+  display: flex;
+}
+
+.app-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  padding: 80px 16px 16px;
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: var(--background);
+}
+
+.sidebar-toggle {
+  display: none;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .app-sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: min(280px, 82vw);
+    border-left: 1px solid var(--border-strong);
+    z-index: 30;
+    transform: translateX(100%);
+    transition: transform 0.2s ease;
+    overflow-y: auto;
+  }
+  .app-sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-toggle {
+    display: inline-flex;
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 31;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+  }
+
+  .sidebar-backdrop.is-open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(26, 26, 24, 0.35);
+    z-index: 29;
   }
 }

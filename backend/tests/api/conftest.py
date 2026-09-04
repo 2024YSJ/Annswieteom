@@ -88,6 +88,7 @@ class FakeLLMProvider:
         fact_candidates: list[list[FactCandidate]] | None = None,
         followup_questions: list[str] | None = None,
         sufficiency_results: list[SufficiencyResult] | None = None,
+        draft_answers: list[str] | None = None,
         documents: list[DraftDocument] | None = None,
         category_suggestions: list | None = None,
         period_suggestion=_DEFAULT_PERIOD_SUGGESTION,
@@ -95,15 +96,23 @@ class FakeLLMProvider:
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
         self._sufficiency_queue = list(sufficiency_results) if sufficiency_results else None
+        self._draft_answer_queue = list(draft_answers) if draft_answers else None
         self._document_queue = list(documents) if documents else None
         self._category_suggestions = category_suggestions
         self._period_suggestion = period_suggestion
         self.extract_facts_calls: list[tuple[str, str, str]] = []
         self.followup_calls: list[str] = []
         self.sufficiency_calls: list[str] = []
+        self.draft_answer_calls: list[str] = []
         self.document_calls: list[tuple[list[str], str]] = []
         self.extract_calls: list[str] = []
         self.period_calls: list[str] = []
+
+    async def draft_answer(self, context, question_text):
+        self.draft_answer_calls.append(question_text)
+        if self._draft_answer_queue:
+            return self._draft_answer_queue.pop(0)
+        return f"({question_text}에 대한 AI 초안)"
 
     async def extract_facts(self, context, question_text, answer_text, fact_type_hint):
         self.extract_facts_calls.append((context.category_label, question_text, answer_text))

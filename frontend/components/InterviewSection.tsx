@@ -21,6 +21,7 @@ export function InterviewSection({
   categories,
   currentCategoryId,
   composerEvent,
+  onPrefillChange,
 }: {
   sessionId: string;
   accessToken: string;
@@ -28,6 +29,11 @@ export function InterviewSection({
   categories: ActivityCategoryRead[];
   currentCategoryId: string | null;
   composerEvent: ComposerEvent | null;
+  /** Reports the current question's AI-drafted answer up to the page, which
+   * feeds it into the shared ChatComposer's prefill. Called with null once
+   * the composer shouldn't show a prefill anymore (answered, or no question
+   * loaded yet). */
+  onPrefillChange: (text: string | null) => void;
 }) {
   const queryClient = useQueryClient();
 
@@ -50,8 +56,12 @@ export function InterviewSection({
 
     sessionApi
       .interviewAsk(sessionId, accessToken)
-      .then((ask) => setQuestion(ask))
+      .then((ask) => {
+        setQuestion(ask);
+        onPrefillChange(ask.draft_answer || null);
+      })
       .catch((err) => setError(errorMessage(err)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, currentCategoryId, sessionId, accessToken]);
 
   // Text composer events answer the current question — but only while we're
@@ -63,6 +73,7 @@ export function InterviewSection({
     if (answeredNonceRef.current === composerEvent.nonce) return;
     answeredNonceRef.current = composerEvent.nonce;
 
+    onPrefillChange(null); // answered — the "AI가 미리 써봤어요" tag no longer applies
     setError(null);
     setIsSubmitting(true);
     sessionApi

@@ -23,6 +23,7 @@ export default function SessionChatPage() {
   const { data: ctx, isLoading, error: loadError } = useSessionContext(sessionId);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [composerEvent, setComposerEvent] = useState<ComposerEvent | null>(null);
+  const [composerPrefill, setComposerPrefill] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ctx) return;
@@ -107,6 +108,7 @@ export default function SessionChatPage() {
           categories={ctx.categories}
           currentCategoryId={ctx.current_category?.id ?? null}
           composerEvent={composerEvent?.forStep === "interview" ? composerEvent : null}
+          onPrefillChange={setComposerPrefill}
         />
       )}
 
@@ -114,7 +116,12 @@ export default function SessionChatPage() {
 
       {/* Period uses its own calendar form, not the shared free-text composer. */}
       {activeStep && activeStep !== "period" && (
-        <ChatComposer key={activeStep} activeStep={activeStep} onSend={setComposerEvent} />
+        <ChatComposer
+          key={activeStep}
+          activeStep={activeStep}
+          onSend={setComposerEvent}
+          prefillText={activeStep === "interview" ? composerPrefill : null}
+        />
       )}
 
       <div ref={bottomRef} />

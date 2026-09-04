@@ -209,7 +209,7 @@ export function ResultSection({
     <ChatBubble side="left" variant="card" label="완성된 커리어 내러티브">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <ToneSlider value={document.tone} onChange={handleToneChange} disabled={isBusy || document.status === "FINAL"} />
-        <span style={{ fontSize: 12, color: "#888" }}>버전 {document.version} · {document.status === "FINAL" ? "확정됨" : "초안"}</span>
+        <span style={{ fontSize: 12, color: "var(--muted-text)" }}>버전 {document.version} · {document.status === "FINAL" ? "확정됨" : "초안"}</span>
       </div>
 
       {document.sentences

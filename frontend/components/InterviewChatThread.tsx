@@ -8,7 +8,7 @@ import { ChatBubble } from "@/components/ChatBubble";
 function BasedOnBadge({ basedOn }: { basedOn: BasedOnRead }) {
   if (basedOn.type === "record") {
     return (
-      <span style={{ fontSize: 12, background: "#e6f4ea", color: "#1a7f37", padding: "2px 8px", borderRadius: 999 }}>
+      <span style={{ fontSize: 12, background: "#e3f0dc", color: "#4a6b2a", padding: "2px 8px", borderRadius: 999 }}>
         📎 내 기록물 근거 ({basedOn.excerpts.length}건)
       </span>
     );
@@ -52,7 +52,7 @@ export function InterviewChatThread({
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {visibleCategories.map((category) => (
         <div key={category.id} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ fontSize: 13, color: "#666", fontWeight: "bold" }}>
+          <div style={{ fontSize: 13, color: "var(--muted-text)", fontWeight: "bold" }}>
             ▸ {category.custom_label ?? CATEGORY_LABELS[category.category_type]}
           </div>
           {category.confirmed_facts.map((fact) => (
@@ -71,7 +71,7 @@ export function InterviewChatThread({
               {candidates !== null && (
                 <>
                   {candidates.length === 0 && (
-                    <p style={{ fontSize: 13, color: "#888" }}>
+                    <p style={{ fontSize: 13, color: "var(--muted-text)" }}>
                       이 답변에서는 특별히 뽑아낼 내용이 없었어요. 그냥 다음으로 넘어가거나, 다시 답해 주세요.
                     </p>
                   )}

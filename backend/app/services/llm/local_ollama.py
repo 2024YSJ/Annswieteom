@@ -59,6 +59,23 @@ class LocalOllamaProvider:
         self._base_url = settings.local_llm_base_url.rstrip("/")
         self._model = settings.local_llm_model_name
 
+    async def draft_answer(self, context: InterviewContext, question_text: str) -> str:
+        prompt = _render(
+            "interview_draft_answer.jinja",
+            category_label=context.category_label,
+            gap_start=context.gap_start,
+            gap_end=context.gap_end,
+            confirmed_facts_so_far=context.confirmed_facts_so_far,
+            record_excerpts=context.record_excerpts,
+            question_text=question_text,
+        )
+        response_text = await self._generate(prompt, timeout=45.0)
+        try:
+            data = json.loads(response_text)
+            return data["draft_answer"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
     async def extract_facts(
         self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
     ) -> list[FactCandidate]:

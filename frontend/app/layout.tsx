@@ -1,17 +1,23 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { IBM_Plex_Mono, Noto_Sans_KR } from "next/font/google";
 import { AuthHeader } from "@/components/AuthHeader";
 import { AuthProvider } from "@/lib/auth-context";
 import { QueryProvider } from "@/lib/query-provider";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// 사무적이되 딱딱하지 않은 톤 — 본문/제목은 Noto Sans KR, 상태값·날짜 같은 라벨은
+// IBM Plex Mono. 둘 다 SIL Open Font License 1.1로, 상업적 이용·재배포·웹임베딩에
+// 제약이 없다(폰트 파일 자체를 단독 상품으로 되파는 것만 금지 — 웹폰트로 쓰는 이
+// 서비스와는 무관).
+const fontSans = Noto_Sans_KR({
+  variable: "--font-sans",
+  weight: ["400", "500", "700", "900"],
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const fontMono = IBM_Plex_Mono({
+  variable: "--font-mono",
+  weight: ["500", "600"],
   subsets: ["latin"],
 });
 
@@ -48,7 +54,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="ko" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="ko" className={`${fontSans.variable} ${fontMono.variable}`}>
       <body>
         <script
           type="application/ld+json"

@@ -21,7 +21,7 @@ function EvidenceDetail({ evidence }: { evidence: EvidenceRead }) {
         fontSize: 13,
       }}
     >
-      <div style={{ color: "#666" }}>{evidence.content}</div>
+      <div style={{ color: "var(--muted-text)" }}>{evidence.content}</div>
       {evidence.citation ? (
         <div style={{ marginTop: 4 }}>
           {evidence.citation.source_url && (
@@ -29,10 +29,10 @@ function EvidenceDetail({ evidence }: { evidence: EvidenceRead }) {
               {evidence.citation.source_url}
             </a>
           )}
-          {evidence.citation.published_at && <span style={{ color: "#999" }}> ({evidence.citation.published_at})</span>}
+          {evidence.citation.published_at && <span style={{ color: "var(--muted-text)" }}> ({evidence.citation.published_at})</span>}
         </div>
       ) : (
-        <div style={{ marginTop: 4, color: "#999" }}>사용자 확인</div>
+        <div style={{ marginTop: 4, color: "var(--muted-text)" }}>사용자 확인</div>
       )}
     </div>
   );
@@ -52,8 +52,8 @@ export function EvidenceTag({ evidence }: { evidence: EvidenceRead[] }) {
             onClick={() => setOpenId(openId === e.fact_id ? null : e.fact_id)}
             style={{
               fontSize: 11,
-              background: e.source_type === "record_cited" ? "#e6f4ea" : "#eef2ff",
-              color: e.source_type === "record_cited" ? "#1a7f37" : "#3b4bd6",
+              background: e.source_type === "record_cited" ? "#e3f0dc" : "var(--surface)",
+              color: e.source_type === "record_cited" ? "#4a6b2a" : "var(--muted-text)",
               border: "none",
               borderRadius: 999,
               padding: "2px 8px",
