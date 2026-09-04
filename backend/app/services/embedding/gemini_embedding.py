@@ -28,7 +28,24 @@ class GeminiEmbedding:
     """Gemini text-embedding-004 — KNOWN dimension mismatch (768 vs 1024)."""
 
     def __init__(self) -> None:
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        # Lazy, same reasoning as GeminiProvider (services/llm/gemini_provider.py):
+        # genai.Client(api_key="") raises ValueError synchronously, and
+        # FallbackEmbedding._build_providers() constructs every configured
+        # provider unconditionally — for the /generate, /document/regenerate,
+        # and /sentences/{id}/regenerate endpoints, that construction happens
+        # directly in a FastAPI dependency (Depends(get_embedding_provider))
+        # with no surrounding try/except, so a blank GEMINI_API_KEY crashed
+        # the request with a bare 500 instead of falling back to local
+        # embeddings (production incident, 2026-09-04 — this endpoint has no
+        # equivalent to interview.py's broad `except Exception: excerpts = []`
+        # around its own FallbackEmbedding() use, which is why that path never
+        # surfaced this).
+        self._client: genai.Client | None = None
+
+    def _ensure_client(self) -> genai.Client:
+        if self._client is None:
+            self._client = genai.Client(api_key=settings.gemini_api_key)
+        return self._client
 
     @property
     def model_name(self) -> str:
@@ -43,9 +60,10 @@ class GeminiEmbedding:
             raise EmbeddingDimensionMismatchError(EMBEDDING_DIM, _GEMINI_DIM, _MODEL)
 
         try:
+            client = self._ensure_client()
             vectors: list[list[float]] = []
             for text in texts:
-                result = await self._client.aio.models.embed_content(
+                result = await client.aio.models.embed_content(
                     model=_MODEL,
                     contents=text,
                 )
