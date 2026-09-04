@@ -118,6 +118,26 @@ def test_records_endpoints_require_record_upload_status(records_client):
     assert resp.status_code == 409
 
 
+def test_records_can_still_be_attached_once_interviewing(records_client):
+    """Records used to be gated to RECORD_UPLOAD only; the interview can now
+    be attached to at any point through the interview phase too, so a session
+    that has already moved past records/skip into INTERVIEWING must still
+    accept new records (evidence for a category the user hasn't finished yet)."""
+    headers = _register_and_login(records_client)
+    session_id = _create_session_at_record_upload(records_client, headers)
+
+    resp = records_client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "INTERVIEWING"
+
+    resp = records_client.post(
+        f"/api/v1/sessions/{session_id}/records/text",
+        headers=headers,
+        json={"text": "인터뷰 도중에 추가한 기록물"},
+    )
+    assert resp.status_code == 201
+
+
 def test_delete_record_removes_it_and_its_storage_object(records_client):
     headers = _register_and_login(records_client)
     session_id = _create_session_at_record_upload(records_client, headers)

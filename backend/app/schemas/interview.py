@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -77,27 +77,70 @@ class BasedOnRead(BaseModel):
     excerpts: list[RecordExcerptRead] = []
 
 
-class InterviewNextRead(BaseModel):
-    step: str
+class ConfirmedFactRead(BaseModel):
+    id: uuid.UUID
+    fact_type: str
+    content: str
+    source_type: str
+    source_question_text: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class InterviewAskRead(BaseModel):
+    """`POST /interview/ask` 응답 — 이번 턴에 물어볼 질문.
+
+    question_source가 "base"면 interview_question_bank.py의 고정 질문, "followup"이면
+    AI가 즉흥적으로 만든 후속 질문이다. 이미 답변을 기다리는 중인 pending_turn이 있으면
+    LLM을 다시 부르지 않고 같은 질문을 그대로 반환한다(서버 사이드 idempotent).
+    """
+
     category_id: uuid.UUID
-    ai_draft: str
+    question_text: str
+    question_source: Literal["base", "followup"]
+
+
+class InterviewAnswerRequest(BaseModel):
+    text: str
+
+
+class FactCandidateRead(BaseModel):
+    index: int
+    content: str
+    fact_type: str
     based_on: BasedOnRead
 
 
-class InterviewConfirm(BaseModel):
-    """9-3절 `POST /interview/confirm` 요청 바디.
-
-    의도적으로 `source_type`을 클라이언트가 지정하지 못하게 한다 — 그걸 허용하면
-    클라이언트가 아무 텍스트나 `record_cited`라고 주장할 수 있어 정직성 가드레일이
-    뚫린다. source_type은 서버가 interview/next에서 캐시해둔 `pending_draft`의
-    based_on/was_edited로부터만 도출한다 (02_interview_state_machine_api.md 4절).
+class InterviewAnswerRead(BaseModel):
+    """`POST /interview/answer` 응답. candidates가 빈 배열이어도 정상이다 —
+    사용자가 무의미한 답을 했을 때 사실을 지어내지 않기 위해서다.
     """
 
-    step: Literal["FREQ_CONFIRM", "TASK_CONFIRM", "ACHIEVEMENT_CONFIRM"]
+    candidates: list[FactCandidateRead]
+
+
+class FactConfirmation(BaseModel):
+    index: int
     final_text: str
     was_edited: bool
+    include: bool = True
+
+
+class InterviewConfirmRequest(BaseModel):
+    """`POST /interview/confirm` 요청 바디.
+
+    의도적으로 `source_type`/`fact_type`을 클라이언트가 지정하지 못하게 한다 — 그걸
+    허용하면 클라이언트가 아무 텍스트나 `record_cited`라고 주장할 수 있어 정직성
+    가드레일이 뚫린다. 둘 다 서버가 interview/answer에서 캐시해둔 pending_turn의
+    candidate_facts/based_on/was_edited로부터만 도출한다.
+    """
+
+    confirmations: list[FactConfirmation]
 
 
 class InterviewConfirmRead(BaseModel):
     status: str
     current_category_id: uuid.UUID | None = None
+    category_done: bool
+    confirmed_facts: list[ConfirmedFactRead] = []

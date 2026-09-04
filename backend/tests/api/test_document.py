@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from app.services.llm.base import BasedOn, DraftDocument, SentenceWithEvidence, Suggestion
+from app.services.llm.base import DraftDocument, SentenceWithEvidence
+
+# part_time과 study 둘 다 고정 질문 4개다 (interview_question_bank.py) — 카테고리당
+# 정확히 4턴만 돌면(후속 질문 없이) sufficiency 판단 없이 바로 다음 카테고리로 넘어간다.
+FACTS_PER_CATEGORY = 4
 
 
 def _register_and_login(client, email="alice@example.com"):
@@ -11,6 +15,21 @@ def _register_and_login(client, email="alice@example.com"):
     resp = client.post("/api/v1/auth/login", json={"email": email, "password": "password123"})
     token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _do_one_turn(client, headers, session_id):
+    resp = client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.status_code == 200
+    resp = client.post(f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "답변입니다"})
+    assert resp.status_code == 200
+    candidates = resp.json()["candidates"]
+    resp = client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={"confirmations": [{"index": c["index"], "final_text": c["content"], "was_edited": False} for c in candidates]},
+    )
+    assert resp.status_code == 200
+    return resp.json()
 
 
 def _advance_to_result_generate(client, headers, category_types=("part_time",)):
@@ -30,20 +49,8 @@ def _advance_to_result_generate(client, headers, category_types=("part_time",)):
     client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
 
     for _ in category_types:
-        for draft_step, confirm_step in (
-            ("FREQ_DRAFT", "FREQ_CONFIRM"),
-            ("TASK_DRAFT", "TASK_CONFIRM"),
-            ("ACHIEVEMENT_DRAFT", "ACHIEVEMENT_CONFIRM"),
-        ):
-            resp = client.get(f"/api/v1/sessions/{session_id}/interview/next", headers=headers)
-            assert resp.status_code == 200
-            assert resp.json()["step"] == draft_step
-            resp = client.post(
-                f"/api/v1/sessions/{session_id}/interview/confirm",
-                headers=headers,
-                json={"step": confirm_step, "final_text": f"{confirm_step} 답변", "was_edited": False},
-            )
-            assert resp.status_code == 200
+        for _ in range(FACTS_PER_CATEGORY):
+            _do_one_turn(client, headers, session_id)
 
     ctx = client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
     assert ctx["status"] == "RESULT_GENERATE"
@@ -61,7 +68,7 @@ def test_generate_creates_sentences_with_evidence_and_advances_status(document_c
     body = resp.json()
     assert body["version"] == 1
     assert body["status"] == "DRAFT"
-    assert len(body["sentences"]) == 3  # one fact per confirm round -> one sentence per fact (fake LLM)
+    assert len(body["sentences"]) == FACTS_PER_CATEGORY  # one fact per confirm round -> one sentence per fact (fake LLM)
 
     for sentence in body["sentences"]:
         assert sentence["consistency_check_passed"] is True
@@ -78,10 +85,10 @@ def test_generate_only_passes_this_category_facts_to_llm(document_client):
 
     document_client.post(f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"})
 
-    # generate_document is called once per category, each with just that category's 3 facts.
+    # generate_document is called once per category, each with just that category's facts.
     assert len(document_client.fake_llm.document_calls) == 2
     for fact_ids, tone in document_client.fake_llm.document_calls:
-        assert len(fact_ids) == 3
+        assert len(fact_ids) == FACTS_PER_CATEGORY
         assert tone == "neutral"
 
 

@@ -9,11 +9,12 @@ from app.services.llm.base import (
     CategorySuggestion,
     ConfirmedFact,
     DraftDocument,
+    FactCandidate,
     InterviewContext,
     LLMProvider,
     PeriodSuggestion,
     ProviderUnavailableError,
-    Suggestion,
+    SufficiencyResult,
 )
 from app.services.llm.gemini_provider import GeminiProvider
 from app.services.llm.local_ollama import LocalOllamaProvider
@@ -64,12 +65,30 @@ class FallbackProvider:
         # diagnosing the 2026-09-04 llm_unavailable incident.
         logger.warning("%s.%s failed: %s: %s", type(provider).__name__, method, type(exc).__name__, exc)
 
-    async def draft_suggestion(self, context: InterviewContext, step: str) -> Suggestion:
+    async def extract_facts(
+        self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
+    ) -> list[FactCandidate]:
         for provider in self.providers:
             try:
-                return await provider.draft_suggestion(context, step)
+                return await provider.extract_facts(context, question_text, answer_text, fact_type_hint)
             except (TimeoutError, ProviderUnavailableError) as exc:
-                self._log_failure("draft_suggestion", provider, exc)
+                self._log_failure("extract_facts", provider, exc)
+        raise AllProvidersFailedError()
+
+    async def followup_question(self, context: InterviewContext) -> str:
+        for provider in self.providers:
+            try:
+                return await provider.followup_question(context)
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("followup_question", provider, exc)
+        raise AllProvidersFailedError()
+
+    async def judge_sufficiency(self, context: InterviewContext) -> SufficiencyResult:
+        for provider in self.providers:
+            try:
+                return await provider.judge_sufficiency(context)
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("judge_sufficiency", provider, exc)
         raise AllProvidersFailedError()
 
     async def extract_categories(

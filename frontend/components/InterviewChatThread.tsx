@@ -1,15 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { ActivityCategoryRead, BasedOnRead } from "@/lib/api-client";
-import { CATEGORY_LABELS, QUESTION_BY_FACT_TYPE } from "@/lib/session-routes";
+import type { ActivityCategoryRead, BasedOnRead, FactCandidateRead } from "@/lib/api-client";
+import { CATEGORY_LABELS } from "@/lib/session-routes";
 import { ChatBubble } from "@/components/ChatBubble";
-
-const FACT_TYPE_LABELS: Record<string, string> = {
-  frequency: "빈도",
-  task: "업무",
-  achievement: "성과",
-};
 
 function BasedOnBadge({ basedOn }: { basedOn: BasedOnRead }) {
   if (basedOn.type === "record") {
@@ -19,43 +13,33 @@ function BasedOnBadge({ basedOn }: { basedOn: BasedOnRead }) {
       </span>
     );
   }
-  return (
-    <span style={{ fontSize: 12, background: "#f1f1f1", color: "#666", padding: "2px 8px", borderRadius: 999 }}>
-      💭 AI의 일반적인 추측
-    </span>
-  );
+  return null;
 }
 
-interface PendingDraft {
-  stepLabel: string;
-  draftText: string;
-  basedOn: BasedOnRead;
+export interface CandidateDraft {
+  candidate: FactCandidateRead;
+  finalText: string;
+  wasEdited: boolean;
+  include: boolean;
 }
 
 export function InterviewChatThread({
   categories,
   currentCategoryId,
-  pending,
-  onConfirm,
+  questionText,
+  candidates,
+  onUpdateCandidate,
+  onSubmit,
   isSubmitting,
 }: {
   categories: ActivityCategoryRead[];
   currentCategoryId: string | null;
-  pending: PendingDraft | null;
-  onConfirm: (finalText: string, wasEdited: boolean) => void;
+  questionText: string | null;
+  candidates: CandidateDraft[] | null;
+  onUpdateCandidate: (index: number, patch: Partial<Omit<CandidateDraft, "candidate">>) => void;
+  onSubmit: () => void;
   isSubmitting: boolean;
 }) {
-  const [draftEdit, setDraftEdit] = useState("");
-  const [isEditing, setIsEditing] = useState(false);
-
-  // Reset the edit box whenever a new draft arrives.
-  const [lastSeenDraft, setLastSeenDraft] = useState<string | null>(null);
-  if (pending && pending.draftText !== lastSeenDraft) {
-    setLastSeenDraft(pending.draftText);
-    setDraftEdit(pending.draftText);
-    setIsEditing(false);
-  }
-
   // Only categories that have at least one confirmed fact, or are the one
   // currently being interviewed, are shown — categories not reached yet
   // stay invisible (the AI doesn't preview future questions).
@@ -73,63 +57,114 @@ export function InterviewChatThread({
           </div>
           {category.confirmed_facts.map((fact) => (
             <div key={fact.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <ChatBubble side="left">{QUESTION_BY_FACT_TYPE[fact.fact_type]}</ChatBubble>
-              <ChatBubble side="right" label={`${FACT_TYPE_LABELS[fact.fact_type]} · 확인됨`}>
+              <ChatBubble side="left">{fact.source_question_text ?? "질문"}</ChatBubble>
+              <ChatBubble side="right" label="확인됨">
                 {fact.content}
               </ChatBubble>
             </div>
           ))}
 
-          {category.id === currentCategoryId && pending && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }} aria-live="polite">
-              <ChatBubble side="left">{pending.stepLabel}</ChatBubble>
-              <div
-                style={{
-                  background: "var(--surface)",
-                  color: "var(--surface-text)",
-                  padding: "12px",
-                  borderRadius: 12,
-                  marginBottom: 8,
-                }}
-              >
-                <div style={{ marginBottom: 8 }}>
-                  <BasedOnBadge basedOn={pending.basedOn} />
-                </div>
-                {isEditing ? (
-                  <textarea
-                    rows={3}
-                    value={draftEdit}
-                    onChange={(e) => setDraftEdit(e.target.value)}
-                    style={{ width: "100%" }}
-                  />
-                ) : (
-                  <p style={{ margin: 0 }}>{pending.draftText}</p>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {isEditing ? (
-                  <button
-                    type="button"
-                    disabled={isSubmitting || draftEdit.trim().length === 0}
-                    onClick={() => onConfirm(draftEdit, true)}
-                  >
-                    수정한 내용으로 확인
-                  </button>
-                ) : (
-                  <>
-                    <button type="button" disabled={isSubmitting} onClick={() => onConfirm(pending.draftText, false)}>
-                      맞아요, 이대로 확인
+          {category.id === currentCategoryId && questionText && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }} aria-live="polite">
+              <ChatBubble side="left">{questionText}</ChatBubble>
+
+              {candidates !== null && (
+                <>
+                  {candidates.length === 0 && (
+                    <p style={{ fontSize: 13, color: "#888" }}>
+                      이 답변에서는 특별히 뽑아낼 내용이 없었어요. 그냥 다음으로 넘어가거나, 다시 답해 주세요.
+                    </p>
+                  )}
+                  {candidates.map((draft, index) => (
+                    <CandidateRow
+                      key={index}
+                      index={index}
+                      draft={draft}
+                      onUpdate={(patch) => onUpdateCandidate(index, patch)}
+                    />
+                  ))}
+                  <div>
+                    <button type="button" disabled={isSubmitting} onClick={onSubmit}>
+                      다음
                     </button>
-                    <button type="button" disabled={isSubmitting} onClick={() => setIsEditing(true)}>
-                      고쳐서 확인할게요
-                    </button>
-                  </>
-                )}
-              </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+function CandidateRow({
+  draft,
+  onUpdate,
+}: {
+  index: number;
+  draft: CandidateDraft;
+  onUpdate: (patch: Partial<Omit<CandidateDraft, "candidate">>) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(draft.finalText);
+
+  // Reset the edit box whenever this row's underlying candidate text changes
+  // externally (a new question's candidate reusing the same row index) —
+  // "adjust state during render" instead of an effect, same idiom this
+  // component used previously for resetting the single-draft edit box.
+  const [lastSeenText, setLastSeenText] = useState(draft.finalText);
+  if (draft.finalText !== lastSeenText) {
+    setLastSeenText(draft.finalText);
+    setEditText(draft.finalText);
+  }
+
+  return (
+    <div
+      style={{
+        background: "var(--surface)",
+        color: "var(--surface-text)",
+        padding: 12,
+        borderRadius: 12,
+        opacity: draft.include ? 1 : 0.5,
+      }}
+    >
+      <div style={{ marginBottom: 8, display: "flex", gap: 8, alignItems: "center" }}>
+        <BasedOnBadge basedOn={draft.candidate.based_on} />
+      </div>
+      {isEditing ? (
+        <textarea
+          rows={3}
+          value={editText}
+          onChange={(e) => setEditText(e.target.value)}
+          style={{ width: "100%" }}
+        />
+      ) : (
+        <p style={{ margin: 0 }}>{draft.finalText}</p>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        {isEditing ? (
+          <button
+            type="button"
+            disabled={editText.trim().length === 0}
+            onClick={() => {
+              onUpdate({ finalText: editText, wasEdited: true, include: true });
+              setIsEditing(false);
+            }}
+          >
+            수정 완료
+          </button>
+        ) : (
+          <>
+            <button type="button" onClick={() => setIsEditing(true)}>
+              고쳐 쓰기
+            </button>
+            <button type="button" onClick={() => onUpdate({ include: !draft.include })}>
+              {draft.include ? "제외하기" : "포함하기"}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

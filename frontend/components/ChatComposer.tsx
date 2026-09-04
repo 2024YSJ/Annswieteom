@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ChangeEvent } from "react";
 
-export type ActiveStep = "period" | "categories" | "records";
+export type ActiveStep = "period" | "categories" | "records" | "interview";
 
 export type ComposerEvent =
   | { kind: "text"; value: string; nonce: number; forStep: ActiveStep }
@@ -17,9 +17,12 @@ export type ComposerEvent =
  * than just forward it, and Records should not be special-cased relative to
  * them.
  *
- * Only Records gets the attach (📎) button — Period/Categories answers are
- * always free text.
+ * Records and Interview both get the attach (📎) button — a record can now be
+ * attached at any point during the interview, not just the dedicated Records
+ * step. Period/Categories answers are always plain free text.
  */
+const ATTACH_ENABLED_STEPS = new Set<ActiveStep>(["records", "interview"]);
+
 export function ChatComposer({
   activeStep,
   onSend,
@@ -69,7 +72,7 @@ export function ChatComposer({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative" }}>
-        {activeStep === "records" && (
+        {ATTACH_ENABLED_STEPS.has(activeStep) && (
           <button type="button" onClick={() => setIsAttachMenuOpen((v) => !v)} title="첨부" aria-label="첨부">
             📎
           </button>
@@ -92,7 +95,7 @@ export function ChatComposer({
           보내기
         </button>
 
-        {activeStep === "records" && isAttachMenuOpen && (
+        {ATTACH_ENABLED_STEPS.has(activeStep) && isAttachMenuOpen && (
           <div
             style={{
               position: "absolute",
@@ -129,7 +132,7 @@ export function ChatComposer({
             </button>
           </div>
         )}
-        {activeStep === "records" && (
+        {ATTACH_ENABLED_STEPS.has(activeStep) && (
           <input
             ref={fileInputRef}
             type="file"
@@ -141,7 +144,7 @@ export function ChatComposer({
         )}
       </div>
 
-      {activeStep === "records" && isUrlFormOpen && (
+      {ATTACH_ENABLED_STEPS.has(activeStep) && isUrlFormOpen && (
         <form onSubmit={sendUrl} style={{ display: "flex", gap: 8 }}>
           <input
             type="url"
