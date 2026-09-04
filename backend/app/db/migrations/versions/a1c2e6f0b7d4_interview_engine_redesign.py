@@ -30,6 +30,16 @@ NEW_SESSION_STATUSES = (
     "('PERIOD_INPUT', 'CATEGORY_SELECT', 'RECORD_UPLOAD', 'INTERVIEWING', "
     "'RESULT_GENERATE', 'RESULT_REVIEW')"
 )
+# Superset of old+new, used only as a transient constraint while in-flight
+# rows are updated from an old value to 'INTERVIEWING' — a plain
+# create_check_constraint validates every existing row immediately, so the
+# final (new-only) constraint can't be installed until no row holds an old
+# per-category value anymore.
+TRANSITIONAL_SESSION_STATUSES = (
+    "('PERIOD_INPUT', 'CATEGORY_SELECT', 'RECORD_UPLOAD', 'FREQ_DRAFT', 'FREQ_CONFIRM', "
+    "'TASK_DRAFT', 'TASK_CONFIRM', 'ACHIEVEMENT_DRAFT', 'ACHIEVEMENT_CONFIRM', "
+    "'INTERVIEWING', 'RESULT_GENERATE', 'RESULT_REVIEW')"
+)
 
 OLD_FACT_TYPES = "('frequency', 'task', 'achievement')"
 NEW_FACT_TYPES = (
@@ -39,11 +49,19 @@ NEW_FACT_TYPES = (
 
 
 def upgrade() -> None:
-    # 1. Any session still mid-interview under the old 6-state vocabulary
-    #    collapses to INTERVIEWING before the CHECK constraint stops allowing
-    #    the old values. Its per-category progress is re-derivable from
-    #    ConfirmedFact rows already present (next_base_question), so no data
-    #    is lost — just the fine-grained DRAFT/CONFIRM sub-state.
+    # 1. Swap in a transitional constraint (old values + INTERVIEWING) first —
+    #    Postgres validates every existing row against a freshly-created CHECK
+    #    constraint immediately, so jumping straight to the new-only
+    #    constraint would itself fail on any row still sitting at an old
+    #    per-category value. With the transitional constraint in place, any
+    #    session still mid-interview under the old 6-state vocabulary can be
+    #    updated to INTERVIEWING; its per-category progress is re-derivable
+    #    from ConfirmedFact rows already present (next_base_question), so no
+    #    data is lost — just the fine-grained DRAFT/CONFIRM sub-state. Only
+    #    then is the final, narrower constraint installed (safe at that point
+    #    since no row holds an old value anymore).
+    op.drop_constraint('ck_sessions_status', 'sessions', type_='check')
+    op.create_check_constraint('ck_sessions_status', 'sessions', f"status IN {TRANSITIONAL_SESSION_STATUSES}")
     op.execute(
         "UPDATE sessions SET status = 'INTERVIEWING' WHERE status IN "
         "('FREQ_DRAFT', 'FREQ_CONFIRM', 'TASK_DRAFT', 'TASK_CONFIRM', "
