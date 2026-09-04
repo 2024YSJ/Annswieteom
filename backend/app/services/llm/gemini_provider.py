@@ -32,7 +32,22 @@ def _render(template_name: str, **kwargs: object) -> str:
 
 class GeminiProvider:
     def __init__(self) -> None:
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        # Lazy — genai.Client(api_key="") raises ValueError synchronously, and
+        # FallbackProvider._build_providers() constructs every configured
+        # provider eagerly regardless of LLM_PROVIDER_ORDER. Raising here would
+        # escape this class's own error handling entirely (it happens during
+        # FastAPI dependency resolution, before any endpoint's try/except runs)
+        # and surface to the browser as a bare 500 with no CORS headers,
+        # instead of the clean "try the next provider" behavior every other
+        # failure mode gets. Deferring construction to _call() lets the
+        # existing try/except there convert it to ProviderUnavailableError
+        # like any other Gemini failure.
+        self._client: genai.Client | None = None
+
+    def _ensure_client(self) -> genai.Client:
+        if self._client is None:
+            self._client = genai.Client(api_key=settings.gemini_api_key)
+        return self._client
 
     async def draft_suggestion(self, context: InterviewContext, step: str) -> Suggestion:
         prompt = _render(
@@ -111,7 +126,8 @@ class GeminiProvider:
 
     async def _call(self, prompt: str) -> str:
         try:
-            response = await self._client.aio.models.generate_content(
+            client = self._ensure_client()
+            response = await client.aio.models.generate_content(
                 model="gemini-1.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
