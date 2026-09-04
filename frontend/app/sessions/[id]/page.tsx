@@ -41,17 +41,23 @@ export default function SessionChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [ctx?.status]);
 
-  if (isLoading || !ctx) {
-    return (
-      <main style={{ maxWidth: 640, margin: "80px auto" }}>
-        <LoadingNotice />
-      </main>
-    );
-  }
+  // Must be checked before the loading branch below: react-query resolves
+  // `isLoading` to false once a query settles into an error, but `data`
+  // (`ctx`) stays undefined either way — so `isLoading || !ctx` alone can't
+  // tell "still loading" apart from "failed", and would always take the pure
+  // loading branch first, leaving this error branch unreachable and the
+  // visitor stuck on a bare "불러오는 중" with no error shown and no escape.
   if (loadError) {
     return (
       <main style={{ maxWidth: 640, margin: "80px auto", padding: "0 16px" }}>
         <p style={{ color: "crimson" }}>{errorMessage(loadError)}</p>
+      </main>
+    );
+  }
+  if (isLoading || !ctx) {
+    return (
+      <main style={{ maxWidth: 640, margin: "80px auto" }}>
+        <LoadingNotice />
       </main>
     );
   }

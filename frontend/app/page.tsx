@@ -12,7 +12,7 @@ import { LoadingNotice } from "@/components/LoadingNotice";
 export default function Home() {
   const router = useRouter();
   const { user, accessToken, isLoading, guestLogin } = useAuth();
-  const { data: sessions, isLoading: sessionsLoading } = useSessionsList();
+  const { data: sessions, isLoading: sessionsLoading, error: sessionsError, refetch: refetchSessions } = useSessionsList();
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   // Guards against firing the redirect twice (React 19 dev-mode double-invoked
@@ -51,6 +51,23 @@ export default function Home() {
     } finally {
       setIsCreating(false);
     }
+  }
+
+  // A logged-in visitor whose session list failed to load (not just still
+  // loading) used to fall through to the loading branch below forever — the
+  // redirect effect above only ever checks `!sessions`, never the query's
+  // error state, so nothing there could break the wait. Handle it explicitly
+  // with a retry instead of leaving a dead end with no escape.
+  if (user && sessionsError) {
+    return (
+      <main style={{ maxWidth: 480, margin: "120px auto", padding: "0 16px", textAlign: "center" }}>
+        <h1>안 쉬었음</h1>
+        <p style={{ color: "crimson" }}>{errorMessage(sessionsError)}</p>
+        <button type="button" onClick={() => refetchSessions()}>
+          다시 시도
+        </button>
+      </main>
+    );
   }
 
   if (isLoading || user) {

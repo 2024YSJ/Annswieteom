@@ -3,12 +3,25 @@ import { sessionApi } from "./api-client";
 import { useAuth } from "./auth-context";
 import { queryKeys } from "./query-keys";
 
+// `fetch` has no default timeout, so a request that stalls (rather than
+// cleanly failing) never resolves — react-query's own retry/error handling
+// can't kick in for a promise that hasn't rejected yet, which would leave
+// the session page's loading screen up indefinitely. Racing against a
+// timeout guarantees this query eventually settles one way or the other
+// (react-query's default retry then applies normally on top of that).
+const SESSION_FETCH_TIMEOUT_MS = 15000;
+
 export function useSessionContext(sessionId: string) {
   const { accessToken, isLoading: authLoading } = useAuth();
 
   return useQuery({
     queryKey: queryKeys.session(sessionId),
-    queryFn: () => sessionApi.get(sessionId, accessToken!),
+    queryFn: () => {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("session_fetch_timeout")), SESSION_FETCH_TIMEOUT_MS),
+      );
+      return Promise.race([sessionApi.get(sessionId, accessToken!), timeout]);
+    },
     enabled: !authLoading && !!accessToken,
   });
 }

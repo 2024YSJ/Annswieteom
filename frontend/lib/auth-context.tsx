@@ -41,8 +41,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // cookie so a reload doesn't force a fresh login.
     let cancelled = false;
 
-    authApi
-      .refresh()
+    // `fetch` has no default timeout — if the request stalls (a network/proxy
+    // that silently drops the connection instead of erroring, rather than a
+    // clean failure or a slow-but-eventually-answering cold start) the
+    // promise never settles, and with no button on screen yet, the visitor
+    // is stuck on the loading screen with no way to escape it. Racing against
+    // a timeout guarantees isLoading always resolves, so at worst a stalled
+    // check degrades to the normal logged-out view (still fully usable —
+    // login/register/guest are separate requests) instead of a dead end.
+    const AUTH_CHECK_TIMEOUT_MS = 15000;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("auth_check_timeout")), AUTH_CHECK_TIMEOUT_MS),
+    );
+
+    Promise.race([authApi.refresh(), timeout])
       .then(async (tokens) => {
         if (cancelled) return;
         setAccessToken(tokens.access_token);
@@ -50,7 +62,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setUser(me);
       })
       .catch(() => {
-        // No valid refresh cookie - the visitor just isn't logged in yet.
+        // No valid refresh cookie, or the check timed out - either way the
+        // visitor just isn't logged in (yet).
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
