@@ -10,14 +10,10 @@ from app.db.session import get_db
 from app.models.activity_category import ActivityCategory
 from app.models.session import Session as SessionModel
 from app.models.user import User
-from app.schemas.session import RecordChunkExcerptRead, SessionContextRead, SessionRead
+from app.schemas.session import RecordChunkExcerptRead, SessionContextRead, SessionRead, SessionRename
 from app.services.record_pipeline.search import get_chunk_search
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
-
-
-def category_label(category: ActivityCategory) -> str:
-    return category.custom_label or category.category_type
 
 
 @router.post("", response_model=SessionRead, status_code=status.HTTP_201_CREATED)
@@ -78,7 +74,7 @@ async def get_session(
     available_record_chunks: list[RecordChunkExcerptRead] = []
     if current_category is not None:
         try:
-            excerpts = await chunk_search(full_session.id, category_label(current_category))
+            excerpts = await chunk_search(full_session.id, current_category.label)
         except Exception:
             # 임베딩/LLM 인프라가 잠깐 죽어도 세션 컨텍스트 조회 자체는 막지 않는다 —
             # available_record_chunks는 참고 정보일 뿐 상태머신 전이에 필요하지 않다.
@@ -97,6 +93,21 @@ async def get_session(
         confirmed_facts=[fact for c in full_session.categories for fact in c.confirmed_facts],
         available_record_chunks=available_record_chunks,
     )
+
+
+@router.patch("/{session_id}", response_model=SessionRead)
+async def rename_session(
+    payload: SessionRename,
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+) -> SessionModel:
+    # 상태머신과 무관한 라벨일 뿐이라 어떤 status에서도 호출 가능. 빈 문자열(공백만
+    # 입력해도)로 보내면 None으로 되돌려서, 프론트가 title 없을 때 하던 생성일자
+    # 표시로 자연스럽게 복귀한다 (sessions/layout.tsx).
+    session.title = payload.title.strip() or None
+    await db.commit()
+    await db.refresh(session)
+    return session
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

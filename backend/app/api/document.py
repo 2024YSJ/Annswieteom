@@ -7,7 +7,6 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.interview import get_llm_provider
 from app.core.deps import get_owned_session
 from app.db.session import get_db
 from app.models.confirmed_fact import ConfirmedFact
@@ -27,6 +26,7 @@ from app.services import interview_orchestrator as orchestrator
 from app.services.embedding import get_embedding_provider
 from app.services.embedding.base import EmbeddingProvider
 from app.services.llm.base import LLMProvider
+from app.services.llm.fallback import get_llm_provider
 from app.services.record_pipeline.citation import get_fact_citation
 
 router = APIRouter(prefix="/sessions", tags=["document"])
