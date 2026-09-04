@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from app.core.config import settings
 from app.services.embedding.base import (
     AllEmbeddingProvidersFailedError,
@@ -9,14 +11,27 @@ from app.services.embedding.base import (
 from app.services.embedding.gemini_embedding import GeminiEmbedding
 from app.services.embedding.local_ollama_embedding import LocalOllamaEmbedding
 
+logger = logging.getLogger(__name__)
+
 
 def _build_providers() -> list:
     mapping = {
         "local": LocalOllamaEmbedding(),
         "gemini": GeminiEmbedding(),
     }
-    order = [p.strip() for p in settings.llm_provider_order.split(",")]
-    return [mapping[name] for name in order if name in mapping]
+    # See services/llm/fallback.py::_build_providers for why this needs
+    # normalizing (case/blank-entry insensitivity) and why an empty result
+    # must be logged loudly rather than silently producing an
+    # AllEmbeddingProvidersFailedError with no trace of why.
+    order = [p.strip().lower() for p in settings.llm_provider_order.split(",") if p.strip()]
+    providers = [mapping[name] for name in order if name in mapping]
+    if not providers:
+        logger.error(
+            "LLM_PROVIDER_ORDER=%r produced zero usable embedding providers (expected some of %s)",
+            settings.llm_provider_order,
+            list(mapping),
+        )
+    return providers
 
 
 class FallbackEmbedding:
