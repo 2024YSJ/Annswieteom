@@ -163,5 +163,19 @@ class LocalOllamaProvider:
                 return resp.json()["message"]["content"]
         except httpx.TimeoutException as exc:
             raise TimeoutError("Ollama request timed out") from exc
+        except httpx.HTTPStatusError as exc:
+            # The bare status code alone doesn't say who returned it — a
+            # Cloudflare edge block (bot/WAF) and Ollama's own rejection both
+            # surface as an httpx.HTTPStatusError with no further detail in
+            # str(exc). Cloudflare's block pages are text/html with a CF-RAY
+            # header and distinctive copy ("Attention Required", "cf-error-code");
+            # Ollama's own errors are small JSON. Logging both here was the
+            # missing piece while chasing the 2026-09-04 403 on production.
+            body_preview = exc.response.text[:300] if exc.response is not None else ""
+            cf_ray = exc.response.headers.get("cf-ray") if exc.response is not None else None
+            raise ProviderUnavailableError(
+                f"Ollama unavailable: {exc} | content-type={exc.response.headers.get('content-type') if exc.response is not None else None} "
+                f"cf-ray={cf_ray} body={body_preview!r}"
+            ) from exc
         except Exception as exc:
             raise ProviderUnavailableError(f"Ollama unavailable: {exc}") from exc
