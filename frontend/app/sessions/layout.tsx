@@ -126,9 +126,12 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
 export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
   const params = useParams<{ id?: string }>();
   const pathname = usePathname();
+  const router = useRouter();
   const { accessToken } = useAuth();
   const { data: sessions } = useSessionsList();
   const queryClient = useQueryClient();
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     // A step page completing (e.g. period -> categories) changes this
@@ -136,6 +139,21 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
     // the new step instead of the one the user just left.
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions() });
   }, [pathname, queryClient]);
+
+  async function handleNewSession() {
+    if (!accessToken) return;
+    setCreateError(null);
+    setIsCreating(true);
+    try {
+      const session = await sessionApi.create(accessToken);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions() });
+      router.push(`/sessions/${session.id}`);
+    } catch (err) {
+      setCreateError(errorMessage(err));
+    } finally {
+      setIsCreating(false);
+    }
+  }
 
   return (
     <div style={{ display: "flex" }}>
@@ -150,7 +168,13 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
           boxSizing: "border-box",
         }}
       >
-        <h2 style={{ fontSize: 14, color: "#888", marginBottom: 12 }}>내 세션</h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h2 style={{ fontSize: 14, color: "#888", margin: 0 }}>내 세션</h2>
+          <button type="button" onClick={handleNewSession} disabled={isCreating} title="새 세션 시작" style={{ fontSize: 12 }}>
+            {isCreating ? "..." : "+ 새 세션"}
+          </button>
+        </div>
+        {createError && <p style={{ color: "crimson", fontSize: 11, marginBottom: 8 }}>{createError}</p>}
         {!sessions || sessions.length === 0 ? (
           <p style={{ fontSize: 13, color: "#aaa" }}>세션이 없습니다.</p>
         ) : (
