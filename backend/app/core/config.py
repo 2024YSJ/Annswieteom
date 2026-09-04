@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     jwt_refresh_expire_days: int = 14
 
     local_llm_base_url: str = "http://localhost:11434"
-    local_llm_model_name: str = "exaone3.5:7.8b"
+    # Was "exaone3.5:7.8b", which doesn't match any tag actually pulled on the
+    # real server (only "exaone3.5:latest" exists there) — silently 404s if
+    # LOCAL_LLM_MODEL_NAME is ever unset, instead of falling back cleanly.
+    # Matches .env.example's documented default.
+    local_llm_model_name: str = "qwen2.5:14b"
     gemini_api_key: str = ""
     llm_provider_order: str = "local,gemini"
 

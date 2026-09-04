@@ -67,7 +67,7 @@ class LocalOllamaProvider:
             record_excerpts=context.record_excerpts,
             step_label=step,
         )
-        response_text = await self._generate(prompt, timeout=20.0)
+        response_text = await self._generate(prompt, timeout=45.0)
         try:
             data = json.loads(response_text)
             return Suggestion(
@@ -84,7 +84,7 @@ class LocalOllamaProvider:
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]:
         prompt = _render("extract_categories.jinja", free_text=free_text, gap_start=gap_start, gap_end=gap_end)
-        response_text = await self._generate(prompt, timeout=20.0)
+        response_text = await self._generate(prompt, timeout=45.0)
         try:
             data = json.loads(response_text)
             return [
@@ -99,7 +99,7 @@ class LocalOllamaProvider:
 
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None:
         prompt = _render("extract_period.jinja", free_text=free_text, today=today)
-        response_text = await self._generate(prompt, timeout=20.0)
+        response_text = await self._generate(prompt, timeout=45.0)
         try:
             data = json.loads(response_text)
             if data["start_date"] is None or data["end_date"] is None:
@@ -120,7 +120,7 @@ class LocalOllamaProvider:
             tone=tone,
             category_label=category_label,
         )
-        response_text = await self._generate(prompt, timeout=20.0)
+        response_text = await self._generate(prompt, timeout=45.0)
         try:
             data = json.loads(response_text)
             sentences = [

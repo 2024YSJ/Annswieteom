@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from app.core.config import settings
@@ -16,6 +17,8 @@ from app.services.llm.base import (
 )
 from app.services.llm.gemini_provider import GeminiProvider
 from app.services.llm.local_ollama import LocalOllamaProvider
+
+logger = logging.getLogger(__name__)
 
 
 def _build_providers() -> list[LLMProvider]:
@@ -39,12 +42,20 @@ class FallbackProvider:
     def __init__(self, providers: list[LLMProvider] | None = None) -> None:
         self.providers = providers if providers is not None else _build_providers()
 
+    def _log_failure(self, method: str, provider: LLMProvider, exc: Exception) -> None:
+        # These get swallowed into a generic AllProvidersFailedError -> 503 by
+        # design (spec: fall back silently to the next provider), but that
+        # means the *why* is otherwise invisible in prod. Surfacing it here
+        # (visible in Render's log stream) was the missing piece when
+        # diagnosing the 2026-09-04 llm_unavailable incident.
+        logger.warning("%s.%s failed: %s: %s", type(provider).__name__, method, type(exc).__name__, exc)
+
     async def draft_suggestion(self, context: InterviewContext, step: str) -> Suggestion:
         for provider in self.providers:
             try:
                 return await provider.draft_suggestion(context, step)
-            except (TimeoutError, ProviderUnavailableError):
-                continue
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("draft_suggestion", provider, exc)
         raise AllProvidersFailedError()
 
     async def extract_categories(
@@ -53,8 +64,8 @@ class FallbackProvider:
         for provider in self.providers:
             try:
                 return await provider.extract_categories(free_text, gap_start, gap_end)
-            except (TimeoutError, ProviderUnavailableError):
-                continue
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("extract_categories", provider, exc)
         raise AllProvidersFailedError()
 
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None:
@@ -65,16 +76,16 @@ class FallbackProvider:
         for provider in self.providers:
             try:
                 return await provider.extract_period(free_text, today)
-            except (TimeoutError, ProviderUnavailableError):
-                continue
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("extract_period", provider, exc)
         raise AllProvidersFailedError()
 
     async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument:
         for provider in self.providers:
             try:
                 return await provider.generate_document(facts, tone)
-            except (TimeoutError, ProviderUnavailableError):
-                continue
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("generate_document", provider, exc)
         raise AllProvidersFailedError()
 
     async def health_check(self) -> bool:
