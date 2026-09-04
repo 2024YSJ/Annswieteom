@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.api.interview import get_llm_provider
+from app.services.llm.fallback import get_llm_provider
 from app.main import app
 from app.services.llm.base import AllProvidersFailedError, CategorySuggestion
 

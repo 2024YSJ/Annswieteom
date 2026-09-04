@@ -27,6 +27,14 @@ def _build_providers() -> list[LLMProvider]:
     return [mapping[name] for name in order if name in mapping]
 
 
+def get_llm_provider() -> LLMProvider:
+    """FastAPI DI hook — routes should depend on this (not import FallbackProvider
+    directly) so tests can override it with a fake, same pattern as
+    get_storage / get_chunk_search / get_embedding_provider.
+    """
+    return FallbackProvider()
+
+
 class FallbackProvider:
     def __init__(self, providers: list[LLMProvider] | None = None) -> None:
         self.providers = providers if providers is not None else _build_providers()

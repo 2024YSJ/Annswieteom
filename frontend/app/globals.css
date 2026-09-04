@@ -1,12 +1,41 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Surfaces for bubbles/cards that sit on top of the page background —
+     always paired with a matching *-text so a light surface never ends up
+     with light (page-foreground) text on it, or vice versa. */
+  --surface: #f1f1f1;
+  --surface-text: #171717;
+  --surface-strong: #ffffff;
+  --surface-strong-text: #171717;
+  --surface-warn: #fff8e1;
+  --surface-warn-text: #171717;
+  --accent-surface: #daf1ff;
+  --accent-surface-text: #171717;
+  --hover-surface: #f0f0f0;
+  --hover-surface-text: #171717;
+  --border: #eee;
+  --border-strong: #ddd;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+
+    --surface: #262626;
+    --surface-text: #ededed;
+    --surface-strong: #1c1c1c;
+    --surface-strong-text: #ededed;
+    --surface-warn: #4a3d10;
+    --surface-warn-text: #f5e6b8;
+    --accent-surface: #113a52;
+    --accent-surface-text: #ededed;
+    --hover-surface: #262626;
+    --hover-surface-text: #ededed;
+    --border: #333333;
+    --border-strong: #444444;
   }
 }
 
