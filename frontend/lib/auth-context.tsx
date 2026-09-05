@@ -49,7 +49,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // a timeout guarantees isLoading always resolves, so at worst a stalled
     // check degrades to the normal logged-out view (still fully usable —
     // login/register/guest are separate requests) instead of a dead end.
-    const AUTH_CHECK_TIMEOUT_MS = 15000;
+    //
+    // This must stay above Render free-tier's real cold-start ceiling
+    // (LoadingNotice documents "최대 1분") — a shorter timeout here doesn't
+    // just show the logged-out view sooner, it actively misclassifies a
+    // visitor who WAS already logged in (valid refresh cookie) as logged out
+    // the moment the backend happens to be cold. On the homepage that visitor
+    // then sees the guest-start button and can end up creating a second,
+    // disconnected guest account/session instead of resuming their first one
+    // — this was a live production bug (2026-09-05) traced back to this
+    // timeout being set to 15s while a cold start can take up to a minute.
+    const AUTH_CHECK_TIMEOUT_MS = 65000;
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("auth_check_timeout")), AUTH_CHECK_TIMEOUT_MS),
     );

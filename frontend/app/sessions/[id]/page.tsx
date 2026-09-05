@@ -24,6 +24,7 @@ export default function SessionChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [composerEvent, setComposerEvent] = useState<ComposerEvent | null>(null);
   const [composerPrefill, setComposerPrefill] = useState<string | null>(null);
+  const [interviewSubmitting, setInterviewSubmitting] = useState(false);
 
   useEffect(() => {
     if (!ctx) return;
@@ -115,6 +116,7 @@ export default function SessionChatPage() {
           currentCategoryId={ctx.current_category?.id ?? null}
           composerEvent={composerEvent?.forStep === "interview" ? composerEvent : null}
           onPrefillChange={setComposerPrefill}
+          onSubmittingChange={setInterviewSubmitting}
         />
       )}
 
@@ -127,6 +129,7 @@ export default function SessionChatPage() {
           activeStep={activeStep}
           onSend={setComposerEvent}
           prefillText={activeStep === "interview" ? composerPrefill : null}
+          disabled={activeStep === "interview" && interviewSubmitting}
         />
       )}
 
