@@ -47,6 +47,7 @@ export function InterviewChatThread({
   categories,
   currentCategoryId,
   questionText,
+  pendingAnswerText,
   candidates,
   onUpdateCandidate,
   onSubmit,
@@ -56,6 +57,10 @@ export function InterviewChatThread({
   categories: ActivityCategoryRead[];
   currentCategoryId: string | null;
   questionText: string | null;
+  /** The answer just sent, echoed immediately (before the server round-trip
+   * finishes) so sending never looks like the input vanished — cleared once
+   * candidates take over, but left in place if the request errors. */
+  pendingAnswerText?: string | null;
   candidates: CandidateDraft[] | null;
   onUpdateCandidate: (index: number, patch: Partial<Omit<CandidateDraft, "candidate">>) => void;
   onSubmit: () => void;
@@ -94,6 +99,8 @@ export function InterviewChatThread({
           {category.id === currentCategoryId && questionText && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }} aria-live="polite">
               <ChatBubble side="left">{questionText}</ChatBubble>
+
+              {pendingAnswerText && <ChatBubble side="right">{pendingAnswerText}</ChatBubble>}
 
               {isWaitingForAnswer && (
                 <ChatBubble side="left">
