@@ -27,6 +27,7 @@ from app.services.llm.base import (
     BasedOn,
     CategorySuggestion,
     DraftDocument,
+    DrilldownDecision,
     FactCandidate,
     PeriodSuggestion,
     SentenceWithEvidence,
@@ -92,6 +93,7 @@ class FakeLLMProvider:
         documents: list[DraftDocument] | None = None,
         category_suggestions: list | None = None,
         period_suggestion=_DEFAULT_PERIOD_SUGGESTION,
+        drilldown_decisions: list[DrilldownDecision] | None = None,
     ):
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
@@ -100,6 +102,7 @@ class FakeLLMProvider:
         self._document_queue = list(documents) if documents else None
         self._category_suggestions = category_suggestions
         self._period_suggestion = period_suggestion
+        self._drilldown_queue = list(drilldown_decisions) if drilldown_decisions else None
         self.extract_facts_calls: list[tuple[str, str, str]] = []
         self.followup_calls: list[str] = []
         self.sufficiency_calls: list[str] = []
@@ -107,6 +110,7 @@ class FakeLLMProvider:
         self.document_calls: list[tuple[list[str], str]] = []
         self.extract_calls: list[str] = []
         self.period_calls: list[str] = []
+        self.drilldown_calls: list[str] = []
 
     async def draft_answer(self, context, question_text):
         self.draft_answer_calls.append(question_text)
@@ -133,6 +137,14 @@ class FakeLLMProvider:
         if self._sufficiency_queue:
             return self._sufficiency_queue.pop(0)
         return SufficiencyResult(sufficient=True, reason="충분한 정보가 모였습니다")
+
+    async def judge_drilldown(self, context):
+        self.drilldown_calls.append(context.category_label)
+        if self._drilldown_queue:
+            return self._drilldown_queue.pop(0)
+        # Default: never interject a drill-down — tests that want to exercise
+        # the interleaved drill-down path queue an explicit DrilldownDecision.
+        return DrilldownDecision(should_ask=False)
 
     async def generate_document(self, facts, tone):
         self.document_calls.append(([f.id for f in facts], tone))

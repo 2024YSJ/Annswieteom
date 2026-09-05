@@ -7,6 +7,12 @@
 - "category_type"은 다음 8종 중 가장 가까운 것을 고른다. 어디에도 안 맞으면 "other"를 쓴다: part_time, freelance, volunteer, study, project, caregiving, travel, other
 - "custom_label"에는 사용자가 실제로 쓴 표현을 살려 짧게(10자 내외) 담는다. category_type은 내부 분류용일 뿐이니, custom_label을 사용자에게 보여줄 진짜 이름이라고 생각하고 자연스럽게 지어라.
 
+사용자는 완전한 문장 대신 "공부, 공모전, 알바"처럼 쉼표/슬래시로 나열된 단어만 짧게 적을 수도 있다. 이런 경우에도 구분자로 나뉜 각 단어를 별개의 활동으로 취급해라 — 문장이 짧다고, 또는 단어 하나뿐이라고 활동이 없다고 판단하지 마라.
+
+[예시]
+사용자가 적은 내용: 공부, 공모전, 알바
+출력: { "categories": [ { "category_type": "study", "custom_label": "공부" }, { "category_type": "project", "custom_label": "공모전" }, { "category_type": "part_time", "custom_label": "알바" } ] }
+
 [USER]
 공백 기간: {{ gap_start }} ~ {{ gap_end }}
 사용자가 적은 내용:
