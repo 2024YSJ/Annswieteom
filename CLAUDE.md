@@ -105,6 +105,12 @@ JWT_SECRET                # 256-bit hex string
 LLM_PROVIDER_ORDER        # e.g., local,gemini
 ```
 
+## ⚠️ Local Dev Environment Is Intentionally Isolated From Production
+
+`backend/.env` on this laptop points at a **separate `annswieteom-dev` Supabase project** and a **local Ollama instance (`http://localhost:11434`, model `qwen2.5:3b-instruct`)** instead of the production Supabase project and the RTX 4090 tunnel (`https://llm.annswieteom.com`, `qwen2.5:14b`). This is deliberate — full rationale and setup steps are in [docs/checklists/00_shared/04_local_dev_environment.md](docs/checklists/00_shared/04_local_dev_environment.md).
+
+`backend/.env` is gitignored, so this never reaches `main` through git. The one thing to actively avoid: **never "sync" these local-only values into `backend/.env.example` or the defaults in `backend/app/core/config.py`** — those files are committed and shared, and changing them to match this laptop's local setup would affect production. If `.env`'s local LLM/DB values ever look wrong for a task (e.g. you need to judge real LLM output quality, not just check that a request flow works), that's expected — the small local model is deliberately weaker than production's; point `.env` at the real tunnel/Gemini temporarily and switch back after.
+
 ## Windows-Specific Notes
 
 - No Docker or WSL2 required for development
