@@ -140,20 +140,21 @@ def test_ai_can_interleave_a_drilldown_question_between_fixed_base_questions(ses
     assert resp.json()["question_text"] == BASE_QUESTIONS["project"][1].text
     assert resp.json()["question_source"] == "base"
 
-    # This is the category's 3rd question overall (1 base + 1 drilldown +
-    # this one) — MAX_QUESTIONS_PER_CATEGORY (3) is hit right here, so the
-    # category finishes now even though 2 more fixed questions (hardship,
-    # outcome) were never reached — spending a slot on a drill-down trades
-    # off directly against how many fixed questions get asked.
-    _, _, confirm_body = _do_turn(session_client, headers, session_id)
+    # The remaining fixed questions (frequency was only peeked via /ask above,
+    # not yet answered; then hardship, outcome) still fit comfortably under
+    # MAX_QUESTIONS_PER_CATEGORY (well above 4 + 1 drilldown), so the
+    # interview keeps going through the rest of the fixed set as normal.
+    for _ in BASE_QUESTIONS["project"][1:]:
+        _, _, confirm_body = _do_turn(session_client, headers, session_id)
+
     assert confirm_body["category_done"] is True
     assert confirm_body["status"] == "RESULT_GENERATE"
 
     ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
     fact_types = [f["fact_type"] for f in ctx["confirmed_facts"]]
     assert fact_types.count("followup") == 1
-    assert set(fact_types) == {BASE_QUESTIONS["project"][0].fact_type, BASE_QUESTIONS["project"][1].fact_type, "followup"}
-    assert len(fact_types) == 3
+    assert set(fact_types) == {q.fact_type for q in BASE_QUESTIONS["project"]} | {"followup"}
+    assert len(fact_types) == len(BASE_QUESTIONS["project"]) + 1
 
 
 def test_candidate_fact_type_is_forced_to_the_question_hint_not_the_llm_choice(session_client, monkeypatch):
@@ -237,10 +238,9 @@ def test_two_categories_second_starts_fresh_after_first_done(session_client):
     _advance_to_first_category(session_client, headers, session_id, category_types=("part_time", "study"))
 
     confirm_body = None
-    for _ in range(MAX_QUESTIONS_PER_CATEGORY):
-        # The last of these turns hits the per-category question cap (3, well
-        # short of part_time's 4-question fixed set) and advances to the next
-        # category.
+    for _ in BASE_QUESTIONS["part_time"]:
+        # The last of these turns exhausts part_time's fixed set, triggers
+        # sufficiency (fake defaults to True), and advances to the next category.
         _, _, confirm_body = _do_turn(session_client, headers, session_id)
 
     assert confirm_body["status"] == "INTERVIEWING"

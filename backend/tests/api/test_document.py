@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from app.services.interview_orchestrator import MAX_QUESTIONS_PER_CATEGORY
+from app.services.interview_question_bank import BASE_QUESTIONS
 from app.services.llm.base import DraftDocument, SentenceWithEvidence
 
-# part_time과 study 둘 다 고정 질문을 4개씩 정의해두지만(interview_question_bank.py),
-# MAX_QUESTIONS_PER_CATEGORY(3)가 실제 총 질문 수 상한이므로 카테고리당 정확히 이
-# 횟수만 돌면(드릴다운 없이) sufficiency 판단 없이 바로 다음 카테고리로 넘어간다.
-FACTS_PER_CATEGORY = MAX_QUESTIONS_PER_CATEGORY
+# part_time과 study 둘 다 고정 질문을 4개씩 정의해둔다(interview_question_bank.py).
+# MAX_QUESTIONS_PER_CATEGORY는 이보다 넉넉하므로(드릴다운 여지를 남기기 위해), 이
+# 헬퍼는 드릴다운 없이(FakeLLMProvider 기본값) 고정 질문만 다 채워 카테고리를
+# 끝내는 것을 기준으로 한다 — 정확히 고정 질문 개수만큼만 돈다.
+FACTS_PER_CATEGORY = len(BASE_QUESTIONS["part_time"])
 
 
 def _register_and_login(client, email="alice@example.com"):
