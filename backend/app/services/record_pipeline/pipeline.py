@@ -157,4 +157,6 @@ def _user_message(exc: Exception) -> str:
         return "게시물에 접근할 수 없어요. 주소를 확인해주세요."
     if "unrecognized velog url" in msg.lower():
         return "velog 게시물 주소 형식을 확인해주세요. (예: https://velog.io/@아이디/글제목)"
+    if "listing/profile page" in msg.lower():
+        return "이건 게시물 목록/프로필 페이지예요. 가져오고 싶은 게시물 하나를 열어서, 그 게시물 주소를 넣어주세요."
     return "기록물을 가져오는 중 오류가 발생했어요."

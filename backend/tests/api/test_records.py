@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import date
+
+from app.services.record_pipeline.parsers import velog
+
 
 def _register_and_login(client, email="alice@example.com"):
     client.post(
@@ -44,14 +48,63 @@ def test_create_blog_record_returns_pending_then_polling_shows_done(records_clie
     )
     assert resp.status_code == 201
     body = resp.json()
-    assert body["record_type"] == "blog_url"
+    assert len(body) == 1
+    assert body[0]["record_type"] == "blog_url"
 
-    record_id = body["id"]
+    record_id = body[0]["id"]
     assert len(records_client.process_record_calls) == 1
 
     resp = records_client.get(f"/api/v1/sessions/{session_id}/records/{record_id}", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["parse_status"] == "DONE"
+
+
+def test_create_blog_record_from_velog_listing_page_imports_every_post_in_range(records_client, monkeypatch):
+    headers = _register_and_login(records_client)
+    session_id = _create_session_at_record_upload(records_client, headers)  # gap period: 2025-01-01..2025-06-30
+
+    async def fake_list_posts_in_range(username, gap_start, gap_end):
+        assert username == "sjyoon1101"
+        assert (gap_start, gap_end) == (date(2025, 1, 1), date(2025, 6, 30))
+        return [
+            velog.ListedPost(url_slug="post-a", title="A", released_at=date(2025, 3, 1)),
+            velog.ListedPost(url_slug="post-b", title="B", released_at=date(2025, 4, 1)),
+        ]
+
+    monkeypatch.setattr(velog, "list_posts_in_range", fake_list_posts_in_range)
+
+    resp = records_client.post(
+        f"/api/v1/sessions/{session_id}/records",
+        headers=headers,
+        json={"record_type": "blog_url", "source_url": "https://velog.io/@sjyoon1101/posts"},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert len(body) == 2
+    assert {r["source_url"] for r in body} == {
+        "https://velog.io/@sjyoon1101/post-a",
+        "https://velog.io/@sjyoon1101/post-b",
+    }
+    assert len(records_client.process_record_calls) == 2
+
+
+def test_create_blog_record_from_velog_listing_page_with_no_posts_in_range_returns_422(records_client, monkeypatch):
+    headers = _register_and_login(records_client)
+    session_id = _create_session_at_record_upload(records_client, headers)
+
+    async def fake_list_posts_in_range(username, gap_start, gap_end):
+        return []
+
+    monkeypatch.setattr(velog, "list_posts_in_range", fake_list_posts_in_range)
+
+    resp = records_client.post(
+        f"/api/v1/sessions/{session_id}/records",
+        headers=headers,
+        json={"record_type": "blog_url", "source_url": "https://velog.io/@sjyoon1101/posts"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "no_posts_in_period"
+    assert len(records_client.process_record_calls) == 0
 
 
 def test_create_text_record(records_client):
