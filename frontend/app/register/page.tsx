@@ -46,7 +46,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <main style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px" }}>
+    <main style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", display: "flex", flexDirection: "column", gap: 16 }}>
       <h1>회원가입</h1>
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>

@@ -33,7 +33,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px" }}>
+    <main style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", display: "flex", flexDirection: "column", gap: 16 }}>
       <h1>로그인</h1>
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
