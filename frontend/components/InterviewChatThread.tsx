@@ -1,9 +1,29 @@
 "use client";
 
 import { useState } from "react";
-import type { ActivityCategoryRead, BasedOnRead, FactCandidateRead } from "@/lib/api-client";
+import type { ActivityCategoryRead, BasedOnRead, ConfirmedFactRead, FactCandidateRead } from "@/lib/api-client";
 import { CATEGORY_LABELS } from "@/lib/session-routes";
 import { ChatBubble } from "@/components/ChatBubble";
+
+/** One answer can be split into several confirmed facts (extract_facts found
+ * more than one thing in it) — grouping consecutive facts that share the same
+ * source question avoids repeating the question bubble once per fact, which
+ * otherwise reads as the interview asking the same question over and over
+ * (reported as looking like a bug, 2026-09-05). */
+function groupFactsByQuestion(facts: ConfirmedFactRead[]): { questionText: string; facts: ConfirmedFactRead[] }[] {
+  const sorted = facts.slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const groups: { questionText: string; facts: ConfirmedFactRead[] }[] = [];
+  for (const fact of sorted) {
+    const questionText = fact.source_question_text ?? "질문";
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup && lastGroup.questionText === questionText) {
+      lastGroup.facts.push(fact);
+    } else {
+      groups.push({ questionText, facts: [fact] });
+    }
+  }
+  return groups;
+}
 
 function BasedOnBadge({ basedOn }: { basedOn: BasedOnRead }) {
   if (basedOn.type === "record") {
@@ -60,12 +80,14 @@ export function InterviewChatThread({
           <div style={{ fontSize: 13, color: "var(--muted-text)", fontWeight: "bold" }}>
             ▸ {category.custom_label ?? CATEGORY_LABELS[category.category_type]}
           </div>
-          {category.confirmed_facts.map((fact) => (
-            <div key={fact.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <ChatBubble side="left">{fact.source_question_text ?? "질문"}</ChatBubble>
-              <ChatBubble side="right" label="확인됨">
-                {fact.content}
-              </ChatBubble>
+          {groupFactsByQuestion(category.confirmed_facts).map((group) => (
+            <div key={group.facts[0].id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <ChatBubble side="left">{group.questionText}</ChatBubble>
+              {group.facts.map((fact) => (
+                <ChatBubble key={fact.id} side="right" label="확인됨">
+                  {fact.content}
+                </ChatBubble>
+              ))}
             </div>
           ))}
 
