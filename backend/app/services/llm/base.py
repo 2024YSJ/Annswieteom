@@ -50,8 +50,18 @@ class SentenceWithEvidence:
 
 
 @dataclass
-class DraftDocument:
+class ParagraphDraft:
+    """A group of sentences about the same specific sub-topic within a
+    category (e.g. "무엇을 했다" vs "그 동기/이유"의 별도 문단) — lets the
+    exported document read as themed paragraphs instead of one flat list
+    of disconnected STAR sentences (2026-09-05 request)."""
+    topic: str
     sentences: list[SentenceWithEvidence]
+
+
+@dataclass
+class DraftDocument:
+    paragraphs: list[ParagraphDraft]
 
 
 @dataclass
@@ -102,7 +112,7 @@ class LLMProvider(Protocol):
     async def followup_question(self, context: InterviewContext) -> str: ...
     async def judge_sufficiency(self, context: InterviewContext) -> SufficiencyResult: ...
     async def judge_drilldown(self, context: InterviewContext) -> DrilldownDecision: ...
-    async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument: ...
+    async def generate_document(self, facts: list[ConfirmedFact], tone: str, category_label: str) -> DraftDocument: ...
     async def extract_categories(
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]: ...

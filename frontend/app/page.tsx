@@ -43,9 +43,17 @@ export default function Home() {
     setError(null);
     setIsCreating(true);
     try {
-      const guestAccessToken = await guestLogin();
-      const session = await sessionApi.create(guestAccessToken);
-      router.push(`/sessions/${session.id}`);
+      // Only sign in here — creating the first session and navigating is
+      // left entirely to the redirect effect above. It previously happened
+      // in both places: `guestLogin()` sets `user`, which is exactly the
+      // effect's own trigger, so the effect's "sessions is empty → create
+      // one" logic and this handler's own sessionApi.create() call ran as
+      // an uncoordinated race for the very same brand-new guest, sometimes
+      // creating two sessions instead of one (production bug, 2026-09-05).
+      // Once `user` is set below, the render logic immediately shows the
+      // loading screen instead of this button, so there's no visible gap
+      // before the effect's own redirect takes over.
+      await guestLogin();
     } catch (err) {
       setError(errorMessage(err));
     } finally {

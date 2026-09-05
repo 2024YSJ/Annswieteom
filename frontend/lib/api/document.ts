@@ -23,12 +23,20 @@ export interface SentenceRead {
   consistency_check_passed: boolean;
 }
 
+export interface ParagraphRead {
+  id: string;
+  order_index: number;
+  topic: string;
+  user_confirmed: boolean;
+  sentences: SentenceRead[];
+}
+
 export interface DocumentRead {
   id: string;
   tone: Tone;
   version: number;
   status: DocumentStatus;
-  sentences: SentenceRead[];
+  paragraphs: ParagraphRead[];
 }
 
 export const documentApi = {
@@ -60,6 +68,31 @@ export const documentApi = {
 
   regenerateSentence: (sessionId: string, sentenceId: string, accessToken: string) =>
     request<SentenceRead>(`/api/v1/sessions/${sessionId}/document/sentences/${sentenceId}/regenerate`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+    }),
+
+  moveSentence: (sessionId: string, sentenceId: string, direction: "prev" | "next", accessToken: string) =>
+    request<SentenceRead>(`/api/v1/sessions/${sessionId}/document/sentences/${sentenceId}/move`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ direction }),
+    }),
+
+  updateParagraph: (
+    sessionId: string,
+    paragraphId: string,
+    payload: { topic?: string; user_confirmed?: boolean },
+    accessToken: string,
+  ) =>
+    request<ParagraphRead>(`/api/v1/sessions/${sessionId}/document/paragraphs/${paragraphId}`, {
+      method: "PATCH",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload),
+    }),
+
+  mergeParagraphWithNext: (sessionId: string, paragraphId: string, accessToken: string) =>
+    request<ParagraphRead>(`/api/v1/sessions/${sessionId}/document/paragraphs/${paragraphId}/merge-next`, {
       method: "POST",
       headers: authHeaders(accessToken),
     }),

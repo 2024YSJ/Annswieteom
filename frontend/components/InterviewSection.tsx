@@ -47,6 +47,13 @@ export function InterviewSection({
   const [question, setQuestion] = useState<InterviewAskRead | null>(null);
   const [candidates, setCandidates] = useState<CandidateDraft[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Echoes the just-sent answer immediately as its own bubble, before the
+  // server round-trip finishes — otherwise the composer clears on send but
+  // nothing shows the text landed anywhere until extraction finishes several
+  // seconds later, which reads as the input having briefly vanished
+  // (2026-09-05). Cleared once the candidate review takes over that role;
+  // left in place on error so the attempted answer isn't lost from view.
+  const [pendingAnswerText, setPendingAnswerText] = useState<string | null>(null);
   const [isSubmitting, setIsSubmittingState] = useState(false);
   function setIsSubmitting(value: boolean) {
     setIsSubmittingState(value);
@@ -86,10 +93,12 @@ export function InterviewSection({
 
     onPrefillChange(null); // answered — the "AI가 미리 써봤어요" tag no longer applies
     setError(null);
+    setPendingAnswerText(composerEvent.value);
     setIsSubmitting(true);
     sessionApi
       .interviewAnswer(sessionId, composerEvent.value, accessToken)
       .then((answer) => {
+        setPendingAnswerText(null); // the candidate review cards take over from here
         setCandidates(
           answer.candidates.map((candidate) => ({
             candidate,
@@ -168,6 +177,7 @@ export function InterviewSection({
         categories={categories}
         currentCategoryId={currentCategoryId}
         questionText={question?.question_text ?? null}
+        pendingAnswerText={pendingAnswerText}
         candidates={candidates}
         onUpdateCandidate={updateCandidate}
         onSubmit={submit}

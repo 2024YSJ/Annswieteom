@@ -16,6 +16,9 @@ class GeneratedSentence(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("generated_documents.id", ondelete="CASCADE"), nullable=False)
     category_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("activity_categories.id", ondelete="CASCADE"), nullable=False)
+    # nullable: 이 컬럼이 생기기 전 문장에는 소급 적용할 그룹 정보가 없다 —
+    # 그런 문장은 "그 문장 하나짜리 문단"으로 취급한다(_document_read 참고).
+    paragraph_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("generated_paragraphs.id", ondelete="CASCADE"), nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     # 제네릭 JSON(“JSONB 아님”): pending_draft(90edf5d28f6a)와 같은 이유 — 이 컬럼은
@@ -27,3 +30,4 @@ class GeneratedSentence(Base):
 
     document: Mapped["GeneratedDocument"] = relationship("GeneratedDocument", back_populates="sentences")
     category: Mapped["ActivityCategory"] = relationship("ActivityCategory", back_populates="generated_sentences")
+    paragraph: Mapped["GeneratedParagraph | None"] = relationship("GeneratedParagraph", back_populates="sentences")

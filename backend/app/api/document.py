@@ -11,6 +11,7 @@ from app.core.deps import get_owned_session
 from app.db.session import get_db
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.generated_document import GeneratedDocument
+from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
 from app.models.session import Session as SessionModel
 from app.schemas.document import (
@@ -18,6 +19,9 @@ from app.schemas.document import (
     DocumentRead,
     EvidenceRead,
     GenerateRequest,
+    MoveSentenceRequest,
+    ParagraphRead,
+    ParagraphUpdate,
     SentenceRead,
     SentenceUpdate,
 )
@@ -57,6 +61,18 @@ async def _get_owned_sentence(session: SessionModel, sentence_id: uuid.UUID, db:
     return sentence
 
 
+async def _get_owned_paragraph(session: SessionModel, paragraph_id: uuid.UUID, db: AsyncSession) -> GeneratedParagraph:
+    stmt = (
+        select(GeneratedParagraph)
+        .join(GeneratedDocument, GeneratedParagraph.document_id == GeneratedDocument.id)
+        .where(GeneratedParagraph.id == paragraph_id, GeneratedDocument.session_id == session.id)
+    )
+    paragraph = (await db.execute(stmt)).scalar_one_or_none()
+    if paragraph is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="paragraph_not_found")
+    return paragraph
+
+
 async def _sentence_read(sentence: GeneratedSentence, db: AsyncSession, fact_citation) -> SentenceRead:
     evidence: list[EvidenceRead] = []
     for fact_id_str in sentence.evidence_fact_ids:
@@ -80,21 +96,53 @@ async def _sentence_read(sentence: GeneratedSentence, db: AsyncSession, fact_cit
     )
 
 
-async def _document_read(document: GeneratedDocument, db: AsyncSession, fact_citation) -> DocumentRead:
+async def _paragraph_read(paragraph: GeneratedParagraph, db: AsyncSession, fact_citation) -> ParagraphRead:
     stmt = (
         select(GeneratedSentence)
-        .where(GeneratedSentence.document_id == document.id)
+        .where(GeneratedSentence.paragraph_id == paragraph.id)
         .order_by(GeneratedSentence.order_index)
     )
     sentences = (await db.execute(stmt)).scalars().all()
-    sentence_reads = [await _sentence_read(s, db, fact_citation) for s in sentences]
+    return ParagraphRead(
+        id=paragraph.id,
+        order_index=paragraph.order_index,
+        topic=paragraph.topic,
+        user_confirmed=paragraph.user_confirmed,
+        sentences=[await _sentence_read(s, db, fact_citation) for s in sentences],
+    )
+
+
+async def _document_read(document: GeneratedDocument, db: AsyncSession, fact_citation) -> DocumentRead:
+    para_stmt = (
+        select(GeneratedParagraph)
+        .where(GeneratedParagraph.document_id == document.id)
+        .order_by(GeneratedParagraph.order_index)
+    )
+    paragraphs = (await db.execute(para_stmt)).scalars().all()
+    paragraph_reads = [await _paragraph_read(p, db, fact_citation) for p in paragraphs]
+
+    # Sentences pre-dating the paragraph_id column (or otherwise orphaned)
+    # each become their own single-sentence paragraph, so old documents
+    # still render sensibly instead of disappearing.
+    sent_stmt = (
+        select(GeneratedSentence)
+        .where(GeneratedSentence.document_id == document.id, GeneratedSentence.paragraph_id.is_(None))
+        .order_by(GeneratedSentence.order_index)
+    )
+    orphan_sentences = (await db.execute(sent_stmt)).scalars().all()
+    for s in orphan_sentences:
+        paragraph_reads.append(ParagraphRead(
+            id=s.id, order_index=s.order_index, topic="", user_confirmed=False,
+            sentences=[await _sentence_read(s, db, fact_citation)],
+        ))
+    paragraph_reads.sort(key=lambda p: p.order_index)
 
     return DocumentRead(
         id=document.id,
         tone=document.tone,
         version=document.version,
         status=document.status,
-        sentences=sentence_reads,
+        paragraphs=paragraph_reads,
     )
 
 
@@ -177,6 +225,108 @@ async def update_sentence(
     return await _sentence_read(sentence, db, fact_citation)
 
 
+@router.patch("/{session_id}/document/paragraphs/{paragraph_id}", response_model=ParagraphRead)
+async def update_paragraph(
+    paragraph_id: uuid.UUID,
+    payload: ParagraphUpdate,
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+    fact_citation=Depends(get_fact_citation),
+) -> ParagraphRead:
+    paragraph = await _get_owned_paragraph(session, paragraph_id, db)
+    if payload.topic is not None:
+        paragraph.topic = payload.topic
+    if payload.user_confirmed is not None:
+        paragraph.user_confirmed = payload.user_confirmed
+    await db.commit()
+    await db.refresh(paragraph)
+    return await _paragraph_read(paragraph, db, fact_citation)
+
+
+@router.post("/{session_id}/document/paragraphs/{paragraph_id}/merge-next", response_model=ParagraphRead)
+async def merge_paragraph_with_next(
+    paragraph_id: uuid.UUID,
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+    fact_citation=Depends(get_fact_citation),
+) -> ParagraphRead:
+    """관련성 확인 단계의 핵심 조작: 인접한 두 문단이 같은 이야기라고 판단되면
+    합친다. 임의의 두 문단을 고르는 UI 대신 "다음 문단과 합치기"로 단순화했다
+    — 문단은 이미 순서가 있으므로 인접 병합만으로 대부분의 재구성이 된다.
+    """
+    paragraph = await _get_owned_paragraph(session, paragraph_id, db)
+    next_paragraph = (
+        await db.execute(
+            select(GeneratedParagraph)
+            .where(
+                GeneratedParagraph.document_id == paragraph.document_id,
+                GeneratedParagraph.order_index > paragraph.order_index,
+            )
+            .order_by(GeneratedParagraph.order_index)
+        )
+    ).scalars().first()
+    if next_paragraph is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_next_paragraph")
+
+    moved_sentences = (
+        await db.execute(
+            select(GeneratedSentence).where(GeneratedSentence.paragraph_id == next_paragraph.id)
+        )
+    ).scalars().all()
+    for sentence in moved_sentences:
+        sentence.paragraph_id = paragraph.id
+    # Must flush the reassignment before deleting next_paragraph — the FK's
+    # ON DELETE CASCADE fires against whatever paragraph_id is in the DB at
+    # delete time, and without this flush the moved sentences can still
+    # point at next_paragraph there, so the cascade deletes them too instead
+    # of leaving them re-homed on `paragraph`.
+    await db.flush()
+    await db.delete(next_paragraph)
+    await db.commit()
+    await db.refresh(paragraph)
+    return await _paragraph_read(paragraph, db, fact_citation)
+
+
+@router.post("/{session_id}/document/sentences/{sentence_id}/move", response_model=SentenceRead)
+async def move_sentence(
+    sentence_id: uuid.UUID,
+    payload: MoveSentenceRequest,
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+    fact_citation=Depends(get_fact_citation),
+) -> SentenceRead:
+    """관련성 확인의 또 다른 조작: 문장 하나가 잘못된 문단에 묶였다고 판단되면
+    이웃 문단으로 옮긴다. 문단을 하나씩 비우면서 옮기면 사실상 분리(split)도
+    이 프리미티브로 구성된다.
+    """
+    sentence = await _get_owned_sentence(session, sentence_id, db)
+    if sentence.paragraph_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="sentence_has_no_paragraph")
+    current_paragraph = await db.get(GeneratedParagraph, sentence.paragraph_id)
+
+    if payload.direction == "next":
+        comparator = GeneratedParagraph.order_index > current_paragraph.order_index
+        order_by = GeneratedParagraph.order_index.asc()
+    else:
+        comparator = GeneratedParagraph.order_index < current_paragraph.order_index
+        order_by = GeneratedParagraph.order_index.desc()
+
+    target_paragraph = (
+        await db.execute(
+            select(GeneratedParagraph)
+            .where(GeneratedParagraph.document_id == current_paragraph.document_id, comparator)
+            .order_by(order_by)
+        )
+    ).scalars().first()
+    if target_paragraph is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"no_{payload.direction}_paragraph")
+
+    sentence.paragraph_id = target_paragraph.id
+    await db.commit()
+    await db.refresh(sentence)
+    return await _sentence_read(sentence, db, fact_citation)
+
+
 @router.post("/{session_id}/document/sentences/{sentence_id}/regenerate", response_model=SentenceRead)
 async def regenerate_sentence(
     sentence_id: uuid.UUID,
@@ -231,12 +381,36 @@ async def export_document(
     if document.status != "FINAL":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="document_not_finalized")
 
-    stmt = (
+    para_stmt = (
+        select(GeneratedParagraph)
+        .where(GeneratedParagraph.document_id == document.id)
+        .order_by(GeneratedParagraph.order_index)
+    )
+    paragraphs = (await db.execute(para_stmt)).scalars().all()
+
+    sent_stmt = (
         select(GeneratedSentence)
         .where(GeneratedSentence.document_id == document.id)
         .order_by(GeneratedSentence.order_index)
     )
-    sentences = (await db.execute(stmt)).scalars().all()
-    text = "\n".join(s.text for s in sentences)
+    sentences = (await db.execute(sent_stmt)).scalars().all()
+
+    # Sentences within a paragraph read as one flowing block (space-joined,
+    # not one per line); paragraphs are separated by a blank line. The topic
+    # label itself is a review-screen aid, not resume prose, so it's never
+    # included in the exported text.
+    sentences_by_paragraph: dict = {p.id: [] for p in paragraphs}
+    blocks: list[tuple[int, str]] = []
+    for s in sentences:
+        if s.paragraph_id is not None and s.paragraph_id in sentences_by_paragraph:
+            sentences_by_paragraph[s.paragraph_id].append(s.text)
+        else:
+            blocks.append((s.order_index, s.text))
+    for p in paragraphs:
+        if sentences_by_paragraph[p.id]:
+            blocks.append((p.order_index, " ".join(sentences_by_paragraph[p.id])))
+    blocks.sort(key=lambda b: b[0])
+
+    text = "\n\n".join(block_text for _, block_text in blocks)
 
     return PlainTextResponse(content=text)
