@@ -120,6 +120,9 @@ export function RecordsSection({
               <RecordStatusRow key={id} sessionId={sessionId} recordId={id} accessToken={accessToken} />
             ))}
           </ul>
+          <p style={{ fontSize: 13, color: "var(--muted-text)", marginTop: 8, marginBottom: 0 }}>
+            모든 자료의 처리가 완료된 후 &quot;다음으로&quot; 버튼을 눌러주시기를 권고드립니다. 받은 자료는 심층적인 질문에 사용됩니다.
+          </p>
         </ChatBubble>
       )}
 

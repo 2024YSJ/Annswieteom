@@ -123,7 +123,7 @@ export function InterviewSection({
     setError(null);
     setIsSubmitting(true);
     try {
-      await sessionApi.interviewConfirm(
+      const result = await sessionApi.interviewConfirm(
         sessionId,
         candidates.map((c, index) => ({
           index,
@@ -133,14 +133,28 @@ export function InterviewSection({
         })),
         accessToken,
       );
-      setQuestion(null);
       setCandidates(null);
-      fetchedForRef.current = null;
       await queryClient.invalidateQueries({ queryKey: queryKeys.session(sessionId) });
-      // The ctx refetch above updates status/currentCategoryId; the effect
-      // above then fetches the next question (same category if not done yet,
-      // the next category's first question if it advanced, or this section
-      // simply stops rendering once status reaches RESULT_GENERATE).
+
+      if (result.status === "INTERVIEWING" && result.current_category_id) {
+        // Fetch the next question directly instead of relying on the effect
+        // above to react to a prop change — staying in the same category
+        // (another fixed question, or an interleaved AI drill-down) changes
+        // neither `status` nor `currentCategoryId`, so that effect's
+        // dependencies never change and it would never re-fire, silently
+        // stopping the interview from advancing (production bug, 2026-09-05:
+        // an answer showed "확인됨" but no further question ever appeared).
+        // Pre-mark fetchedForRef so the effect doesn't also double-fetch if
+        // this DID move to a new category (whose id it will then see as
+        // already handled).
+        fetchedForRef.current = result.current_category_id;
+        const ask = await sessionApi.interviewAsk(sessionId, accessToken);
+        setQuestion(ask);
+        onPrefillChange(ask.draft_answer || null);
+      } else {
+        setQuestion(null);
+        fetchedForRef.current = null;
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
