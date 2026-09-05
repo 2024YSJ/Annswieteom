@@ -40,9 +40,30 @@ class SentenceUpdate(BaseModel):
     text: str
 
 
+class MoveSentenceRequest(BaseModel):
+    direction: Literal["prev", "next"]
+
+
+class ParagraphUpdate(BaseModel):
+    topic: str | None = None
+    user_confirmed: bool | None = None
+
+
+class ParagraphRead(BaseModel):
+    """유사 주제로 묶인 문장 그룹 — 28절 요청(2026-09-05): 평평한 문장 목록 대신
+    문단 단위로 보여주고, 사용자가 그 그룹핑을 확인/조정할 수 있게 한다.
+    """
+
+    id: uuid.UUID
+    order_index: int
+    topic: str
+    user_confirmed: bool
+    sentences: list[SentenceRead]
+
+
 class DocumentRead(BaseModel):
     id: uuid.UUID
     tone: str
     version: int
     status: str
-    sentences: list[SentenceRead]
+    paragraphs: list[ParagraphRead]

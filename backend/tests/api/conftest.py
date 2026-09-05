@@ -16,6 +16,7 @@ from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.gap_period import GapPeriod
 from app.models.generated_document import GeneratedDocument
+from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
 from app.models.record import Record
 from app.models.record_chunk import RecordChunk
@@ -29,6 +30,7 @@ from app.services.llm.base import (
     DraftDocument,
     DrilldownDecision,
     FactCandidate,
+    ParagraphDraft,
     PeriodSuggestion,
     SentenceWithEvidence,
     SufficiencyResult,
@@ -146,14 +148,21 @@ class FakeLLMProvider:
         # the interleaved drill-down path queue an explicit DrilldownDecision.
         return DrilldownDecision(should_ask=False)
 
-    async def generate_document(self, facts, tone):
+    async def generate_document(self, facts, tone, category_label):
         self.document_calls.append(([f.id for f in facts], tone))
         if self._document_queue:
             return self._document_queue.pop(0)
-        # Default: one sentence per fact, citing that fact only.
-        return DraftDocument(sentences=[
-            SentenceWithEvidence(text=f"[{tone}] {f.content}", fact_indices=[i])
-            for i, f in enumerate(facts)
+        # Default: one paragraph holding all facts, one sentence per fact
+        # (citing that fact only) — keeps existing single-paragraph-shaped
+        # tests passing while still exercising the paragraph structure.
+        return DraftDocument(paragraphs=[
+            ParagraphDraft(
+                topic=category_label,
+                sentences=[
+                    SentenceWithEvidence(text=f"[{tone}] {f.content}", fact_indices=[i])
+                    for i, f in enumerate(facts)
+                ],
+            )
         ])
 
     async def extract_categories(self, free_text, gap_start, gap_end):
@@ -216,6 +225,7 @@ def session_client():
         # cascade="all, delete-orphan" relationships even with zero rows.
         Record.__table__,
         GeneratedDocument.__table__,
+        GeneratedParagraph.__table__,
     ]
 
     async def _create_tables():
@@ -293,6 +303,7 @@ def records_client():
         # cascade="all, delete-orphan" relationship even with zero rows.
         RecordChunk.__table__,
         GeneratedDocument.__table__,
+        GeneratedParagraph.__table__,
     ]
 
     async def _create_tables():
@@ -366,6 +377,7 @@ def document_client():
         ActivityCategory.__table__,
         ConfirmedFact.__table__,
         GeneratedDocument.__table__,
+        GeneratedParagraph.__table__,
         GeneratedSentence.__table__,
     ]
 

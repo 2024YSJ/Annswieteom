@@ -29,3 +29,4 @@ class GeneratedDocument(Base):
 
     session: Mapped["Session"] = relationship("Session", back_populates="documents")
     sentences: Mapped[list["GeneratedSentence"]] = relationship("GeneratedSentence", back_populates="document", cascade="all, delete-orphan")
+    paragraphs: Mapped[list["GeneratedParagraph"]] = relationship("GeneratedParagraph", back_populates="document", cascade="all, delete-orphan")

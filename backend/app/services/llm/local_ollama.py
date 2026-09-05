@@ -18,6 +18,7 @@ from app.services.llm.base import (
     DrilldownDecision,
     FactCandidate,
     InterviewContext,
+    ParagraphDraft,
     PeriodSuggestion,
     ProviderUnavailableError,
     RecordExcerpt,
@@ -186,8 +187,7 @@ class LocalOllamaProvider:
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
-    async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument:
-        category_label = facts[0].fact_type if facts else ""
+    async def generate_document(self, facts: list[ConfirmedFact], tone: str, category_label: str) -> DraftDocument:
         prompt = _render(
             "final_document.jinja",
             confirmed_facts=facts,
@@ -197,11 +197,14 @@ class LocalOllamaProvider:
         response_text = await self._generate(prompt, timeout=45.0)
         try:
             data = json.loads(response_text)
-            sentences = [
-                SentenceWithEvidence(text=s["text"], fact_indices=s["fact_indices"])
-                for s in data["sentences"]
+            paragraphs = [
+                ParagraphDraft(
+                    topic=p["topic"],
+                    sentences=[SentenceWithEvidence(text=s["text"], fact_indices=s["fact_indices"]) for s in p["sentences"]],
+                )
+                for p in data["paragraphs"]
             ]
-            return DraftDocument(sentences=sentences)
+            return DraftDocument(paragraphs=paragraphs)
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 

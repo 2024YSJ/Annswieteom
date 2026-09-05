@@ -130,10 +130,10 @@ class FallbackProvider:
                 self._log_failure("extract_period", provider, exc)
         raise AllProvidersFailedError()
 
-    async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument:
+    async def generate_document(self, facts: list[ConfirmedFact], tone: str, category_label: str) -> DraftDocument:
         for provider in self.providers:
             try:
-                return await provider.generate_document(facts, tone)
+                return await provider.generate_document(facts, tone, category_label)
             except (TimeoutError, ProviderUnavailableError) as exc:
                 self._log_failure("generate_document", provider, exc)
         raise AllProvidersFailedError()

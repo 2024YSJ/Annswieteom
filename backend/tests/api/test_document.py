@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from app.services.interview_question_bank import BASE_QUESTIONS
-from app.services.llm.base import DraftDocument, SentenceWithEvidence
+from app.services.llm.base import DraftDocument, ParagraphDraft, SentenceWithEvidence
+
+
+def _all_sentences(doc: dict) -> list[dict]:
+    """Flattens a DocumentRead's paragraphs into one sentence list, in order —
+    most assertions here don't care about paragraph grouping itself."""
+    return [s for p in doc["paragraphs"] for s in p["sentences"]]
 
 # part_time과 study 둘 다 고정 질문을 4개씩 정의해둔다(interview_question_bank.py).
 # MAX_QUESTIONS_PER_CATEGORY는 이보다 넉넉하므로(드릴다운 여지를 남기기 위해), 이
@@ -71,9 +77,10 @@ def test_generate_creates_sentences_with_evidence_and_advances_status(document_c
     body = resp.json()
     assert body["version"] == 1
     assert body["status"] == "DRAFT"
-    assert len(body["sentences"]) == FACTS_PER_CATEGORY  # one fact per confirm round -> one sentence per fact (fake LLM)
+    sentences = _all_sentences(body)
+    assert len(sentences) == FACTS_PER_CATEGORY  # one fact per confirm round -> one sentence per fact (fake LLM)
 
-    for sentence in body["sentences"]:
+    for sentence in sentences:
         assert sentence["consistency_check_passed"] is True
         assert len(sentence["evidence"]) == 1
         assert sentence["evidence"][0]["citation"] is None  # user_confirmed facts have no record origin
@@ -148,8 +155,8 @@ def test_patch_sentence_updates_text_and_forces_consistent(document_client):
     doc = document_client.post(
         f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
     ).json()
-    sentence_id = doc["sentences"][0]["id"]
-    original_evidence = doc["sentences"][0]["evidence"]
+    sentence_id = _all_sentences(doc)[0]["id"]
+    original_evidence = _all_sentences(doc)[0]["evidence"]
 
     resp = document_client.patch(
         f"/api/v1/sessions/{session_id}/document/sentences/{sentence_id}",
@@ -169,7 +176,7 @@ def test_regenerate_single_sentence_only_uses_its_own_evidence(document_client):
     doc = document_client.post(
         f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
     ).json()
-    sentence_id = doc["sentences"][0]["id"]
+    sentence_id = _all_sentences(doc)[0]["id"]
     calls_before = len(document_client.fake_llm.document_calls)
 
     resp = document_client.post(
@@ -198,7 +205,7 @@ def test_finalize_then_export_returns_full_text(document_client):
 
     resp = document_client.get(f"/api/v1/sessions/{session_id}/export?format=txt", headers=headers)
     assert resp.status_code == 200
-    for sentence in doc["sentences"]:
+    for sentence in _all_sentences(doc):
         assert sentence["text"] in resp.text
 
 
@@ -220,16 +227,175 @@ def test_unrelated_generated_sentence_is_marked_inconsistent_not_dropped(documen
     # text to a vector orthogonal to the default so cosine similarity is 0.
     document_client.fake_embedding._vectors["완전히 무관한 문장"] = [0.0, 1.0]
     document_client.fake_llm._document_queue = [
-        DraftDocument(sentences=[SentenceWithEvidence(text="완전히 무관한 문장", fact_indices=[0])])
+        DraftDocument(paragraphs=[
+            ParagraphDraft(topic="무관한 주제", sentences=[SentenceWithEvidence(text="완전히 무관한 문장", fact_indices=[0])])
+        ])
     ]
 
     resp = document_client.post(
         f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
     )
     body = resp.json()
-    assert len(body["sentences"]) == 1
-    assert body["sentences"][0]["consistency_check_passed"] is False
-    assert body["sentences"][0]["text"] == "완전히 무관한 문장"  # not deleted, just flagged
+    sentences = _all_sentences(body)
+    assert len(sentences) == 1
+    assert sentences[0]["consistency_check_passed"] is False
+    assert sentences[0]["text"] == "완전히 무관한 문장"  # not deleted, just flagged
+
+
+def test_generate_groups_sentences_into_paragraphs(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+
+    document_client.fake_llm._document_queue = [
+        DraftDocument(paragraphs=[
+            ParagraphDraft(topic="첫 번째 주제", sentences=[SentenceWithEvidence(text="문장 A", fact_indices=[0])]),
+            ParagraphDraft(topic="두 번째 주제", sentences=[
+                SentenceWithEvidence(text="문장 B", fact_indices=[1]),
+                SentenceWithEvidence(text="문장 C", fact_indices=[2]),
+            ]),
+        ])
+    ]
+
+    resp = document_client.post(f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"})
+    body = resp.json()
+    assert len(body["paragraphs"]) == 2
+    assert body["paragraphs"][0]["topic"] == "첫 번째 주제"
+    assert [s["text"] for s in body["paragraphs"][0]["sentences"]] == ["문장 A"]
+    assert body["paragraphs"][0]["user_confirmed"] is False
+    assert [s["text"] for s in body["paragraphs"][1]["sentences"]] == ["문장 B", "문장 C"]
+
+
+def test_update_paragraph_renames_topic_and_confirms(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+    doc = document_client.post(
+        f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
+    ).json()
+    paragraph_id = doc["paragraphs"][0]["id"]
+
+    resp = document_client.patch(
+        f"/api/v1/sessions/{session_id}/document/paragraphs/{paragraph_id}",
+        headers=headers,
+        json={"topic": "새 주제", "user_confirmed": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["topic"] == "새 주제"
+    assert resp.json()["user_confirmed"] is True
+
+
+def test_merge_paragraph_with_next_combines_sentences_and_removes_next(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+    document_client.fake_llm._document_queue = [
+        DraftDocument(paragraphs=[
+            ParagraphDraft(topic="A", sentences=[SentenceWithEvidence(text="문장 A", fact_indices=[0])]),
+            ParagraphDraft(topic="B", sentences=[SentenceWithEvidence(text="문장 B", fact_indices=[1])]),
+        ])
+    ]
+    doc = document_client.post(
+        f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
+    ).json()
+    first_id = doc["paragraphs"][0]["id"]
+    second_id = doc["paragraphs"][1]["id"]
+
+    resp = document_client.post(
+        f"/api/v1/sessions/{session_id}/document/paragraphs/{first_id}/merge-next", headers=headers
+    )
+    assert resp.status_code == 200
+    merged = resp.json()
+    assert [s["text"] for s in merged["sentences"]] == ["문장 A", "문장 B"]
+
+    full_doc = document_client.get(f"/api/v1/sessions/{session_id}/document", headers=headers).json()
+    assert len(full_doc["paragraphs"]) == 1
+    assert not any(p["id"] == second_id for p in full_doc["paragraphs"])
+
+
+def test_merge_last_paragraph_with_next_returns_409(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+    doc = document_client.post(
+        f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
+    ).json()
+    last_paragraph_id = doc["paragraphs"][-1]["id"]
+
+    resp = document_client.post(
+        f"/api/v1/sessions/{session_id}/document/paragraphs/{last_paragraph_id}/merge-next", headers=headers
+    )
+    assert resp.status_code == 409
+
+
+def test_move_sentence_to_next_and_prev_paragraph(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+    document_client.fake_llm._document_queue = [
+        DraftDocument(paragraphs=[
+            ParagraphDraft(topic="A", sentences=[SentenceWithEvidence(text="문장 A", fact_indices=[0])]),
+            ParagraphDraft(topic="B", sentences=[SentenceWithEvidence(text="문장 B", fact_indices=[1])]),
+        ])
+    ]
+    doc = document_client.post(
+        f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
+    ).json()
+    first_paragraph_id = doc["paragraphs"][0]["id"]
+    second_paragraph_id = doc["paragraphs"][1]["id"]
+    sentence_a_id = doc["paragraphs"][0]["sentences"][0]["id"]
+
+    resp = document_client.post(
+        f"/api/v1/sessions/{session_id}/document/sentences/{sentence_a_id}/move",
+        headers=headers,
+        json={"direction": "next"},
+    )
+    assert resp.status_code == 200
+
+    full_doc = document_client.get(f"/api/v1/sessions/{session_id}/document", headers=headers).json()
+    by_id = {p["id"]: p for p in full_doc["paragraphs"]}
+    assert [s["id"] for s in by_id[first_paragraph_id]["sentences"]] == []
+    assert {s["id"] for s in by_id[second_paragraph_id]["sentences"]} == {sentence_a_id, doc["paragraphs"][1]["sentences"][0]["id"]}
+
+    # Move it back with "prev".
+    resp = document_client.post(
+        f"/api/v1/sessions/{session_id}/document/sentences/{sentence_a_id}/move",
+        headers=headers,
+        json={"direction": "prev"},
+    )
+    assert resp.status_code == 200
+    full_doc = document_client.get(f"/api/v1/sessions/{session_id}/document", headers=headers).json()
+    by_id = {p["id"]: p for p in full_doc["paragraphs"]}
+    assert [s["id"] for s in by_id[first_paragraph_id]["sentences"]] == [sentence_a_id]
+
+
+def test_move_sentence_past_the_edge_returns_409(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+    doc = document_client.post(
+        f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
+    ).json()
+    first_sentence_id = doc["paragraphs"][0]["sentences"][0]["id"]
+
+    resp = document_client.post(
+        f"/api/v1/sessions/{session_id}/document/sentences/{first_sentence_id}/move",
+        headers=headers,
+        json={"direction": "prev"},
+    )
+    assert resp.status_code == 409
+
+
+def test_export_separates_paragraphs_with_blank_line_and_omits_topic(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+    document_client.fake_llm._document_queue = [
+        DraftDocument(paragraphs=[
+            ParagraphDraft(topic="주제는 내보내기에 없어야 함", sentences=[SentenceWithEvidence(text="문장 A", fact_indices=[0])]),
+            ParagraphDraft(topic="다른 주제", sentences=[SentenceWithEvidence(text="문장 B", fact_indices=[1])]),
+        ])
+    ]
+    document_client.post(f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"})
+    document_client.post(f"/api/v1/sessions/{session_id}/document/finalize", headers=headers)
+
+    resp = document_client.get(f"/api/v1/sessions/{session_id}/export?format=txt", headers=headers)
+    assert resp.status_code == 200
+    assert resp.text == "문장 A\n\n문장 B"
+    assert "주제는 내보내기에 없어야 함" not in resp.text
 
 
 def test_other_users_session_403_and_cross_session_sentence_404(document_client):
@@ -238,7 +404,7 @@ def test_other_users_session_403_and_cross_session_sentence_404(document_client)
     doc = document_client.post(
         f"/api/v1/sessions/{session_id}/generate", headers=headers_a, json={"tone": "neutral"}
     ).json()
-    sentence_id = doc["sentences"][0]["id"]
+    sentence_id = _all_sentences(doc)[0]["id"]
 
     headers_b = _register_and_login(document_client, email="b@example.com")
 

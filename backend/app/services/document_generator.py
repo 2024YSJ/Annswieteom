@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.generated_document import GeneratedDocument
+from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
 from app.services.consistency_check import check_sentence_consistency
 from app.services.embedding.base import EmbeddingProvider
@@ -45,6 +46,7 @@ async def generate_full_document(
     await db.flush()
 
     order_index = 0
+    paragraph_order_index = 0
     for category in categories:
         facts = (
             await db.execute(
@@ -60,21 +62,32 @@ async def generate_full_document(
             LLMConfirmedFact(id=str(f.id), content=f.content, source_type=f.source_type, fact_type=f.fact_type)
             for f in facts
         ]
-        draft = await llm.generate_document(llm_facts, tone)
+        draft = await llm.generate_document(llm_facts, tone, category.label)
 
-        for sentence in draft.sentences:
-            cited_facts = [facts[i] for i in sentence.fact_indices if 0 <= i < len(facts)]
-            passed = await check_sentence_consistency(sentence.text, cited_facts, embedding_provider)
-
-            db.add(GeneratedSentence(
+        for paragraph_draft in draft.paragraphs:
+            paragraph = GeneratedParagraph(
                 document_id=document.id,
-                category_id=category.id,
-                order_index=order_index,
-                text=sentence.text,
-                evidence_fact_ids=[str(f.id) for f in cited_facts],
-                consistency_check_passed=passed,
-            ))
-            order_index += 1
+                order_index=paragraph_order_index,
+                topic=paragraph_draft.topic,
+            )
+            db.add(paragraph)
+            await db.flush()
+            paragraph_order_index += 1
+
+            for sentence in paragraph_draft.sentences:
+                cited_facts = [facts[i] for i in sentence.fact_indices if 0 <= i < len(facts)]
+                passed = await check_sentence_consistency(sentence.text, cited_facts, embedding_provider)
+
+                db.add(GeneratedSentence(
+                    document_id=document.id,
+                    category_id=category.id,
+                    paragraph_id=paragraph.id,
+                    order_index=order_index,
+                    text=sentence.text,
+                    evidence_fact_ids=[str(f.id) for f in cited_facts],
+                    consistency_check_passed=passed,
+                ))
+                order_index += 1
 
     await db.commit()
     await db.refresh(document)
@@ -97,15 +110,17 @@ async def regenerate_sentence(
     if not facts:
         raise NoEvidenceToRegenerateError("Sentence has no cited facts to regenerate from")
 
+    category = await db.get(ActivityCategory, sentence.category_id)
     llm_facts = [
         LLMConfirmedFact(id=str(f.id), content=f.content, source_type=f.source_type, fact_type=f.fact_type)
         for f in facts
     ]
-    draft = await llm.generate_document(llm_facts, tone)
-    if not draft.sentences:
+    draft = await llm.generate_document(llm_facts, tone, category.label)
+    all_sentences = [s for p in draft.paragraphs for s in p.sentences]
+    if not all_sentences:
         raise NoEvidenceToRegenerateError("LLM returned no sentences to regenerate from")
 
-    new_sentence = draft.sentences[0]
+    new_sentence = all_sentences[0]
     cited_facts = [facts[i] for i in new_sentence.fact_indices if 0 <= i < len(facts)] or facts
 
     sentence.text = new_sentence.text
