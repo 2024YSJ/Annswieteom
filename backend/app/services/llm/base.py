@@ -33,6 +33,17 @@ class SufficiencyResult:
 
 
 @dataclass
+class DrilldownDecision:
+    """Whether the answer just confirmed is worth an immediate, narrower
+    follow-up before continuing — e.g. a base question answered with "기획과
+    개발" (planning and development) is a candidate for drilling into one of
+    those with a concrete-example question, rather than moving straight to
+    the next, unrelated fixed question (2026-09-05 request)."""
+    should_ask: bool
+    question_text: str | None = None
+
+
+@dataclass
 class SentenceWithEvidence:
     text: str
     fact_indices: list[int]
@@ -90,6 +101,7 @@ class LLMProvider(Protocol):
     ) -> list[FactCandidate]: ...
     async def followup_question(self, context: InterviewContext) -> str: ...
     async def judge_sufficiency(self, context: InterviewContext) -> SufficiencyResult: ...
+    async def judge_drilldown(self, context: InterviewContext) -> DrilldownDecision: ...
     async def generate_document(self, facts: list[ConfirmedFact], tone: str) -> DraftDocument: ...
     async def extract_categories(
         self, free_text: str, gap_start: date, gap_end: date

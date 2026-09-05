@@ -12,6 +12,8 @@ const KNOWN_DETAILS: Record<string, string> = {
   sentence_not_found: "문장을 찾을 수 없습니다.",
   no_categories_selected: "먼저 카테고리를 선택해주세요.",
   no_current_category: "진행 중인 카테고리가 없습니다.",
+  no_posts_in_period: "이 공백 기간에 해당하는 게시물을 찾지 못했어요. 기간을 확인해주세요.",
+  gap_period_missing: "먼저 공백 기간을 설정해주세요.",
   no_pending_question: "먼저 질문을 받아야 답변할 수 있어요. 새로고침 후 다시 시도해주세요.",
   no_pending_candidates: "확인할 답변이 없어요. 새로고침 후 다시 시도해주세요.",
   invalid_candidate_index: "확인 중 오류가 발생했어요. 새로고침 후 다시 시도해주세요.",

@@ -9,7 +9,13 @@ import { queryKeys } from "./query-keys";
 // the session page's loading screen up indefinitely. Racing against a
 // timeout guarantees this query eventually settles one way or the other
 // (react-query's default retry then applies normally on top of that).
-const SESSION_FETCH_TIMEOUT_MS = 15000;
+//
+// Must stay above Render free-tier's real cold-start ceiling (LoadingNotice
+// documents "최대 1분") — a shorter timeout here doesn't just show an error
+// sooner, it actively misfires *while the real request would have
+// succeeded*. For this query, that means clobbering session state with a
+// stale-error re-render mid-cold-start (production, 2026-09-05).
+const SESSION_FETCH_TIMEOUT_MS = 65000;
 
 export function useSessionContext(sessionId: string) {
   const { accessToken, isLoading: authLoading } = useAuth();

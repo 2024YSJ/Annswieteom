@@ -9,6 +9,7 @@ from app.services.llm.base import (
     CategorySuggestion,
     ConfirmedFact,
     DraftDocument,
+    DrilldownDecision,
     FactCandidate,
     InterviewContext,
     LLMProvider,
@@ -97,6 +98,14 @@ class FallbackProvider:
                 return await provider.judge_sufficiency(context)
             except (TimeoutError, ProviderUnavailableError) as exc:
                 self._log_failure("judge_sufficiency", provider, exc)
+        raise AllProvidersFailedError()
+
+    async def judge_drilldown(self, context: InterviewContext) -> DrilldownDecision:
+        for provider in self.providers:
+            try:
+                return await provider.judge_drilldown(context)
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("judge_drilldown", provider, exc)
         raise AllProvidersFailedError()
 
     async def extract_categories(

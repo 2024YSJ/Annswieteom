@@ -35,6 +35,10 @@ export function RecordsSection({
     queryClient.setQueryData(queryKeys.record(sessionId, record.id), record);
   }
 
+  function addRecords(records: RecordRead[]) {
+    records.forEach(addRecord);
+  }
+
   useEffect(() => {
     if (mode !== "active" || !composerEvent) return;
     const nonce = composerEvent.nonce;
@@ -44,14 +48,19 @@ export function RecordsSection({
       setError(null);
       setIsSubmitting(true);
       try {
-        const record =
-          composerEvent!.kind === "text"
-            ? await recordsApi.createText(sessionId, composerEvent!.value, accessToken)
-            : composerEvent!.kind === "url"
-              ? await recordsApi.createBlogUrl(sessionId, composerEvent!.value, accessToken)
-              : await recordsApi.uploadImage(sessionId, composerEvent!.file, accessToken);
-        if (highestNonceRef.current !== nonce) return;
-        addRecord(record);
+        if (composerEvent!.kind === "text") {
+          const record = await recordsApi.createText(sessionId, composerEvent!.value, accessToken);
+          if (highestNonceRef.current !== nonce) return;
+          addRecord(record);
+        } else if (composerEvent!.kind === "url") {
+          const records = await recordsApi.createBlogUrl(sessionId, composerEvent!.value, accessToken);
+          if (highestNonceRef.current !== nonce) return;
+          addRecords(records);
+        } else {
+          const record = await recordsApi.uploadImage(sessionId, composerEvent!.file, accessToken);
+          if (highestNonceRef.current !== nonce) return;
+          addRecord(record);
+        }
       } catch (err) {
         if (highestNonceRef.current !== nonce) return;
         setError(errorMessage(err));

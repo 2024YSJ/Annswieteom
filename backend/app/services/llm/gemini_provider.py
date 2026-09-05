@@ -15,6 +15,7 @@ from app.services.llm.base import (
     CategorySuggestion,
     ConfirmedFact,
     DraftDocument,
+    DrilldownDecision,
     FactCandidate,
     InterviewContext,
     PeriodSuggestion,
@@ -139,6 +140,22 @@ class GeminiProvider:
         try:
             data = json.loads(text)
             return SufficiencyResult(sufficient=bool(data["sufficient"]), reason=data.get("reason", ""))
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
+    async def judge_drilldown(self, context: InterviewContext) -> DrilldownDecision:
+        prompt = _render(
+            "interview_drilldown.jinja",
+            category_label=context.category_label,
+            gap_start=context.gap_start,
+            gap_end=context.gap_end,
+            confirmed_facts_so_far=context.confirmed_facts_so_far,
+            asked_questions=context.asked_questions,
+        )
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            return DrilldownDecision(should_ask=bool(data["should_ask"]), question_text=data.get("question_text"))
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
 

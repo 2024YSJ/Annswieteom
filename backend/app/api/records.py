@@ -3,14 +3,17 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_owned_session
 from app.db.session import get_db
+from app.models.gap_period import GapPeriod
 from app.models.record import Record
 from app.models.session import Session as SessionModel
 from app.schemas.record import BlogRecordCreate, RecordRead, TextRecordCreate
 from app.services import interview_orchestrator as orchestrator
+from app.services.record_pipeline.parsers import velog
 from app.services.record_pipeline.pipeline import process_image_record, process_record
 from app.services.storage import SupabaseStorage, get_storage
 
@@ -45,15 +48,47 @@ async def _get_owned_record(session: SessionModel, record_id: uuid.UUID, db: Asy
     return record
 
 
-@router.post("/{session_id}/records", response_model=RecordRead, status_code=status.HTTP_201_CREATED)
+@router.post("/{session_id}/records", response_model=list[RecordRead], status_code=status.HTTP_201_CREATED)
 async def create_blog_record(
     payload: BlogRecordCreate,
     background_tasks: BackgroundTasks,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
     process_record_fn=Depends(get_process_record),
-) -> Record:
+) -> list[Record]:
     _require_record_creatable(session)
+
+    # A listing/profile page (e.g. /@user/posts) isn't one post — instead of
+    # rejecting it, pull every public post in the session's gap period from
+    # that page and create one Record per post (all pointing at the real
+    # individual post URLs, so each still parses via the normal single-post
+    # path in the background).
+    listing_username = velog.get_listing_username(payload.source_url)
+    if listing_username is not None:
+        gap = (
+            await db.execute(select(GapPeriod).where(GapPeriod.session_id == session.id))
+        ).scalars().first()
+        if gap is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="gap_period_missing")
+
+        posts = await velog.list_posts_in_range(listing_username, gap.start_date, gap.end_date)
+        if not posts:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_posts_in_period")
+
+        records = [
+            Record(
+                session_id=session.id,
+                record_type="blog_url",
+                source_url=velog.build_post_url(listing_username, post.url_slug),
+            )
+            for post in posts
+        ]
+        db.add_all(records)
+        await db.commit()
+        for record in records:
+            await db.refresh(record)
+            background_tasks.add_task(process_record_fn, record.id)
+        return records
 
     record = Record(session_id=session.id, record_type="blog_url", source_url=payload.source_url)
     db.add(record)
@@ -61,7 +96,7 @@ async def create_blog_record(
     await db.refresh(record)
 
     background_tasks.add_task(process_record_fn, record.id)
-    return record
+    return [record]
 
 
 @router.post("/{session_id}/records/text", response_model=RecordRead, status_code=status.HTTP_201_CREATED)

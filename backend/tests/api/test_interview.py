@@ -3,9 +3,10 @@ from __future__ import annotations
 import uuid
 
 from app.main import app
-from app.services.interview_orchestrator import MAX_FOLLOWUPS_PER_CATEGORY
+from app.services import interview_orchestrator as orchestrator
+from app.services.interview_orchestrator import MAX_QUESTIONS_PER_CATEGORY
 from app.services.interview_question_bank import BASE_QUESTIONS
-from app.services.llm.base import BasedOn, FactCandidate, RecordExcerpt, SufficiencyResult
+from app.services.llm.base import BasedOn, DrilldownDecision, FactCandidate, RecordExcerpt, SufficiencyResult
 from app.services.record_pipeline.search import RecordChunkExcerpt, get_chunk_search
 
 
@@ -79,10 +80,11 @@ def test_base_questions_asked_in_order_for_part_time(session_client):
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
 
-    # Sufficiency is judged the moment the base set is exhausted (not after an
-    # extra follow-up round) — the fake defaults to sufficient=True, so the
-    # very last base question's own confirm call already marks the category done.
-    expected_questions = BASE_QUESTIONS["part_time"]
+    # MAX_QUESTIONS_PER_CATEGORY (3) is smaller than part_time's fixed set
+    # (4) — only the first 3 fixed questions are ever reached, in order; the
+    # category finishes there instead of exhausting all 4 (2026-09-05: "카테
+    # 고리당 질문 횟수를 늘리자. 3회까지").
+    expected_questions = BASE_QUESTIONS["part_time"][:MAX_QUESTIONS_PER_CATEGORY]
     confirm_body = None
     for i, expected in enumerate(expected_questions):
         ask_body, _, confirm_body = _do_turn(session_client, headers, session_id)
@@ -100,7 +102,101 @@ def test_base_questions_asked_in_order_for_part_time(session_client):
     assert len(ctx["confirmed_facts"]) == len(expected_questions)
 
 
-def test_followup_question_asked_when_sufficiency_says_not_enough_yet(session_client):
+def test_ai_can_interleave_a_drilldown_question_between_fixed_base_questions(session_client):
+    """Requirement (2026-09-05): "답변마다 AI가 바로 파고들지 판단" — a vague or
+    bundled answer to a fixed question (e.g. "기획과 개발을 담당했어요") should get
+    an immediate, narrower follow-up before the interview moves on to a
+    totally unrelated fixed question, not just after the whole fixed set is
+    exhausted."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("project",))
+
+    drilldown_question = "기획 쪽에서는 구체적으로 어떤 아이디어를 내셨나요?"
+    session_client.fake_llm._drilldown_queue = [
+        DrilldownDecision(should_ask=True, question_text=drilldown_question)
+    ]
+
+    # Turn 1: answer the first fixed question ("project_what"). The drilldown
+    # decision above fires during this confirm call.
+    first_base_question = BASE_QUESTIONS["project"][0]
+    ask_body, _, confirm_body = _do_turn(session_client, headers, session_id, answer_text="기획과 개발을 담당했어요")
+    assert ask_body["question_text"] == first_base_question.text
+    assert confirm_body["category_done"] is False
+
+    # The next question must be the interleaved drill-down, not the second
+    # fixed question — and it must be idempotent (cached), not a fresh LLM
+    # call each time /ask is polled.
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.json()["question_text"] == drilldown_question
+    assert resp.json()["question_source"] == "followup"
+
+    # Answering it resumes the fixed sequence at the second question — the
+    # drilldown queue is now empty (defaults to should_ask=False), so no
+    # further interleaving happens.
+    _, _, confirm_body = _do_turn(session_client, headers, session_id, answer_text="새로운 캠퍼스 배달 서비스 아이디어를 냈어요")
+    assert confirm_body["category_done"] is False  # the drilldown fact didn't satisfy a base fact_type
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.json()["question_text"] == BASE_QUESTIONS["project"][1].text
+    assert resp.json()["question_source"] == "base"
+
+    # This is the category's 3rd question overall (1 base + 1 drilldown +
+    # this one) — MAX_QUESTIONS_PER_CATEGORY (3) is hit right here, so the
+    # category finishes now even though 2 more fixed questions (hardship,
+    # outcome) were never reached — spending a slot on a drill-down trades
+    # off directly against how many fixed questions get asked.
+    _, _, confirm_body = _do_turn(session_client, headers, session_id)
+    assert confirm_body["category_done"] is True
+    assert confirm_body["status"] == "RESULT_GENERATE"
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    fact_types = [f["fact_type"] for f in ctx["confirmed_facts"]]
+    assert fact_types.count("followup") == 1
+    assert set(fact_types) == {BASE_QUESTIONS["project"][0].fact_type, BASE_QUESTIONS["project"][1].fact_type, "followup"}
+    assert len(fact_types) == 3
+
+
+def test_candidate_fact_type_is_forced_to_the_question_hint_not_the_llm_choice(session_client, monkeypatch):
+    """A weaker LLM can echo back the wrong fact_type for a base question
+    (observed live with the local dev model: a hardship_and_coping answer kept
+    getting relabeled study_goal/study_method). Since next_base_question()
+    decides a category is done purely by which fact_types have a confirmed
+    row, a mislabeled fact makes that base question look permanently
+    unanswered and it repeats forever — the "질문에 답해도 다음 단계로 안 넘어감"
+    bug (2026-09-05). The server must ignore the LLM's own fact_type and
+    always use the hint the question was actually asked under.
+
+    This test is about fact_type forcing specifically, not the total
+    per-category question cap, so the cap is raised here to let all 4 fixed
+    questions play out and isolate the two concerns.
+    """
+    monkeypatch.setattr(orchestrator, "MAX_QUESTIONS_PER_CATEGORY", 8)
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
+
+    # First base question's hint is "frequency" — have the fake LLM misreport
+    # a completely different fact_type, as the weak local model did.
+    session_client.fake_llm._facts_queue = [
+        [FactCandidate(content="주 3회 근무했습니다", fact_type="task", based_on=BasedOn(type="generic_pattern"))],
+    ]
+
+    for _ in BASE_QUESTIONS["part_time"]:
+        _do_turn(session_client, headers, session_id)
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    fact_types = {f["fact_type"] for f in ctx["confirmed_facts"]}
+    # Every base question's fact_type is present exactly once — none stuck repeating.
+    assert fact_types == {q.fact_type for q in BASE_QUESTIONS["part_time"]}
+    assert len(ctx["confirmed_facts"]) == len(BASE_QUESTIONS["part_time"])
+
+
+def test_followup_question_asked_when_sufficiency_says_not_enough_yet(session_client, monkeypatch):
+    """Tests the post-base judge_sufficiency loop specifically, so the total
+    per-category question cap is raised here — under the real default (3),
+    a category with a 4-question fixed set never reaches the post-base phase
+    at all, which is a different behavior covered by its own cap tests."""
+    monkeypatch.setattr(orchestrator, "MAX_QUESTIONS_PER_CATEGORY", 8)
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
@@ -141,9 +237,10 @@ def test_two_categories_second_starts_fresh_after_first_done(session_client):
     _advance_to_first_category(session_client, headers, session_id, category_types=("part_time", "study"))
 
     confirm_body = None
-    for _ in BASE_QUESTIONS["part_time"]:
-        # The last of these turns exhausts part_time's base set, triggers
-        # sufficiency (fake defaults to True), and advances to the next category.
+    for _ in range(MAX_QUESTIONS_PER_CATEGORY):
+        # The last of these turns hits the per-category question cap (3, well
+        # short of part_time's 4-question fixed set) and advances to the next
+        # category.
         _, _, confirm_body = _do_turn(session_client, headers, session_id)
 
     assert confirm_body["status"] == "INTERVIEWING"
@@ -419,20 +516,22 @@ def test_excluded_candidate_is_not_persisted(session_client):
     assert ctx["confirmed_facts"] == []
 
 
-def test_max_followups_forces_advance_even_when_llm_never_says_sufficient(session_client):
+def test_max_questions_per_category_forces_advance_even_with_llm_never_satisfied(session_client):
+    """MAX_QUESTIONS_PER_CATEGORY (2026-09-05: lowered to 3 on request —
+    "카테고리당 질문 횟수를 늘리자. 3회까지") is a hard ceiling on the TOTAL number
+    of questions (fixed + AI-added combined), not just AI follow-ups on top of
+    an already-exhausted fixed set — so it must force an advance even while
+    judge_drilldown/judge_sufficiency would keep wanting more, and even while
+    part_time's fixed set (4 questions) still has one left unasked."""
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
 
     session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
+    session_client.fake_llm._drilldown_queue = [DrilldownDecision(should_ask=True, question_text="더 자세히 말해주세요")] * 10
 
-    for _ in BASE_QUESTIONS["part_time"]:
-        _do_turn(session_client, headers, session_id)
-
-    # From here on, every turn is a follow-up; sufficiency always says "not enough",
-    # but MAX_FOLLOWUPS_PER_CATEGORY must still force an advance eventually.
     confirm_body = None
-    for _ in range(MAX_FOLLOWUPS_PER_CATEGORY):
+    for _ in range(MAX_QUESTIONS_PER_CATEGORY):
         _, _, confirm_body = _do_turn(session_client, headers, session_id)
 
     assert confirm_body["category_done"] is True

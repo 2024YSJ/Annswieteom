@@ -22,6 +22,7 @@ export function InterviewSection({
   currentCategoryId,
   composerEvent,
   onPrefillChange,
+  onSubmittingChange,
 }: {
   sessionId: string;
   accessToken: string;
@@ -34,13 +35,23 @@ export function InterviewSection({
    * the composer shouldn't show a prefill anymore (answered, or no question
    * loaded yet). */
   onPrefillChange: (text: string | null) => void;
+  /** Reports whether an answer/confirm round-trip is in flight, so the page
+   * can disable the composer — the local dev LLM can take ~20s per call
+   * (verified live), and with nothing disabling input or showing progress
+   * during that wait, a second submission could race the first and the
+   * question just looks frozen ("답해도 다음 단계로 안 넘어감", 2026-09-05). */
+  onSubmittingChange?: (isSubmitting: boolean) => void;
 }) {
   const queryClient = useQueryClient();
 
   const [question, setQuestion] = useState<InterviewAskRead | null>(null);
   const [candidates, setCandidates] = useState<CandidateDraft[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitting, setIsSubmittingState] = useState(false);
+  function setIsSubmitting(value: boolean) {
+    setIsSubmittingState(value);
+    onSubmittingChange?.(value);
+  }
   // /interview/ask is server-side idempotent (it returns the cached pending
   // question instead of re-asking the LLM), so this guard is just to avoid a
   // redundant network round-trip on every render, not a correctness fix.
@@ -147,6 +158,7 @@ export function InterviewSection({
         onUpdateCandidate={updateCandidate}
         onSubmit={submit}
         isSubmitting={isSubmitting}
+        isWaitingForAnswer={isSubmitting && candidates === null}
       />
 
       {(error || attachError) && <p style={{ color: "crimson" }}>{error ?? attachError}</p>}

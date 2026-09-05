@@ -3,12 +3,14 @@ import { sessionApi } from "./api-client";
 import { useAuth } from "./auth-context";
 import { queryKeys } from "./query-keys";
 
-// See use-session-context.ts for why this races against a timeout: a
-// stalled (not cleanly failed) fetch never resolves on its own, and the
-// home page's auto-redirect effect waits on this query before it can act —
-// without a bound here, a stalled request leaves the visitor stuck on the
-// loading screen indefinitely instead of falling through to a usable state.
-const SESSIONS_FETCH_TIMEOUT_MS = 15000;
+// See use-session-context.ts for why this races against a timeout, and why
+// it must stay above Render's real cold-start ceiling (~1 minute) rather
+// than the 15s this used to be — a stalled (not cleanly failed) fetch never
+// resolves on its own, and the home page's auto-redirect effect waits on
+// this query before it can act, without a bound here, a stalled request
+// leaves the visitor stuck on the loading screen indefinitely instead of
+// falling through to a usable state.
+const SESSIONS_FETCH_TIMEOUT_MS = 65000;
 
 export function useSessionsList() {
   const { accessToken, isLoading: authLoading } = useAuth();

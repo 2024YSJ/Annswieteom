@@ -13,8 +13,11 @@ export interface RecordRead {
 }
 
 export const recordsApi = {
+  // A single URL can expand into multiple records: submitting a velog
+  // listing/profile page (e.g. /@user/posts) imports every post in the
+  // session's gap period from that page, each as its own record.
   createBlogUrl: (sessionId: string, sourceUrl: string, accessToken: string) =>
-    request<RecordRead>(`/api/v1/sessions/${sessionId}/records`, {
+    request<RecordRead[]>(`/api/v1/sessions/${sessionId}/records`, {
       method: "POST",
       headers: authHeaders(accessToken),
       body: JSON.stringify({ record_type: "blog_url", source_url: sourceUrl }),

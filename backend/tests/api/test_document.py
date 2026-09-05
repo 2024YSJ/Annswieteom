@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from app.services.interview_orchestrator import MAX_QUESTIONS_PER_CATEGORY
 from app.services.llm.base import DraftDocument, SentenceWithEvidence
 
-# part_time과 study 둘 다 고정 질문 4개다 (interview_question_bank.py) — 카테고리당
-# 정확히 4턴만 돌면(후속 질문 없이) sufficiency 판단 없이 바로 다음 카테고리로 넘어간다.
-FACTS_PER_CATEGORY = 4
+# part_time과 study 둘 다 고정 질문을 4개씩 정의해두지만(interview_question_bank.py),
+# MAX_QUESTIONS_PER_CATEGORY(3)가 실제 총 질문 수 상한이므로 카테고리당 정확히 이
+# 횟수만 돌면(드릴다운 없이) sufficiency 판단 없이 바로 다음 카테고리로 넘어간다.
+FACTS_PER_CATEGORY = MAX_QUESTIONS_PER_CATEGORY
 
 
 def _register_and_login(client, email="alice@example.com"):

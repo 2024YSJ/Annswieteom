@@ -56,11 +56,20 @@ async def parse(url: str) -> tuple[str, date | None]:
         or soup.select_one(".post-view")
     )
     if not body:
-        raise ValueError(f"No content container found in naver post {url}")
+        # The far more common real-world case than a genuinely unrecognized
+        # editor layout: Naver still serves the mainFrame iframe fine for a
+        # private post (so the check above passes), but the inner page it
+        # points to is a "this post is private" placeholder with none of the
+        # three known content selectors — not an HTTP error, just the wrong
+        # page. Wording this like the private-post case above (rather than a
+        # bare "not found") is what pipeline.py's _user_message() keys off of
+        # to show "비공개 게시물은 가져올 수 없어요." instead of a generic,
+        # unhelpful error (production issue, 2026-09-05).
+        raise ValueError(f"No content container found in naver post {url}. May be a private or deleted post.")
 
     text = body.get_text(separator="\n", strip=True)
     if not text.strip():
-        raise ValueError(f"Empty content in naver post {url}")
+        raise ValueError(f"Empty content in naver post {url}. May be a private or deleted post.")
 
     pub_date: date | None = None
     date_tag = (

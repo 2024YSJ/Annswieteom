@@ -15,7 +15,7 @@ export function useRecordAttach(
   sessionId: string,
   accessToken: string,
   composerEvent: ComposerEvent | null,
-  onAttached: (record: RecordRead) => void,
+  onAttached: (records: RecordRead[]) => void,
 ) {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -31,12 +31,12 @@ export function useRecordAttach(
       setError(null);
       setIsSubmitting(true);
       try {
-        const record =
+        const records =
           event.kind === "url"
             ? await recordsApi.createBlogUrl(sessionId, event.value, accessToken)
-            : await recordsApi.uploadImage(sessionId, event.file, accessToken);
+            : [await recordsApi.uploadImage(sessionId, event.file, accessToken)];
         if (highestNonceRef.current !== nonce) return;
-        onAttached(record);
+        onAttached(records);
       } catch (err) {
         if (highestNonceRef.current !== nonce) return;
         setError(errorMessage(err));

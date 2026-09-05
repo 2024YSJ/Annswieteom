@@ -219,6 +219,35 @@ async def skip_records(
     return RecordsSkipRead(status=session.status, current_category_id=first_category.id)
 
 
+async def _build_pending_turn(
+    llm: LLMProvider, context: InterviewContext, category: ActivityCategory, question_text: str, question_source: str, fact_type_hint: str
+) -> dict:
+    try:
+        draft_answer = await llm.draft_answer(context, question_text)
+    except AllProvidersFailedError:
+        # The composer prefill is a convenience, not a required part of the
+        # flow (the user can always type from a blank box), so a failure here
+        # shouldn't block the question itself from being shown.
+        draft_answer = ""
+
+    # Every fresh question — whether the next fixed one, an interleaved
+    # drill-down, or a post-base followup — goes through this one function,
+    # so incrementing here (rather than at each of its call sites) is the
+    # single place that keeps ActivityCategory.questions_asked accurate
+    # against MAX_QUESTIONS_PER_CATEGORY.
+    category.questions_asked += 1
+
+    return {
+        "category_id": str(category.id),
+        "question_text": question_text,
+        "question_source": question_source,
+        "fact_type_hint": fact_type_hint,
+        "context_excerpt_ids": [e.chunk_id for e in context.record_excerpts],
+        "draft_answer": draft_answer,
+        "candidate_facts": None,
+    }
+
+
 @router.post("/{session_id}/interview/ask", response_model=InterviewAskRead)
 async def interview_ask(
     session: SessionModel = Depends(get_owned_session),
@@ -263,25 +292,8 @@ async def interview_ask(
         question_source = "followup"
         fact_type_hint = "followup"
 
-    try:
-        draft_answer = await llm.draft_answer(context, question_text)
-    except AllProvidersFailedError:
-        # The composer prefill is a convenience, not a required part of the
-        # flow (the user can always type from a blank box), so a failure here
-        # shouldn't block the question itself from being shown.
-        draft_answer = ""
-
-    context_excerpt_ids = [e.chunk_id for e in context.record_excerpts]
-
-    session.pending_turn = {
-        "category_id": str(category.id),
-        "question_text": question_text,
-        "question_source": question_source,
-        "fact_type_hint": fact_type_hint,
-        "context_excerpt_ids": context_excerpt_ids,
-        "draft_answer": draft_answer,
-        "candidate_facts": None,
-    }
+    session.pending_turn = await _build_pending_turn(llm, context, category, question_text, question_source, fact_type_hint)
+    draft_answer = session.pending_turn["draft_answer"]
     await db.commit()
 
     return InterviewAskRead(
@@ -328,7 +340,17 @@ async def interview_answer(
             valid_excerpts = [e for e in based_on.excerpts if e.chunk_id in allowed_chunk_ids]
             based_on = BasedOn(type="record", excerpts=valid_excerpts) if valid_excerpts else BasedOn(type="generic_pattern")
         candidate_payload.append(
-            {"content": candidate.content, "fact_type": candidate.fact_type, "based_on": _serialize_based_on(based_on)}
+            # fact_type is always forced to the hint the question was actually
+            # asked under, never the LLM's own free choice — a base question
+            # maps 1:1 to one fact_type, and next_base_question() decides
+            # whether a category is done purely by checking which fact_types
+            # have a confirmed row. A weaker model that echoes back the wrong
+            # fact_type (observed with the local dev model: it kept relabeling
+            # a hardship_and_coping answer as study_goal/study_method) would
+            # otherwise make that fact_type look permanently unanswered and
+            # the same base question would repeat forever — this is the fix
+            # for the "질문에 답해도 다음 단계로 안 넘어감" bug (2026-09-05).
+            {"content": candidate.content, "fact_type": pending["fact_type_hint"], "based_on": _serialize_based_on(based_on)}
         )
 
     session.pending_turn = {**pending, "candidate_facts": candidate_payload}
@@ -404,26 +426,35 @@ async def interview_confirm(
     session.pending_turn = None
     await db.flush()
 
-    answered_fact_types = {
-        f.fact_type
-        for f in (await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category_id))).scalars().all()
-    }
-    remaining_base_question = next_base_question(category.category_type, answered_fact_types)
-
-    if remaining_base_question is not None:
-        advance = False
+    # 카테고리당 총 질문 수(고정+AI 합산) 상한 — 도달했으면 남은 고정 질문이 있든,
+    # AI가 더 캐묻고 싶어하든 무조건 다음으로 넘긴다 (2026-09-05: "카테고리당 질문
+    # 횟수를 늘리자. 3회까지" — 총 개수를 낮춰 AI 판단의 비중을 상대적으로 높이는 방향).
+    if category.questions_asked >= orchestrator.MAX_QUESTIONS_PER_CATEGORY:
+        advance = True
     else:
-        # Approximate turn count via row count — a turn can yield 0 or several
-        # facts, so this isn't exact, but it only needs to be a safety cap, not
-        # a precise counter (see MAX_FOLLOWUPS_PER_CATEGORY).
-        followup_fact_ids = (
-            await db.execute(
-                select(ConfirmedFact.id)
-                .where(ConfirmedFact.category_id == category_id, ConfirmedFact.fact_type == "followup")
-            )
-        ).scalars().all()
-        if len(followup_fact_ids) >= orchestrator.MAX_FOLLOWUPS_PER_CATEGORY:
-            advance = True
+        answered_fact_types = {
+            f.fact_type
+            for f in (await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category_id))).scalars().all()
+        }
+        remaining_base_question = next_base_question(category.category_type, answered_fact_types)
+
+        if remaining_base_question is not None:
+            advance = False
+            # Even while fixed questions remain, let the AI interject one
+            # narrower drill-down when the answer just confirmed bundled
+            # several things together or stayed vague (e.g. "기획과 개발을
+            # 담당했어요") instead of marching straight on to the next,
+            # unrelated fixed question with no chance to get a concrete
+            # example (2026-09-05 request: "답변마다 AI가 바로 파고들지 판단").
+            try:
+                context, _ = await _build_context(db, session, category, chunk_search)
+                decision = await llm.judge_drilldown(context)
+            except AllProvidersFailedError:
+                decision = None
+            if decision is not None and decision.should_ask and decision.question_text:
+                session.pending_turn = await _build_pending_turn(
+                    llm, context, category, decision.question_text, "followup", "followup"
+                )
         else:
             try:
                 context, _ = await _build_context(db, session, category, chunk_search)

@@ -31,6 +31,7 @@ export function InterviewChatThread({
   onUpdateCandidate,
   onSubmit,
   isSubmitting,
+  isWaitingForAnswer,
 }: {
   categories: ActivityCategoryRead[];
   currentCategoryId: string | null;
@@ -39,6 +40,10 @@ export function InterviewChatThread({
   onUpdateCandidate: (index: number, patch: Partial<Omit<CandidateDraft, "candidate">>) => void;
   onSubmit: () => void;
   isSubmitting: boolean;
+  /** True while the just-submitted answer is being processed by the AI (no
+   * candidates yet) — local models can take a while, so this renders a
+   * visible "생각 중" bubble instead of leaving the question looking frozen. */
+  isWaitingForAnswer?: boolean;
 }) {
   // Only categories that have at least one confirmed fact, or are the one
   // currently being interviewed, are shown — categories not reached yet
@@ -67,6 +72,12 @@ export function InterviewChatThread({
           {category.id === currentCategoryId && questionText && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }} aria-live="polite">
               <ChatBubble side="left">{questionText}</ChatBubble>
+
+              {isWaitingForAnswer && (
+                <ChatBubble side="left">
+                  <span style={{ color: "var(--muted-text)" }}>답변을 정리하고 있어요...</span>
+                </ChatBubble>
+              )}
 
               {candidates !== null && (
                 <>

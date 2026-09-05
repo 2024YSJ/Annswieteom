@@ -90,6 +90,31 @@ async def test_parse_empty_body_raises_value_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_parse_post_listing_page_raises_without_network_call(monkeypatch):
+    """/@username/posts (and /about, /series) share the exact
+    /@username/<segment> shape as a real post — without this check, "posts"
+    gets treated as a post slug, the API correctly finds no such post, and
+    that used to get reported as "private or deleted", which is misleading
+    for what's actually just the wrong kind of link (production issue,
+    2026-09-05: a user submitted their own /@id/posts listing page and got
+    told a post was private, when no individual post was ever addressed)."""
+    called = False
+
+    async def fake_post(self, url, **kwargs):
+        nonlocal called
+        called = True
+        return _fake_response({"data": {"post": None}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    for reserved_path in ("posts", "about", "series"):
+        with pytest.raises(ValueError, match="listing"):
+            await velog.parse(f"https://velog.io/@sjyoon1101/{reserved_path}")
+
+    assert called is False  # rejected from the URL shape alone, no wasted API call
+
+
+@pytest.mark.asyncio
 async def test_parse_bad_url_shape_raises_without_network_call(monkeypatch):
     called = False
 
