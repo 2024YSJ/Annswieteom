@@ -80,60 +80,71 @@ export default function SessionChatPage() {
           : null;
 
   return (
-    <main style={{ maxWidth: 640, margin: "80px auto 40px", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
-      <PeriodSection
-        sessionId={sessionId}
-        accessToken={accessToken!}
-        mode={periodDone ? "completed" : "active"}
-        gapPeriod={ctx.gap_period}
-      />
+    <div style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        <main style={{ maxWidth: 640, margin: "80px auto 24px", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
+          <PeriodSection
+            sessionId={sessionId}
+            accessToken={accessToken!}
+            mode={periodDone ? "completed" : "active"}
+            gapPeriod={ctx.gap_period}
+          />
 
-      {(periodDone || categoriesDone) && (
-        <CategorySection
-          sessionId={sessionId}
-          accessToken={accessToken!}
-          mode={categoriesDone ? "completed" : "active"}
-          categories={ctx.categories}
-          composerEvent={composerEvent?.forStep === "categories" ? composerEvent : null}
-        />
-      )}
+          {(periodDone || categoriesDone) && (
+            <CategorySection
+              sessionId={sessionId}
+              accessToken={accessToken!}
+              mode={categoriesDone ? "completed" : "active"}
+              categories={ctx.categories}
+              composerEvent={composerEvent?.forStep === "categories" ? composerEvent : null}
+            />
+          )}
 
-      {categoriesDone && (
-        <RecordsSection
-          sessionId={sessionId}
-          accessToken={accessToken!}
-          mode={recordsDone ? "completed" : "active"}
-          composerEvent={composerEvent?.forStep === "records" ? composerEvent : null}
-        />
-      )}
+          {categoriesDone && (
+            <RecordsSection
+              sessionId={sessionId}
+              accessToken={accessToken!}
+              mode={recordsDone ? "completed" : "active"}
+              composerEvent={composerEvent?.forStep === "records" ? composerEvent : null}
+            />
+          )}
 
-      {(interviewActive || resultActive) && (
-        <InterviewSection
-          sessionId={sessionId}
-          accessToken={accessToken!}
-          status={ctx.status}
-          categories={ctx.categories}
-          currentCategoryId={ctx.current_category?.id ?? null}
-          composerEvent={composerEvent?.forStep === "interview" ? composerEvent : null}
-          onPrefillChange={setComposerPrefill}
-          onSubmittingChange={setInterviewSubmitting}
-        />
-      )}
+          {(interviewActive || resultActive) && (
+            <InterviewSection
+              sessionId={sessionId}
+              accessToken={accessToken!}
+              status={ctx.status}
+              categories={ctx.categories}
+              currentCategoryId={ctx.current_category?.id ?? null}
+              composerEvent={composerEvent?.forStep === "interview" ? composerEvent : null}
+              onPrefillChange={setComposerPrefill}
+              onSubmittingChange={setInterviewSubmitting}
+            />
+          )}
 
-      {resultActive && <ResultSection sessionId={sessionId} accessToken={accessToken!} status={ctx.status} />}
+          {resultActive && <ResultSection sessionId={sessionId} accessToken={accessToken!} status={ctx.status} />}
 
-      {/* Period uses its own calendar form, not the shared free-text composer. */}
+          <div ref={bottomRef} />
+        </main>
+      </div>
+
+      {/* Period uses its own calendar form, not the shared free-text composer.
+       * Sits outside the scrollable area above so it stays pinned to the
+       * bottom of the viewport and grows in place (via the textarea inside
+       * it) instead of scrolling away with the conversation. */}
       {activeStep && activeStep !== "period" && (
-        <ChatComposer
-          key={activeStep}
-          activeStep={activeStep}
-          onSend={setComposerEvent}
-          prefillText={activeStep === "interview" ? composerPrefill : null}
-          disabled={activeStep === "interview" && interviewSubmitting}
-        />
+        <div style={{ flexShrink: 0, borderTop: "1px solid var(--border)", background: "var(--background)", padding: "12px 16px" }}>
+          <div style={{ maxWidth: 640, margin: "0 auto" }}>
+            <ChatComposer
+              key={activeStep}
+              activeStep={activeStep}
+              onSend={setComposerEvent}
+              prefillText={activeStep === "interview" ? composerPrefill : null}
+              disabled={activeStep === "interview" && interviewSubmitting}
+            />
+          </div>
+        </div>
       )}
-
-      <div ref={bottomRef} />
-    </main>
+    </div>
   );
 }

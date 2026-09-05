@@ -1,6 +1,11 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+
+// Grows the composer with the text instead of staying single-line — capped so
+// a very long paste doesn't push the fixed bottom bar to an unreasonable
+// height; beyond this it scrolls internally like any textarea.
+const TEXTAREA_MAX_HEIGHT_PX = 160;
 
 export type ActiveStep = "period" | "categories" | "records" | "interview";
 
@@ -44,6 +49,17 @@ export function ChatComposer({
   const [urlDraft, setUrlDraft] = useState("");
   const nonceRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Re-measure on every text change, not just onChange — `text` also changes
+  // from outside typing (a prefill arriving, or clearing after send), and
+  // scrollHeight is only accurate once the browser has painted the new value.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, TEXTAREA_MAX_HEIGHT_PX)}px`;
+  }, [text]);
 
   // Note: this component is remounted (via `key={activeStep}` in the
   // orchestrator) whenever the active step changes, so any uncommitted draft
@@ -94,9 +110,15 @@ export function ChatComposer({
           AI가 미리 써봤어요 · 이어 쓰거나 고쳐서 보내세요
         </div>
       )}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", position: "relative" }}>
         {ATTACH_ENABLED_STEPS.has(activeStep) && (
-          <button type="button" onClick={() => setIsAttachMenuOpen((v) => !v)} title="첨부" aria-label="첨부">
+          <button
+            type="button"
+            onClick={() => setIsAttachMenuOpen((v) => !v)}
+            title="첨부"
+            aria-label="첨부"
+            style={{ flexShrink: 0 }}
+          >
             📎
           </button>
         )}
@@ -111,14 +133,15 @@ export function ChatComposer({
             ↺
           </button>
         )}
-        <input
-          type="text"
-          placeholder="메시지를 입력하세요"
+        <textarea
+          ref={textareaRef}
+          placeholder="메시지를 입력하세요 (Shift+Enter로 줄바꿈)"
           value={text}
           disabled={disabled}
+          rows={1}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               sendText();
             }
@@ -126,10 +149,15 @@ export function ChatComposer({
           style={{
             flex: 1,
             minWidth: 0,
+            resize: "none",
+            maxHeight: TEXTAREA_MAX_HEIGHT_PX,
+            overflowY: "auto",
+            fontFamily: "inherit",
+            lineHeight: 1.4,
             borderColor: prefillText ? "var(--accent)" : undefined,
           }}
         />
-        <button type="button" onClick={sendText} disabled={disabled || text.trim().length === 0}>
+        <button type="button" onClick={sendText} disabled={disabled || text.trim().length === 0} style={{ flexShrink: 0 }}>
           보내기
         </button>
 
