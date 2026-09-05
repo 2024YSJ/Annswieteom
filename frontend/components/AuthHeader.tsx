@@ -1,10 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
 export function AuthHeader() {
+  const router = useRouter();
   const { user, isLoading, logout } = useAuth();
+
+  async function handleLogout() {
+    await logout();
+    // logout() only clears auth state — without this, staying on whatever
+    // page you were on (e.g. a session's chat screen) left a signed-out
+    // visitor stranded on a stale authenticated view instead of returning
+    // to the start screen.
+    router.push("/");
+  }
 
   return (
     <header
@@ -24,7 +35,7 @@ export function AuthHeader() {
         <>
           <span>{user.nickname}님</span>
           {user.is_guest && <Link href="/register">회원가입하고 저장하기</Link>}
-          <button type="button" onClick={() => logout()}>
+          <button type="button" onClick={handleLogout}>
             로그아웃
           </button>
         </>

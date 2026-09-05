@@ -58,12 +58,22 @@ export default function Home() {
   // redirect effect above only ever checks `!sessions`, never the query's
   // error state, so nothing there could break the wait. Handle it explicitly
   // with a retry instead of leaving a dead end with no escape.
+  const mainStyle = {
+    maxWidth: 480,
+    margin: "120px auto",
+    padding: "0 16px",
+    textAlign: "center" as const,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 16,
+  };
+
   if (user && sessionsError) {
     return (
-      <main style={{ maxWidth: 480, margin: "120px auto", padding: "0 16px", textAlign: "center" }}>
+      <main style={mainStyle}>
         <h1>안 쉬었음</h1>
         <p style={{ color: "crimson" }}>{errorMessage(sessionsError)}</p>
-        <button type="button" onClick={() => refetchSessions()}>
+        <button type="button" onClick={() => refetchSessions()} style={{ alignSelf: "center" }}>
           다시 시도
         </button>
       </main>
@@ -72,7 +82,7 @@ export default function Home() {
 
   if (isLoading || user) {
     return (
-      <main style={{ maxWidth: 480, margin: "120px auto", padding: "0 16px", textAlign: "center" }}>
+      <main style={mainStyle}>
         <h1>안 쉬었음</h1>
         <LoadingNotice />
         {error && <p style={{ color: "crimson" }}>{error}</p>}
@@ -81,14 +91,15 @@ export default function Home() {
   }
 
   return (
-    <main style={{ maxWidth: 480, margin: "120px auto", padding: "0 16px", textAlign: "center" }}>
+    <main style={mainStyle}>
       <h1>안 쉬었음</h1>
+      <p style={{ fontWeight: 700, fontSize: 18 }}>우리는 쉬지 않았습니다.</p>
       <p>커리어 공백기를 근거 있는 STAR 내러티브로 정리해드려요.</p>
 
       <p>
         <Link href="/login">로그인</Link> 또는 <Link href="/register">회원가입</Link>으로 시작하세요.
       </p>
-      <button type="button" onClick={handleGuestStart} disabled={isCreating}>
+      <button type="button" onClick={handleGuestStart} disabled={isCreating} style={{ alignSelf: "center" }}>
         {isCreating ? "시작하는 중..." : "게스트로 시작하기 (1회 체험)"}
       </button>
       {error && <p style={{ color: "crimson" }}>{error}</p>}
