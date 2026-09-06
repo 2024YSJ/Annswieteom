@@ -59,6 +59,64 @@ def test_create_blog_record_returns_pending_then_polling_shows_done(records_clie
     assert resp.json()["parse_status"] == "DONE"
 
 
+def test_records_are_tagged_with_the_category_being_requested(records_client):
+    """Records created during the per-category record-request walk should be
+    tagged with whichever category is currently being asked for — not left
+    uncategorized — and /records/skip should move that current category
+    forward one at a time instead of jumping straight to INTERVIEWING."""
+    headers = _register_and_login(records_client)
+    resp = records_client.post("/api/v1/sessions", headers=headers)
+    session_id = resp.json()["id"]
+    records_client.post(
+        f"/api/v1/sessions/{session_id}/period",
+        headers=headers,
+        json={"start_date": "2025-01-01", "end_date": "2025-06-30"},
+    )
+    resp = records_client.post(
+        f"/api/v1/sessions/{session_id}/categories",
+        headers=headers,
+        json={"categories": [{"category_type": "part_time"}, {"category_type": "study"}]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "RECORD_UPLOAD"
+
+    ctx = records_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    first_category_id = ctx["current_category"]["id"]
+    assert ctx["categories"][0]["category_type"] == "part_time"
+    assert first_category_id == ctx["categories"][0]["id"]
+
+    resp = records_client.post(
+        f"/api/v1/sessions/{session_id}/records/text",
+        headers=headers,
+        json={"text": "첫 번째 카테고리 자료"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["category_id"] == first_category_id
+
+    # One category down, one to go — /records/skip must stay in RECORD_UPLOAD
+    # and move current_category_id to the second category, not INTERVIEWING.
+    resp = records_client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "RECORD_UPLOAD"
+    second_category_id = resp.json()["current_category_id"]
+    assert second_category_id != first_category_id
+
+    resp = records_client.post(
+        f"/api/v1/sessions/{session_id}/records/text",
+        headers=headers,
+        json={"text": "두 번째 카테고리 자료"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["category_id"] == second_category_id
+
+    # Last category done — now it actually reaches INTERVIEWING, reset to the
+    # first category for the interview loop.
+    resp = records_client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "INTERVIEWING"
+    assert resp.json()["current_category_id"] == first_category_id
+
+
 def test_create_blog_record_from_velog_listing_page_imports_every_post_in_range(records_client, monkeypatch):
     headers = _register_and_login(records_client)
     session_id = _create_session_at_record_upload(records_client, headers)  # gap period: 2025-01-01..2025-06-30
@@ -171,11 +229,11 @@ def test_records_endpoints_require_record_upload_status(records_client):
     assert resp.status_code == 409
 
 
-def test_records_can_still_be_attached_once_interviewing(records_client):
-    """Records used to be gated to RECORD_UPLOAD only; the interview can now
-    be attached to at any point through the interview phase too, so a session
-    that has already moved past records/skip into INTERVIEWING must still
-    accept new records (evidence for a category the user hasn't finished yet)."""
+def test_records_can_no_longer_be_attached_once_interviewing(records_client):
+    """Records are only attachable during the per-category record-request walk
+    (RECORD_UPLOAD) — once a session has moved into INTERVIEWING, the attach
+    UI has moved to sit next to the record-request step's own skip/advance
+    button, so the API must reject further record creation too."""
     headers = _register_and_login(records_client)
     session_id = _create_session_at_record_upload(records_client, headers)
 
@@ -188,7 +246,7 @@ def test_records_can_still_be_attached_once_interviewing(records_client):
         headers=headers,
         json={"text": "인터뷰 도중에 추가한 기록물"},
     )
-    assert resp.status_code == 201
+    assert resp.status_code == 409
 
 
 def test_delete_record_removes_it_and_its_storage_object(records_client):

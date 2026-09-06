@@ -55,7 +55,11 @@ def _advance_to_result_generate(client, headers, category_types=("part_time",)):
         headers=headers,
         json={"categories": [{"category_type": t} for t in category_types]},
     )
-    client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
+    # One /records/skip call advances past a single category's record request;
+    # with several categories it must be called once per category to actually
+    # reach INTERVIEWING.
+    for _ in category_types:
+        client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
 
     for _ in category_types:
         for _ in range(FACTS_PER_CATEGORY):

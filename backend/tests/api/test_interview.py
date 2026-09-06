@@ -43,8 +43,12 @@ def _advance_to_first_category(client, headers, session_id, category_types=("par
     assert resp.status_code == 200
     assert resp.json()["status"] == "RECORD_UPLOAD"
 
-    resp = client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
-    assert resp.status_code == 200
+    # One /records/skip call advances past a single category's record request;
+    # with several categories it must be called once per category before the
+    # session actually reaches INTERVIEWING.
+    for _ in category_types:
+        resp = client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
+        assert resp.status_code == 200
     assert resp.json()["status"] == "INTERVIEWING"
     return resp.json()["current_category_id"]
 

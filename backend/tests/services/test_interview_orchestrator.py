@@ -26,8 +26,18 @@ def test_require_simple_transition_rejects_wrong_status():
         orch.require_simple_transition("period", "CATEGORY_SELECT")
 
 
-def test_records_skip_transitions_to_interviewing():
-    assert orch.require_simple_transition("records_skip", "RECORD_UPLOAD") == "INTERVIEWING"
+def test_resolve_after_records_moves_to_next_category():
+    cats = [_category(0), _category(1)]
+    status, nxt = orch.resolve_after_records(cats, cats[0])
+    assert status == "RECORD_UPLOAD"
+    assert nxt is cats[1]
+
+
+def test_resolve_after_records_starts_interviewing_at_first_category_when_last():
+    cats = [_category(0), _category(1)]
+    status, nxt = orch.resolve_after_records(cats, cats[1])
+    assert status == "INTERVIEWING"
+    assert nxt is cats[0]
 
 
 def test_require_interviewing_allows_interviewing():
@@ -39,12 +49,13 @@ def test_require_interviewing_rejects_other_status():
         orch.require_interviewing("RECORD_UPLOAD")
 
 
-def test_require_record_creatable_allows_record_upload_and_interviewing():
+def test_require_record_creatable_allows_record_upload():
     orch.require_record_creatable("RECORD_UPLOAD")
-    orch.require_record_creatable("INTERVIEWING")
 
 
-def test_require_record_creatable_rejects_result_statuses():
+def test_require_record_creatable_rejects_interviewing_and_result_statuses():
+    with pytest.raises(orch.StateMachineViolation):
+        orch.require_record_creatable("INTERVIEWING")
     with pytest.raises(orch.StateMachineViolation):
         orch.require_record_creatable("RESULT_GENERATE")
     with pytest.raises(orch.StateMachineViolation):

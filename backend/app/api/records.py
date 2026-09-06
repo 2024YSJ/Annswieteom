@@ -78,6 +78,7 @@ async def create_blog_record(
         records = [
             Record(
                 session_id=session.id,
+                category_id=session.current_category_id,
                 record_type="blog_url",
                 source_url=velog.build_post_url(listing_username, post.url_slug),
             )
@@ -90,7 +91,12 @@ async def create_blog_record(
             background_tasks.add_task(process_record_fn, record.id)
         return records
 
-    record = Record(session_id=session.id, record_type="blog_url", source_url=payload.source_url)
+    record = Record(
+        session_id=session.id,
+        category_id=session.current_category_id,
+        record_type="blog_url",
+        source_url=payload.source_url,
+    )
     db.add(record)
     await db.commit()
     await db.refresh(record)
@@ -109,7 +115,12 @@ async def create_text_record(
 ) -> Record:
     _require_record_creatable(session)
 
-    record = Record(session_id=session.id, record_type="text", raw_text=payload.text)
+    record = Record(
+        session_id=session.id,
+        category_id=session.current_category_id,
+        record_type="text",
+        raw_text=payload.text,
+    )
     db.add(record)
     await db.commit()
     await db.refresh(record)
@@ -137,7 +148,7 @@ async def upload_image_record(
 
     content = await file.read()
 
-    record = Record(id=uuid.uuid4(), session_id=session.id, record_type="image")
+    record = Record(id=uuid.uuid4(), session_id=session.id, category_id=session.current_category_id, record_type="image")
     # 사용자·세션·기록물 단위로 경로를 분리해 다른 사용자의 파일과 절대 겹치지 않게 한다
     # (person_B_frontend_backend/03_records_feature.md 1-1절).
     record.storage_path = f"records/{session.user_id}/{session.id}/{record.id}{extension}"

@@ -4,6 +4,7 @@ export type ParseStatus = "PENDING" | "PROCESSING" | "DONE" | "FAILED";
 
 export interface RecordRead {
   id: string;
+  category_id: string | null;
   record_type: "blog_url" | "image" | "text";
   source_url: string | null;
   platform: string;

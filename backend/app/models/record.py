@@ -24,6 +24,10 @@ class Record(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    # nullable at the DB level so pre-existing rows (created before categorized
+    # uploads existed) don't need a backfill — application code always sets it
+    # going forward, sourced from session.current_category_id (see app/api/records.py).
+    category_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("activity_categories.id", ondelete="CASCADE"), nullable=True)
     record_type: Mapped[str] = mapped_column(Text, nullable=False)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     platform: Mapped[str] = mapped_column(Text, nullable=False, default="unknown")
@@ -34,4 +38,5 @@ class Record(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped["Session"] = relationship("Session", back_populates="records")
+    category: Mapped["ActivityCategory | None"] = relationship("ActivityCategory", back_populates="records")
     chunks: Mapped[list["RecordChunk"]] = relationship("RecordChunk", back_populates="record", cascade="all, delete-orphan")

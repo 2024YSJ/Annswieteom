@@ -62,6 +62,7 @@ async def get_session(
         .options(
             selectinload(SessionModel.gap_period),
             selectinload(SessionModel.categories).selectinload(ActivityCategory.confirmed_facts),
+            selectinload(SessionModel.categories).selectinload(ActivityCategory.records),
         )
     )
     full_session = (await db.execute(stmt)).scalar_one()
@@ -74,7 +75,7 @@ async def get_session(
     available_record_chunks: list[RecordChunkExcerptRead] = []
     if current_category is not None:
         try:
-            excerpts = await chunk_search(full_session.id, current_category.label)
+            excerpts = await chunk_search(full_session.id, current_category.id)
         except Exception:
             # 임베딩/LLM 인프라가 잠깐 죽어도 세션 컨텍스트 조회 자체는 막지 않는다 —
             # available_record_chunks는 참고 정보일 뿐 상태머신 전이에 필요하지 않다.

@@ -75,7 +75,7 @@ async def _build_context(
     ).scalars().all()
 
     try:
-        excerpts = await chunk_search(session.id, category.label)
+        excerpts = await chunk_search(session.id, category.id)
     except Exception:
         excerpts = []
 
@@ -148,16 +148,25 @@ async def select_categories(
     except orchestrator.StateMachineViolation as exc:
         raise _violation_to_409(exc) from exc
 
-    for idx, item in enumerate(payload.categories):
-        db.add(
-            ActivityCategory(
-                session_id=session.id,
-                category_type=item.category_type,
-                custom_label=item.custom_label,
-                order_index=idx,
-            )
+    if not payload.categories:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="at_least_one_category_required")
+
+    new_categories = [
+        ActivityCategory(
+            session_id=session.id,
+            category_type=item.category_type,
+            custom_label=item.custom_label,
+            order_index=idx,
         )
+        for idx, item in enumerate(payload.categories)
+    ]
+    db.add_all(new_categories)
+    await db.flush()
+
     session.status = next_status
+    # 기록물 요청 단계도 인터뷰처럼 카테고리를 하나씩 순회한다 — 그 순회의 시작점을
+    # 여기서 첫 번째(order_index 0) 카테고리로 잡아둔다.
+    session.current_category_id = new_categories[0].id
     await db.commit()
     return StatusRead(status=session.status)
 
@@ -198,25 +207,28 @@ async def skip_records(
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
 ) -> RecordsSkipRead:
+    """현재 카테고리의 기록물 요청을 넘긴다 — 자료를 올렸든 안 올렸든 호출은 동일하다
+    (프론트는 이미 올린 게 있으면 "다음 카테고리로", 없으면 "자료 없이 넘어가기"로 라벨만
+    바꿔 보여준다). 남은 카테고리가 있으면 그쪽 기록물 요청으로, 마지막이었으면 인터뷰를
+    시작한다 (resolve_after_records)."""
     try:
-        next_status = orchestrator.require_simple_transition("records_skip", session.status)
+        orchestrator.require_status("records_skip", session.status, "RECORD_UPLOAD")
     except orchestrator.StateMachineViolation as exc:
         raise _violation_to_409(exc) from exc
 
-    first_category = (
-        await db.execute(
-            select(ActivityCategory)
-            .where(ActivityCategory.session_id == session.id)
-            .order_by(ActivityCategory.order_index)
-        )
-    ).scalars().first()
-    if first_category is None:
+    current_category = await db.get(ActivityCategory, session.current_category_id) if session.current_category_id else None
+    if current_category is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_categories_selected")
 
+    categories = (
+        await db.execute(select(ActivityCategory).where(ActivityCategory.session_id == session.id))
+    ).scalars().all()
+
+    next_status, next_category = orchestrator.resolve_after_records(list(categories), current_category)
     session.status = next_status
-    session.current_category_id = first_category.id
+    session.current_category_id = next_category.id
     await db.commit()
-    return RecordsSkipRead(status=session.status, current_category_id=first_category.id)
+    return RecordsSkipRead(status=session.status, current_category_id=next_category.id)
 
 
 async def _build_pending_turn(

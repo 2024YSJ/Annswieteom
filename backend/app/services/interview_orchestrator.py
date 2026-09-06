@@ -15,15 +15,18 @@ class StateMachineViolation(Exception):
 # 맞대어 실제 카운트를 추적한다.
 MAX_QUESTIONS_PER_CATEGORY = 6
 
-# 기록물(블로그/사진/텍스트) 생성 엔드포인트가 허용되는 세션 상태. RESULT_GENERATE 이후는
-# 제외한다 — 문서 생성이 시작된 뒤에는 그걸 소비할 인터뷰 루프가 더 없어 고아 데이터가 된다.
-RECORD_CREATABLE_STATUSES = ("RECORD_UPLOAD", "INTERVIEWING")
+# 기록물(블로그/사진/텍스트) 생성 엔드포인트가 허용되는 세션 상태. 카테고리별 기록물
+# 요청 단계에서만 첨부 가능하다 — INTERVIEWING 중에는 이미 그 카테고리의 기록물 요청이
+# 끝난 뒤이므로 새 기록물을 더 받지 않는다(2026-09-06: 기록물 첨부를 그 단계 전용
+# UI로 옮기며 인터뷰 중 첨부도 함께 막기로 함).
+RECORD_CREATABLE_STATUSES = ("RECORD_UPLOAD",)
 
 # action -> (요구되는 현재 상태, 전이 후 상태) — 목적지가 하나뿐인 단순 전이만 여기 있다.
+# "records_skip"은 여기 없다 — 목적지가 남은 카테고리 유무에 따라 갈리므로
+# resolve_after_records()가 담당한다 (resolve_after_confirm()과 같은 이유).
 SIMPLE_TRANSITIONS: dict[str, tuple[str, str]] = {
     "period": ("PERIOD_INPUT", "CATEGORY_SELECT"),
     "categories": ("CATEGORY_SELECT", "RECORD_UPLOAD"),
-    "records_skip": ("RECORD_UPLOAD", "INTERVIEWING"),
     "generate": ("RESULT_GENERATE", "RESULT_REVIEW"),
 }
 
@@ -84,3 +87,21 @@ def resolve_after_confirm(
     if nxt is not None:
         return "INTERVIEWING", nxt
     return "RESULT_GENERATE", None
+
+
+def resolve_after_records(
+    categories: list[ActivityCategory],
+    current_category: ActivityCategory,
+) -> tuple[str, ActivityCategory]:
+    """기록물 요청 카테고리를 하나 넘긴 뒤 다음 상태 결정.
+
+    다음 카테고리가 있으면 그 카테고리의 기록물 요청으로(RECORD_UPLOAD 유지),
+    없으면(마지막 카테고리였으면) 인터뷰를 시작하며 첫 번째 카테고리로 되돌아간다 —
+    기록물 요청 순회 동안 current_category_id가 마지막 카테고리까지 옮겨가 있으므로,
+    인터뷰는 다시 order_index 0부터 시작해야 한다.
+    """
+    nxt = next_category(categories, current_category)
+    if nxt is not None:
+        return "RECORD_UPLOAD", nxt
+    ordered = sorted(categories, key=lambda c: c.order_index)
+    return "INTERVIEWING", ordered[0]
