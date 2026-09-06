@@ -76,6 +76,10 @@ async def get_session(
     if current_category is not None:
         try:
             excerpts = await chunk_search(full_session.id, current_category.id)
+            # 소분류는 자체 기록물 요청 단계가 없어 부모 카테고리의 기록물을 공유한다
+            # (2026-09-06 결정) — 자신에게 붙은 기록물이 없으면 부모 풀로 한 번 더 검색.
+            if not excerpts and current_category.parent_category_id is not None:
+                excerpts = await chunk_search(full_session.id, current_category.parent_category_id)
         except Exception:
             # 임베딩/LLM 인프라가 잠깐 죽어도 세션 컨텍스트 조회 자체는 막지 않는다 —
             # available_record_chunks는 참고 정보일 뿐 상태머신 전이에 필요하지 않다.

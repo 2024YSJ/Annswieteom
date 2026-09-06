@@ -9,10 +9,10 @@ def _all_sentences(doc: dict) -> list[dict]:
     most assertions here don't care about paragraph grouping itself."""
     return [s for p in doc["paragraphs"] for s in p["sentences"]]
 
-# part_time과 study 둘 다 고정 질문을 4개씩 정의해둔다(interview_question_bank.py).
-# MAX_QUESTIONS_PER_CATEGORY는 이보다 넉넉하므로(드릴다운 여지를 남기기 위해), 이
-# 헬퍼는 드릴다운 없이(FakeLLMProvider 기본값) 고정 질문만 다 채워 카테고리를
-# 끝내는 것을 기준으로 한다 — 정확히 고정 질문 개수만큼만 돈다.
+# part_time은 고정 질문 4개, study는 5개(2026-09-06: "내용/활용" 질문 추가)를
+# 정의해둔다(interview_question_bank.py). MAX_QUESTIONS_PER_CATEGORY는 둘 다보다
+# 넉넉하므로(드릴다운 여지를 남기기 위해), _advance_to_result_generate는 드릴다운
+# 없이(FakeLLMProvider 기본값) 카테고리 타입별 고정 질문 개수만큼만 돈다.
 FACTS_PER_CATEGORY = len(BASE_QUESTIONS["part_time"])
 
 
@@ -41,6 +41,27 @@ def _do_one_turn(client, headers, session_id):
     return resp.json()
 
 
+def _skip_activity_breakdown(client, headers, session_id):
+    """Every fresh category's very first turn is the "여러 활동 있나요?" check
+    added for sub-categorization (2026-09-06) — answer "no" so the real fixed
+    questions start right after. FakeLLMProvider's extract_activity_items
+    defaults to returning no items, so this never actually splits."""
+    resp = client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["question_source"] == "split_check"
+    resp = client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "하나뿐이에요"}
+    )
+    candidates = resp.json()["candidates"]
+    resp = client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={"confirmations": [{"index": c["index"], "final_text": c["content"], "was_edited": False} for c in candidates]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["category_done"] is False
+
+
 def _advance_to_result_generate(client, headers, category_types=("part_time",)):
     resp = client.post("/api/v1/sessions", headers=headers)
     session_id = resp.json()["id"]
@@ -61,8 +82,9 @@ def _advance_to_result_generate(client, headers, category_types=("part_time",)):
     for _ in category_types:
         client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
 
-    for _ in category_types:
-        for _ in range(FACTS_PER_CATEGORY):
+    for category_type in category_types:
+        _skip_activity_breakdown(client, headers, session_id)
+        for _ in range(len(BASE_QUESTIONS[category_type])):
             _do_one_turn(client, headers, session_id)
 
     ctx = client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
@@ -101,8 +123,9 @@ def test_generate_only_passes_this_category_facts_to_llm(document_client):
 
     # generate_document is called once per category, each with just that category's facts.
     assert len(document_client.fake_llm.document_calls) == 2
-    for fact_ids, tone in document_client.fake_llm.document_calls:
-        assert len(fact_ids) == FACTS_PER_CATEGORY
+    expected_counts = [len(BASE_QUESTIONS["part_time"]), len(BASE_QUESTIONS["study"])]
+    for (fact_ids, tone), expected_count in zip(document_client.fake_llm.document_calls, expected_counts):
+        assert len(fact_ids) == expected_count
         assert tone == "neutral"
 
 
@@ -312,6 +335,40 @@ def test_merge_paragraph_with_next_combines_sentences_and_removes_next(document_
     full_doc = document_client.get(f"/api/v1/sessions/{session_id}/document", headers=headers).json()
     assert len(full_doc["paragraphs"]) == 1
     assert not any(p["id"] == second_id for p in full_doc["paragraphs"])
+
+
+def test_delete_paragraph_removes_it_and_its_sentences(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+    document_client.fake_llm._document_queue = [
+        DraftDocument(paragraphs=[
+            ParagraphDraft(topic="A", sentences=[SentenceWithEvidence(text="문장 A", fact_indices=[0])]),
+            ParagraphDraft(topic="B", sentences=[SentenceWithEvidence(text="문장 B", fact_indices=[1])]),
+        ])
+    ]
+    doc = document_client.post(
+        f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"}
+    ).json()
+    first_id = doc["paragraphs"][0]["id"]
+    second_id = doc["paragraphs"][1]["id"]
+
+    resp = document_client.delete(f"/api/v1/sessions/{session_id}/document/paragraphs/{first_id}", headers=headers)
+    assert resp.status_code == 204
+
+    full_doc = document_client.get(f"/api/v1/sessions/{session_id}/document", headers=headers).json()
+    assert [p["id"] for p in full_doc["paragraphs"]] == [second_id]
+    assert _all_sentences(full_doc) == [s for s in doc["paragraphs"][1]["sentences"]]
+
+
+def test_delete_nonexistent_paragraph_returns_404(document_client):
+    headers = _register_and_login(document_client)
+    session_id = _advance_to_result_generate(document_client, headers)
+    document_client.post(f"/api/v1/sessions/{session_id}/generate", headers=headers, json={"tone": "neutral"})
+
+    resp = document_client.delete(
+        f"/api/v1/sessions/{session_id}/document/paragraphs/00000000-0000-0000-0000-000000000000", headers=headers
+    )
+    assert resp.status_code == 404
 
 
 def test_merge_last_paragraph_with_next_returns_409(document_client):

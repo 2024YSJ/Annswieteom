@@ -97,6 +97,12 @@ export const documentApi = {
       headers: authHeaders(accessToken),
     }),
 
+  deleteParagraph: (sessionId: string, paragraphId: string, accessToken: string) =>
+    request<void>(`/api/v1/sessions/${sessionId}/document/paragraphs/${paragraphId}`, {
+      method: "DELETE",
+      headers: authHeaders(accessToken),
+    }),
+
   finalize: (sessionId: string, accessToken: string) =>
     request<DocumentRead>(`/api/v1/sessions/${sessionId}/document/finalize`, {
       method: "POST",

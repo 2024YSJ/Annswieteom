@@ -160,6 +160,15 @@ class GeminiProvider:
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
 
+    async def extract_activity_items(self, category_label: str, answer_text: str) -> list[str]:
+        prompt = _render("interview_activity_breakdown.jinja", category_label=category_label, answer_text=answer_text)
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            return [str(item) for item in data["items"]]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
     async def extract_categories(
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]:

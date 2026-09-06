@@ -70,12 +70,30 @@ export function InterviewChatThread({
    * visible "생각 중" bubble instead of leaving the question looking frozen. */
   isWaitingForAnswer?: boolean;
 }) {
+  // A category the interview split into sub-categories (parent_category_id
+  // on some other row points at it) becomes a container — it's never
+  // interviewed directly (see interview_confirm's activity_breakdown branch),
+  // so it never has confirmed_facts of its own and must be hidden even if it
+  // briefly matches currentCategoryId right at the split.
+  const parentIds = new Set(categories.map((c) => c.parent_category_id).filter((id): id is string => id !== null));
+
+  function sortKey(c: ActivityCategoryRead): [number, number] {
+    if (!c.parent_category_id) return [c.order_index, -1];
+    const parent = categories.find((p) => p.id === c.parent_category_id);
+    return [parent?.order_index ?? c.order_index, c.order_index];
+  }
+
   // Only categories that have at least one confirmed fact, or are the one
   // currently being interviewed, are shown — categories not reached yet
   // stay invisible (the AI doesn't preview future questions).
   const visibleCategories = categories
+    .filter((c) => !parentIds.has(c.id))
     .slice()
-    .sort((a, b) => a.order_index - b.order_index)
+    .sort((a, b) => {
+      const [aParent, aOwn] = sortKey(a);
+      const [bParent, bOwn] = sortKey(b);
+      return aParent - bParent || aOwn - bOwn;
+    })
     .filter((c) => c.confirmed_facts.length > 0 || c.id === currentCategoryId);
 
   return (

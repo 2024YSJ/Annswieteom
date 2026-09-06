@@ -49,6 +49,15 @@ from app.services.record_pipeline.search import get_chunk_search
 
 router = APIRouter(prefix="/sessions", tags=["interview"])
 
+# 카테고리마다 실제 콘텐츠 질문에 앞서 딱 한 번 묻는 구조적 질문(예산에 포함 안 됨) —
+# "공모전"처럼 포괄적인 카테고리 하나에 서로 다른 활동이 여러 개 섞여 있으면, 근거가
+# 풍부한 하나에 대해서만 질문하고 끝나버리는 문제(2026-09-06)를 막기 위해 소분류로
+# 쪼갤지부터 확인한다. activity_split_checked=True가 되기 전까지만 나온다.
+ACTIVITY_BREAKDOWN_QUESTION = (
+    "이 카테고리 안에 서로 다른 개별 활동이 여러 개 있나요? "
+    "있다면 쉼표나 줄바꿈으로 구분해서 각각 적어주세요. 하나뿐이면 '하나뿐이에요'라고 답해주세요."
+)
+
 
 def _violation_to_409(exc: orchestrator.StateMachineViolation) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
@@ -76,6 +85,11 @@ async def _build_context(
 
     try:
         excerpts = await chunk_search(session.id, category.id)
+        # 소분류는 자체 기록물 요청 단계가 없다(부모의 기록물을 공유하기로 확정,
+        # 2026-09-06) — 소분류 자신에게 붙은 기록물이 없으면 부모 카테고리의 풀로
+        # 한 번 더 검색해본다.
+        if not excerpts and category.parent_category_id is not None:
+            excerpts = await chunk_search(session.id, category.parent_category_id)
     except Exception:
         excerpts = []
 
@@ -232,22 +246,36 @@ async def skip_records(
 
 
 async def _build_pending_turn(
-    llm: LLMProvider, context: InterviewContext, category: ActivityCategory, question_text: str, question_source: str, fact_type_hint: str
+    llm: LLMProvider,
+    context: InterviewContext,
+    category: ActivityCategory,
+    question_text: str,
+    question_source: str,
+    fact_type_hint: str,
+    is_structural: bool = False,
 ) -> dict:
-    try:
-        draft_answer = await llm.draft_answer(context, question_text)
-    except AllProvidersFailedError:
-        # The composer prefill is a convenience, not a required part of the
-        # flow (the user can always type from a blank box), so a failure here
-        # shouldn't block the question itself from being shown.
+    """`is_structural=True` is for the "여러 활동 있나요?" check only — it's
+    routing info, not a content question, so it shouldn't eat into
+    MAX_QUESTIONS_PER_CATEGORY's budget, and there's nothing meaningful for
+    the AI to draft an answer to."""
+    if is_structural:
         draft_answer = ""
+    else:
+        try:
+            draft_answer = await llm.draft_answer(context, question_text)
+        except AllProvidersFailedError:
+            # The composer prefill is a convenience, not a required part of
+            # the flow (the user can always type from a blank box), so a
+            # failure here shouldn't block the question itself from being shown.
+            draft_answer = ""
 
     # Every fresh question — whether the next fixed one, an interleaved
     # drill-down, or a post-base followup — goes through this one function,
     # so incrementing here (rather than at each of its call sites) is the
     # single place that keeps ActivityCategory.questions_asked accurate
     # against MAX_QUESTIONS_PER_CATEGORY.
-    category.questions_asked += 1
+    if not is_structural:
+        category.questions_asked += 1
 
     return {
         "category_id": str(category.id),
@@ -289,22 +317,32 @@ async def interview_ask(
         )
 
     context, confirmed_so_far = await _build_context(db, session, category, chunk_search)
-    answered_fact_types = {f.fact_type for f in confirmed_so_far}
-    base_question = next_base_question(category.category_type, answered_fact_types)
 
-    if base_question is not None:
-        question_text = base_question.text
-        question_source = "base"
-        fact_type_hint = base_question.fact_type
+    is_structural = False
+    if not category.activity_split_checked:
+        question_text = ACTIVITY_BREAKDOWN_QUESTION
+        question_source = "split_check"
+        fact_type_hint = "activity_breakdown"
+        is_structural = True
     else:
-        try:
-            question_text = await llm.followup_question(context)
-        except AllProvidersFailedError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
-        question_source = "followup"
-        fact_type_hint = "followup"
+        answered_fact_types = {f.fact_type for f in confirmed_so_far}
+        base_question = next_base_question(category.category_type, answered_fact_types)
 
-    session.pending_turn = await _build_pending_turn(llm, context, category, question_text, question_source, fact_type_hint)
+        if base_question is not None:
+            question_text = base_question.text
+            question_source = "base"
+            fact_type_hint = base_question.fact_type
+        else:
+            try:
+                question_text = await llm.followup_question(context)
+            except AllProvidersFailedError as exc:
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
+            question_source = "followup"
+            fact_type_hint = "followup"
+
+    session.pending_turn = await _build_pending_turn(
+        llm, context, category, question_text, question_source, fact_type_hint, is_structural=is_structural
+    )
     draft_answer = session.pending_turn["draft_answer"]
     await db.commit()
 
@@ -332,6 +370,29 @@ async def interview_answer(
 
     category = await db.get(ActivityCategory, uuid.UUID(pending["category_id"]))
     context, _ = await _build_context(db, session, category, chunk_search)
+
+    if pending["fact_type_hint"] == "activity_breakdown":
+        # 이 답변은 서사적 사실이 아니라 "이 카테고리를 소분류로 쪼갤지" 라우팅
+        # 정보다 — extract_facts(정직성 가드레일이 적용되는 일반 경로) 대신 전용
+        # 파서를 쓰고, 결과를 candidate_facts와 같은 모양으로 감싸 리뷰 UI를
+        # 그대로 재사용한다(interview_confirm의 activity_breakdown 분기가 처리).
+        try:
+            items = await llm.extract_activity_items(category.label, payload.text)
+        except AllProvidersFailedError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
+
+        candidate_payload = [
+            {"content": item, "fact_type": "activity_breakdown", "based_on": _serialize_based_on(BasedOn(type="generic_pattern"))}
+            for item in items
+        ]
+        session.pending_turn = {**pending, "candidate_facts": candidate_payload}
+        await db.commit()
+        return InterviewAnswerRead(
+            candidates=[
+                FactCandidateRead(index=i, content=c["content"], fact_type=c["fact_type"], based_on=BasedOnRead(**c["based_on"]))
+                for i, c in enumerate(candidate_payload)
+            ]
+        )
 
     try:
         candidates: list[FactCandidate] = await llm.extract_facts(
@@ -401,6 +462,40 @@ async def interview_confirm(
     candidate_facts = pending["candidate_facts"]
     category_id = uuid.UUID(pending["category_id"])
     category = await db.get(ActivityCategory, category_id)
+
+    if pending["fact_type_hint"] == "activity_breakdown":
+        # "활동 목록"은 인용 가능한 서사적 사실이 아니라 라우팅 정보이므로, 일반
+        # ConfirmedFact 삽입/충분성 판단 로직을 완전히 건너뛴다.
+        items = [
+            candidate_facts[c.index]["content"]
+            for c in payload.confirmations
+            if c.include and 0 <= c.index < len(candidate_facts) and candidate_facts[c.index]["content"].strip()
+        ]
+        category.activity_split_checked = True
+        if len(items) >= 2:
+            children = [
+                ActivityCategory(
+                    session_id=session.id,
+                    category_type=category.category_type,
+                    custom_label=item,
+                    parent_category_id=category.id,
+                    order_index=idx,
+                    activity_split_checked=True,
+                )
+                for idx, item in enumerate(items)
+            ]
+            db.add_all(children)
+            await db.flush()
+            category.status = "DONE"  # 컨테이너 — 직접 인터뷰되지 않음
+            session.current_category_id = children[0].id
+        session.pending_turn = None
+        await db.commit()
+        return InterviewConfirmRead(
+            status=session.status,
+            current_category_id=session.current_category_id,
+            category_done=False,
+            confirmed_facts=[],
+        )
 
     inserted: list[ConfirmedFact] = []
     for confirmation in payload.confirmations:

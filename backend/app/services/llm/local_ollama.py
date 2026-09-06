@@ -155,6 +155,15 @@ class LocalOllamaProvider:
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
+    async def extract_activity_items(self, category_label: str, answer_text: str) -> list[str]:
+        prompt = _render("interview_activity_breakdown.jinja", category_label=category_label, answer_text=answer_text)
+        response_text = await self._generate(prompt, timeout=45.0)
+        try:
+            data = json.loads(response_text)
+            return [str(item) for item in data["items"]]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
     async def extract_categories(
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]:

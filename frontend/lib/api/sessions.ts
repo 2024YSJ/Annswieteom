@@ -51,6 +51,7 @@ export interface ActivityCategoryRead {
   custom_label: string | null;
   order_index: number;
   status: "PENDING" | "IN_PROGRESS" | "DONE";
+  parent_category_id: string | null;
   confirmed_facts: ConfirmedFactRead[];
   records: RecordRead[];
 }
@@ -108,7 +109,7 @@ export interface BasedOnRead {
 export interface InterviewAskRead {
   category_id: string;
   question_text: string;
-  question_source: "base" | "followup";
+  question_source: "base" | "followup" | "split_check";
   draft_answer: string;
 }
 

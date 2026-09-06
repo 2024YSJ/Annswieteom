@@ -7,13 +7,14 @@ import pytest
 from app.services import interview_orchestrator as orch
 
 
-def _category(order_index: int) -> object:
+def _category(order_index: int, parent_category_id=None) -> object:
     class _C:
         pass
 
     c = _C()
     c.id = uuid.uuid4()
     c.order_index = order_index
+    c.parent_category_id = parent_category_id
     return c
 
 
@@ -81,3 +82,37 @@ def test_resolve_after_confirm_goes_to_result_generate_when_last_category_done()
     status, nxt = orch.resolve_after_confirm(cats, cats[1], advance=True)
     assert status == "RESULT_GENERATE"
     assert nxt is None
+
+
+def test_walk_order_expands_a_split_category_into_its_children():
+    """A category split into sub-categories (parent_category_id) is a
+    container that's never visited directly — _walk_order must list its
+    children (in the parent's position) instead of the parent itself. (The
+    real flow never calls next_category with the parent as `current` post-split
+    — interview_confirm's activity_breakdown branch jumps straight to the
+    first child — so this is checked at the _walk_order level instead.)"""
+    parent = _category(0)
+    other_top_level = _category(1)
+    child_a = _category(0, parent_category_id=parent.id)
+    child_b = _category(1, parent_category_id=parent.id)
+    cats = [parent, other_top_level, child_a, child_b]
+
+    order = orch._walk_order(cats)
+    assert order == [child_a, child_b, other_top_level]
+
+
+def test_next_category_moves_past_last_child_to_next_top_level_sibling():
+    parent = _category(0)
+    other_top_level = _category(1)
+    child_a = _category(0, parent_category_id=parent.id)
+    child_b = _category(1, parent_category_id=parent.id)
+    cats = [parent, other_top_level, child_a, child_b]
+
+    assert orch.next_category(cats, child_a) is child_b
+    assert orch.next_category(cats, child_b) is other_top_level
+
+
+def test_next_category_unaffected_when_no_categories_have_children():
+    cats = [_category(0), _category(1), _category(2)]
+    assert orch.next_category(cats, cats[0]) is cats[1]
+    assert orch.next_category(cats, cats[2]) is None

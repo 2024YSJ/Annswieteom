@@ -20,6 +20,7 @@ FACT_TYPES = (
     "study_method", "study_goal",
     "role_and_responsibility", "outcome", "context",
     "followup",
+    "content_application", "technical_detail",
 )
 SOURCE_TYPES = ("user_confirmed", "user_edited", "record_cited")
 
