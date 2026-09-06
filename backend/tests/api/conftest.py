@@ -376,6 +376,8 @@ def document_client():
         GapPeriod.__table__,
         ActivityCategory.__table__,
         ConfirmedFact.__table__,
+        Record.__table__,
+        RecordChunk.__table__,
         GeneratedDocument.__table__,
         GeneratedParagraph.__table__,
         GeneratedSentence.__table__,

@@ -105,6 +105,8 @@ export default function SessionChatPage() {
               sessionId={sessionId}
               accessToken={accessToken!}
               mode={recordsDone ? "completed" : "active"}
+              categories={ctx.categories}
+              currentCategoryId={ctx.current_category?.id ?? null}
               composerEvent={composerEvent?.forStep === "records" ? composerEvent : null}
             />
           )}

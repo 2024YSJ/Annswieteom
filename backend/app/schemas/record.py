@@ -18,6 +18,7 @@ class TextRecordCreate(BaseModel):
 
 class RecordRead(BaseModel):
     id: uuid.UUID
+    category_id: uuid.UUID | None
     record_type: str
     source_url: str | None
     platform: str

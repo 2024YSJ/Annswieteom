@@ -9,7 +9,6 @@ from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from app.models.record import Record
 from app.models.record_chunk import RecordChunk
-from app.services.embedding import FallbackEmbedding
 
 
 @dataclass
@@ -21,31 +20,29 @@ class RecordChunkExcerpt:
 
 async def search_relevant_chunks(
     session_id: uuid.UUID,
-    category_label: str,
+    category_id: uuid.UUID,
     top_k: int = 5,
 ) -> list[RecordChunkExcerpt]:
-    """Embed the category label and return the top-k semantically similar chunks.
+    """Return chunks from records the user attached to this specific category.
 
-    Only chunks belonging to this session are considered.
-    The query uses the same embedding model that was used for storage
-    (both via LocalOllamaEmbedding / bge-m3) — see fallback.model_name.
+    Records now carry a direct category_id (set from session.current_category_id
+    at creation time — see app/api/records.py), so this is a plain filter rather
+    than the label-embedding similarity search it used to be; that similarity
+    match was never reliable in practice (always fell back to generic_pattern,
+    per docs/checklists/person_B_frontend_backend/03_records_feature.md).
     """
-    embedding_provider = FallbackEmbedding()
-    [query_vector] = await embedding_provider.embed([category_label])
-
     async with AsyncSessionLocal() as db:
-        # Subquery: record IDs belonging to this session
-        record_ids_subq = select(Record.id).where(Record.session_id == session_id).scalar_subquery()
+        # Subquery: record IDs belonging to this session AND this category
+        record_ids_subq = (
+            select(Record.id)
+            .where(Record.session_id == session_id, Record.category_id == category_id)
+            .scalar_subquery()
+        )
 
         stmt = (
             select(RecordChunk)
-            .where(
-                RecordChunk.record_id.in_(record_ids_subq),
-                RecordChunk.embedding.is_not(None),
-                # Only compare chunks embedded with the same model
-                RecordChunk.embedding_model == embedding_provider.model_name,
-            )
-            .order_by(RecordChunk.embedding.cosine_distance(query_vector))
+            .where(RecordChunk.record_id.in_(record_ids_subq))
+            .order_by(RecordChunk.created_at)
             .limit(top_k)
         )
         result = await db.execute(stmt)

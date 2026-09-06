@@ -46,6 +46,7 @@ class ActivityCategory(Base):
     session: Mapped["Session"] = relationship("Session", back_populates="categories", foreign_keys=[session_id])
     confirmed_facts: Mapped[list["ConfirmedFact"]] = relationship("ConfirmedFact", back_populates="category", cascade="all, delete-orphan")
     generated_sentences: Mapped[list["GeneratedSentence"]] = relationship("GeneratedSentence", back_populates="category", cascade="all, delete-orphan")
+    records: Mapped[list["Record"]] = relationship("Record", back_populates="category", order_by="Record.created_at")
 
     @property
     def label(self) -> str:

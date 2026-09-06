@@ -10,7 +10,6 @@ import {
 } from "@/lib/api-client";
 import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
-import { useRecordAttach } from "@/lib/use-record-attach";
 import { InterviewChatThread, type CandidateDraft } from "@/components/InterviewChatThread";
 import type { ComposerEvent } from "@/components/ChatComposer";
 
@@ -113,16 +112,6 @@ export function InterviewSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composerEvent?.nonce]);
 
-  const { error: attachError } = useRecordAttach(
-    sessionId,
-    accessToken,
-    composerEvent?.forStep === "interview" ? composerEvent : null,
-    () => {
-      // Nothing to render locally — the next /interview/ask call re-runs
-      // chunk_search and will naturally pick up the newly attached record.
-    },
-  );
-
   function updateCandidate(index: number, patch: Partial<Omit<CandidateDraft, "candidate">>) {
     setCandidates((prev) => (prev ? prev.map((c, i) => (i === index ? { ...c, ...patch } : c)) : prev));
   }
@@ -185,7 +174,7 @@ export function InterviewSection({
         isWaitingForAnswer={isSubmitting && candidates === null}
       />
 
-      {(error || attachError) && <p style={{ color: "crimson" }}>{error ?? attachError}</p>}
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
     </div>
   );
 }

@@ -6,6 +6,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 from app.schemas.interview import ConfirmedFactRead, GapPeriodRead
+from app.schemas.record import RecordRead
 
 
 class SessionCreate(BaseModel):
@@ -32,6 +33,7 @@ class ActivityCategoryRead(BaseModel):
     order_index: int
     status: str
     confirmed_facts: list[ConfirmedFactRead] = []
+    records: list[RecordRead] = []
 
     model_config = {"from_attributes": True}
 

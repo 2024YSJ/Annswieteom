@@ -1,4 +1,5 @@
 import { authHeaders, request } from "./client";
+import type { RecordRead } from "./records";
 
 export type SessionStatus =
   | "PERIOD_INPUT"
@@ -51,6 +52,7 @@ export interface ActivityCategoryRead {
   order_index: number;
   status: "PENDING" | "IN_PROGRESS" | "DONE";
   confirmed_facts: ConfirmedFactRead[];
+  records: RecordRead[];
 }
 
 export interface CategoryInput {

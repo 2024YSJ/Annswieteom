@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Grows the composer with the text instead of staying single-line — capped so
 // a very long paste doesn't push the fixed bottom bar to an unreasonable
@@ -9,10 +9,7 @@ const TEXTAREA_MAX_HEIGHT_PX = 160;
 
 export type ActiveStep = "period" | "categories" | "records" | "interview";
 
-export type ComposerEvent =
-  | { kind: "text"; value: string; nonce: number; forStep: ActiveStep }
-  | { kind: "url"; value: string; nonce: number; forStep: ActiveStep }
-  | { kind: "file"; file: File; nonce: number; forStep: ActiveStep };
+export type ComposerEvent = { kind: "text"; value: string; nonce: number; forStep: ActiveStep };
 
 /** The single shared chat input for the whole session screen (spec:
  * docs/specs/phase5_shared_chat_composer.md). Pure input-capture — it never
@@ -22,12 +19,11 @@ export type ComposerEvent =
  * than just forward it, and Records should not be special-cased relative to
  * them.
  *
- * Records and Interview both get the attach (📎) button — a record can now be
- * attached at any point during the interview, not just the dedicated Records
- * step. Period/Categories answers are always plain free text.
+ * The record-attach (📎 blog URL / image) control used to live here too, but
+ * it now lives in RecordsSection next to its own skip/advance button instead
+ * — records are only attachable during that dedicated step (2026-09-06), so
+ * there's no other step left for a shared attach control to serve.
  */
-const ATTACH_ENABLED_STEPS = new Set<ActiveStep>(["records", "interview"]);
-
 export function ChatComposer({
   activeStep,
   onSend,
@@ -44,11 +40,7 @@ export function ChatComposer({
   prefillText?: string | null;
 }) {
   const [text, setText] = useState("");
-  const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
-  const [isUrlFormOpen, setIsUrlFormOpen] = useState(false);
-  const [urlDraft, setUrlDraft] = useState("");
   const nonceRef = useRef(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Re-measure on every text change, not just onChange — `text` also changes
@@ -63,9 +55,9 @@ export function ChatComposer({
 
   // Note: this component is remounted (via `key={activeStep}` in the
   // orchestrator) whenever the active step changes, so any uncommitted draft
-  // text/popover state is naturally discarded instead of needing an effect —
-  // stray keystrokes meant for one step's question can never leak into the
-  // next step's context.
+  // text is naturally discarded instead of needing an effect — stray
+  // keystrokes meant for one step's question can never leak into the next
+  // step's context.
 
   // Adopt a new prefill the moment it arrives — "adjust state during render"
   // instead of an effect, so there's no extra render/flash before the box
@@ -85,23 +77,6 @@ export function ChatComposer({
     setText("");
   }
 
-  function sendUrl(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (urlDraft.trim().length === 0) return;
-    nonceRef.current += 1;
-    onSend({ kind: "url", value: urlDraft, nonce: nonceRef.current, forStep: activeStep });
-    setUrlDraft("");
-    setIsUrlFormOpen(false);
-  }
-
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = ""; // allow re-selecting the same file later
-    if (!file) return;
-    nonceRef.current += 1;
-    onSend({ kind: "file", file, nonce: nonceRef.current, forStep: activeStep });
-  }
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {prefillText && (
@@ -110,18 +85,7 @@ export function ChatComposer({
           AI가 미리 써봤어요 · 이어 쓰거나 고쳐서 보내세요
         </div>
       )}
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", position: "relative" }}>
-        {ATTACH_ENABLED_STEPS.has(activeStep) && (
-          <button
-            type="button"
-            onClick={() => setIsAttachMenuOpen((v) => !v)}
-            title="첨부"
-            aria-label="첨부"
-            style={{ flexShrink: 0 }}
-          >
-            📎
-          </button>
-        )}
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
         {prefillText && (
           <button
             type="button"
@@ -160,75 +124,7 @@ export function ChatComposer({
         <button type="button" onClick={sendText} disabled={disabled || text.trim().length === 0} style={{ flexShrink: 0 }}>
           보내기
         </button>
-
-        {ATTACH_ENABLED_STEPS.has(activeStep) && isAttachMenuOpen && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: "100%",
-              left: 0,
-              marginBottom: 4,
-              background: "var(--surface-strong)",
-              color: "var(--surface-strong-text)",
-              border: "1px solid var(--border-strong)",
-              borderRadius: 8,
-              padding: 4,
-              display: "flex",
-              flexDirection: "column",
-              zIndex: 1,
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setIsUrlFormOpen(true);
-                setIsAttachMenuOpen(false);
-              }}
-            >
-              블로그 URL 추가
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                fileInputRef.current?.click();
-                setIsAttachMenuOpen(false);
-              }}
-            >
-              이미지 추가
-            </button>
-          </div>
-        )}
-        {ATTACH_ENABLED_STEPS.has(activeStep) && (
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={handleFileChange}
-            disabled={disabled}
-            style={{ display: "none" }}
-          />
-        )}
       </div>
-
-      {ATTACH_ENABLED_STEPS.has(activeStep) && isUrlFormOpen && (
-        <form onSubmit={sendUrl} style={{ display: "flex", gap: 8 }}>
-          <input
-            type="url"
-            required
-            autoFocus
-            placeholder="https://blog.naver.com/..."
-            value={urlDraft}
-            onChange={(e) => setUrlDraft(e.target.value)}
-            style={{ flex: 1, minWidth: 0 }}
-          />
-          <button type="submit" disabled={disabled}>
-            등록
-          </button>
-          <button type="button" onClick={() => setIsUrlFormOpen(false)}>
-            취소
-          </button>
-        </form>
-      )}
     </div>
   );
 }
