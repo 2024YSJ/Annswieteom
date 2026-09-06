@@ -108,6 +108,7 @@ function ParagraphSection({
   onRenameTopic,
   onToggleConfirmed,
   onMergeWithNext,
+  onDelete,
   disabled,
 }: {
   paragraph: ParagraphRead;
@@ -119,6 +120,7 @@ function ParagraphSection({
   onRenameTopic: (topic: string) => Promise<void>;
   onToggleConfirmed: () => Promise<void>;
   onMergeWithNext: () => Promise<void>;
+  onDelete: () => Promise<void>;
   disabled: boolean;
 }) {
   const [isEditingTopic, setIsEditingTopic] = useState(false);
@@ -168,6 +170,16 @@ function ParagraphSection({
                 다음 문단과 합치기
               </button>
             )}
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                if (window.confirm("이 문단을 삭제할까요? 안의 문장이 전부 사라지고 되돌릴 수 없습니다.")) onDelete();
+              }}
+              style={{ fontSize: 12, color: "crimson" }}
+            >
+              문단 삭제
+            </button>
           </>
         )}
       </div>
@@ -339,6 +351,19 @@ export function ResultSection({
     }
   }
 
+  async function handleDeleteParagraph(paragraphId: string) {
+    setError(null);
+    setIsBusy(true);
+    try {
+      await documentApi.deleteParagraph(sessionId, paragraphId, accessToken);
+      await refetchDocument();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleFinalize() {
     setError(null);
     setIsBusy(true);
@@ -414,6 +439,7 @@ export function ResultSection({
           onRenameTopic={(topic) => handleRenameTopic(paragraph.id, topic)}
           onToggleConfirmed={() => handleToggleConfirmed(paragraph)}
           onMergeWithNext={() => handleMergeWithNext(paragraph.id)}
+          onDelete={() => handleDeleteParagraph(paragraph.id)}
         />
       ))}
 

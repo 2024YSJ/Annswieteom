@@ -29,6 +29,7 @@ BASE_QUESTIONS: dict[str, list[BaseQuestion]] = {
         BaseQuestion("freelance_freq", "frequency", "이 일을 얼마나 자주, 어느 정도 기간 동안 하셨나요?"),
         BaseQuestion("freelance_hardship", "hardship_and_coping", "일감을 구하거나 진행하면서 힘들었던 점은 무엇이었고, 어떻게 대응하셨나요?"),
         BaseQuestion("freelance_outcome", "outcome", "결과물이나 성과(수입, 포트폴리오, 후기 등)가 있다면 무엇인가요?"),
+        BaseQuestion("freelance_technical", "technical_detail", "구체적으로 어떤 기술이나 방법을 사용해서 작업하셨나요?"),
     ],
     "volunteer": [
         BaseQuestion("volunteer_org", "context", "어떤 단체나 활동에서, 어떤 역할로 봉사하셨나요?"),
@@ -41,12 +42,17 @@ BASE_QUESTIONS: dict[str, list[BaseQuestion]] = {
         BaseQuestion("study_method", "study_method", "어떤 방식으로 공부하셨나요? (독학/학원/스터디 등과 하루 루틴)"),
         BaseQuestion("study_hardship", "hardship_and_coping", "공부하면서 가장 힘들었던 점은 무엇이었고, 어떻게 극복하셨나요?"),
         BaseQuestion("study_achievement", "achievement", "결과(합격, 점수, 완주 등)나 배운 점이 있다면 무엇인가요?"),
+        # "무엇을 공부했다"까지만 나오고 정작 그 내용/실전 활용은 안 나오는 사례가 많아서
+        # (2026-09-06: CS336 강의·Claude Code 가이드를 봤다고만 나오고 구체적으로 뭘
+        # 배웠는지, 어떻게 써봤는지가 없던 실제 사례) 별도 슬롯으로 추가.
+        BaseQuestion("study_content_application", "content_application", "구체적으로 어떤 내용을 배우셨고, 그걸 실제로 어떻게 활용해보셨나요? (예: 어떤 프로젝트나 문제에 적용한 구체적 사례)"),
     ],
     "project": [
         BaseQuestion("project_what", "task", "어떤 프로젝트였나요? 그 안에서 맡은 역할은 무엇이었나요?"),
         BaseQuestion("project_freq", "frequency", "얼마나 자주, 어느 정도 기간 동안 진행하셨나요?"),
         BaseQuestion("project_hardship", "hardship_and_coping", "진행하면서 힘들었던 점은 무엇이었고, 어떻게 해결하셨나요?"),
         BaseQuestion("project_outcome", "outcome", "결과물이나 성과가 있다면 무엇인가요?"),
+        BaseQuestion("project_technical", "technical_detail", "구체적으로 어떤 기술/도구를 사용하셨고, 어떻게 활용하셨나요?"),
     ],
     "caregiving": [
         BaseQuestion("caregiving_who", "context", "누구를, 어떤 상황에서 돌보셨나요?"),
@@ -65,6 +71,7 @@ BASE_QUESTIONS: dict[str, list[BaseQuestion]] = {
         BaseQuestion("other_reason", "motivation", "이걸 하게 된 계기나 이유가 있으셨나요?"),
         BaseQuestion("other_hardship", "hardship_and_coping", "그 과정에서 힘들었던 점과 어떻게 대응하셨는지 궁금해요."),
         BaseQuestion("other_achievement", "achievement", "돌아보면 얻은 것이 있다면 무엇인가요?"),
+        BaseQuestion("other_detail", "content_application", "그 활동에서 구체적으로 어떤 내용을 다루셨거나 어떤 방식으로 진행하셨나요?"),
     ],
 }
 

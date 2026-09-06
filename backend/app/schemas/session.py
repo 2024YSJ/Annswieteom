@@ -32,6 +32,7 @@ class ActivityCategoryRead(BaseModel):
     custom_label: str | None
     order_index: int
     status: str
+    parent_category_id: uuid.UUID | None = None
     confirmed_facts: list[ConfirmedFactRead] = []
     records: list[RecordRead] = []
 

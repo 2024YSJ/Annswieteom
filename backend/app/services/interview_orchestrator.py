@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from app.models.activity_category import ActivityCategory
 
 
@@ -64,8 +66,28 @@ def require_interviewing(current_status: str) -> None:
         )
 
 
+def _walk_order(categories: list[ActivityCategory]) -> list[ActivityCategory]:
+    """Flattens categories into visiting order, expanding any category that
+    has been split into sub-categories (parent_category_id) into its children
+    at the parent's own position — the parent itself (a container once split)
+    is never visited directly. A category with no children still visits
+    itself, unchanged from before sub-categories existed.
+    """
+    by_parent: dict[uuid.UUID | None, list[ActivityCategory]] = {}
+    for c in categories:
+        by_parent.setdefault(c.parent_category_id, []).append(c)
+    for children in by_parent.values():
+        children.sort(key=lambda c: c.order_index)
+
+    order: list[ActivityCategory] = []
+    for top in by_parent.get(None, []):
+        children = by_parent.get(top.id, [])
+        order.extend(children if children else [top])
+    return order
+
+
 def next_category(categories: list[ActivityCategory], current: ActivityCategory) -> ActivityCategory | None:
-    ordered = sorted(categories, key=lambda c: c.order_index)
+    ordered = _walk_order(categories)
     ids = [c.id for c in ordered]
     idx = ids.index(current.id)
     return ordered[idx + 1] if idx + 1 < len(ordered) else None

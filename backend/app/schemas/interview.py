@@ -104,7 +104,7 @@ class InterviewAskRead(BaseModel):
 
     category_id: uuid.UUID
     question_text: str
-    question_source: Literal["base", "followup"]
+    question_source: Literal["base", "followup", "split_check"]
     draft_answer: str
 
 

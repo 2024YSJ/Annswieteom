@@ -37,7 +37,7 @@ from app.services.llm.base import (
 )
 
 _DEFAULT_PERIOD_SUGGESTION = object()  # sentinel: "use the built-in default", distinct from an explicit None
-from app.services.record_pipeline.citation import get_fact_citation
+from app.services.record_pipeline.citation import get_fact_citations
 from app.services.record_pipeline.search import get_chunk_search
 from app.services.storage import get_storage
 
@@ -96,6 +96,7 @@ class FakeLLMProvider:
         category_suggestions: list | None = None,
         period_suggestion=_DEFAULT_PERIOD_SUGGESTION,
         drilldown_decisions: list[DrilldownDecision] | None = None,
+        activity_items: list[list[str]] | None = None,
     ):
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
@@ -105,6 +106,8 @@ class FakeLLMProvider:
         self._category_suggestions = category_suggestions
         self._period_suggestion = period_suggestion
         self._drilldown_queue = list(drilldown_decisions) if drilldown_decisions else None
+        self._activity_items_queue = list(activity_items) if activity_items else None
+        self.activity_items_calls: list[tuple[str, str]] = []
         self.extract_facts_calls: list[tuple[str, str, str]] = []
         self.followup_calls: list[str] = []
         self.sufficiency_calls: list[str] = []
@@ -127,6 +130,12 @@ class FakeLLMProvider:
         if not answer_text.strip():
             return []
         return [FactCandidate(content=answer_text, fact_type=fact_type_hint, based_on=BasedOn(type="generic_pattern"))]
+
+    async def extract_activity_items(self, category_label, answer_text):
+        self.activity_items_calls.append((category_label, answer_text))
+        if self._activity_items_queue:
+            return self._activity_items_queue.pop(0)
+        return []
 
     async def followup_question(self, context):
         self.followup_calls.append(context.category_label)
@@ -401,14 +410,14 @@ def document_client():
     async def override_chunk_search(session_id, label):
         return []
 
-    async def override_fact_citation(fact_id):
-        return None
+    async def override_fact_citations(fact_ids, db):
+        return {}
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
     app.dependency_overrides[get_embedding_provider] = lambda: fake_embedding
     app.dependency_overrides[get_chunk_search] = lambda: override_chunk_search
-    app.dependency_overrides[get_fact_citation] = lambda: override_fact_citation
+    app.dependency_overrides[get_fact_citations] = lambda: override_fact_citations
     try:
         with TestClient(app) as test_client:
             test_client.fake_llm = fake_llm

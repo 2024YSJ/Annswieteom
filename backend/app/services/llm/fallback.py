@@ -108,6 +108,14 @@ class FallbackProvider:
                 self._log_failure("judge_drilldown", provider, exc)
         raise AllProvidersFailedError()
 
+    async def extract_activity_items(self, category_label: str, answer_text: str) -> list[str]:
+        for provider in self.providers:
+            try:
+                return await provider.extract_activity_items(category_label, answer_text)
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("extract_activity_items", provider, exc)
+        raise AllProvidersFailedError()
+
     async def extract_categories(
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]:

@@ -35,6 +35,10 @@ export function RecordsSection({
   // just-uploaded record shows immediately without waiting for a refetch,
   // while a page reload still shows everything via `category.records`.
   const [newRecordIdsByCategory, setNewRecordIdsByCategory] = useState<Record<string, string[]>>({});
+  // Deleted this render session — filtered out of both `category.records` and
+  // `newRecordIdsByCategory` below so a delete disappears immediately without
+  // waiting for the session refetch that follows it.
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSkipping, setIsSkipping] = useState(false);
@@ -155,9 +159,14 @@ export function RecordsSection({
     .filter((c) => c.order_index <= currentCategory.order_index);
 
   function recordIdsFor(category: ActivityCategoryRead): string[] {
-    const fromBackend = category.records.map((r) => r.id);
-    const fresh = newRecordIdsByCategory[category.id] ?? [];
+    const fromBackend = category.records.map((r) => r.id).filter((id) => !removedIds.has(id));
+    const fresh = (newRecordIdsByCategory[category.id] ?? []).filter((id) => !removedIds.has(id));
     return [...fromBackend, ...fresh.filter((id) => !fromBackend.includes(id))];
+  }
+
+  async function handleDeleteRecord(recordId: string) {
+    setRemovedIds((prev) => new Set(prev).add(recordId));
+    await queryClient.invalidateQueries({ queryKey: queryKeys.session(sessionId) });
   }
 
   const currentRecordIds = recordIdsFor(currentCategory);
@@ -177,7 +186,13 @@ export function RecordsSection({
               {recordIds.length > 0 ? (
                 <ul style={{ margin: 0, paddingLeft: 20 }}>
                   {recordIds.map((id) => (
-                    <RecordStatusRow key={id} sessionId={sessionId} recordId={id} accessToken={accessToken} />
+                    <RecordStatusRow
+                      key={id}
+                      sessionId={sessionId}
+                      recordId={id}
+                      accessToken={accessToken}
+                      onDeleted={() => handleDeleteRecord(id)}
+                    />
                   ))}
                 </ul>
               ) : (
@@ -202,7 +217,13 @@ export function RecordsSection({
               <ChatBubble side="left">
                 <ul style={{ margin: 0, paddingLeft: 20 }}>
                   {currentRecordIds.map((id) => (
-                    <RecordStatusRow key={id} sessionId={sessionId} recordId={id} accessToken={accessToken} />
+                    <RecordStatusRow
+                      key={id}
+                      sessionId={sessionId}
+                      recordId={id}
+                      accessToken={accessToken}
+                      onDeleted={() => handleDeleteRecord(id)}
+                    />
                   ))}
                 </ul>
                 <p style={{ fontSize: 13, color: "var(--muted-text)", marginTop: 8, marginBottom: 0 }}>

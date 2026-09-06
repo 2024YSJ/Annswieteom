@@ -26,7 +26,11 @@ def _create_session(client, headers):
     return resp.json()["id"]
 
 
-def _advance_to_first_category(client, headers, session_id, category_types=("part_time",)):
+def _advance_to_interviewing(client, headers, session_id, category_types=("part_time",)):
+    """Period -> categories -> records/skip, landing at INTERVIEWING with the
+    first category's "여러 활동 있나요?" check still unanswered — use this
+    directly (instead of _advance_to_first_category) when a test needs to
+    drive that check itself."""
     resp = client.post(
         f"/api/v1/sessions/{session_id}/period",
         headers=headers,
@@ -51,6 +55,42 @@ def _advance_to_first_category(client, headers, session_id, category_types=("par
         assert resp.status_code == 200
     assert resp.json()["status"] == "INTERVIEWING"
     return resp.json()["current_category_id"]
+
+
+def _advance_to_first_category(client, headers, session_id, category_types=("part_time",)):
+    _advance_to_interviewing(client, headers, session_id, category_types=category_types)
+
+    # Positions the session at the first category's first *real* question —
+    # callers of this helper assert against BASE_QUESTIONS directly and
+    # predate the "여러 활동 있나요?" check, so skip it here rather than in
+    # every individual test.
+    _skip_activity_breakdown(client, headers, session_id)
+    ctx = client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    return ctx["current_category"]["id"]
+
+
+def _skip_activity_breakdown(client, headers, session_id):
+    """Every fresh category's very first turn is the "여러 활동 있나요?" check
+    added for sub-categorization (2026-09-06) — answer "no" so the real fixed
+    questions start right after. FakeLLMProvider's extract_activity_items
+    defaults to returning no items, so this never actually splits."""
+    resp = client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["question_source"] == "split_check"
+
+    resp = client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "하나뿐이에요"}
+    )
+    assert resp.status_code == 200
+    candidates = resp.json()["candidates"]
+
+    resp = client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={"confirmations": [{"index": c["index"], "final_text": c["content"], "was_edited": False} for c in candidates]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["category_done"] is False
 
 
 def _do_turn(client, headers, session_id, answer_text="답변입니다", was_edited=False, include=True):
@@ -236,6 +276,108 @@ def test_deeper_category_specific_questions_for_study_and_part_time_differ(sessi
     assert part_time_first_question != BASE_QUESTIONS["study"][0].text
 
 
+def test_activity_breakdown_splits_category_into_children_and_walks_into_them(session_client):
+    """A broad category (e.g. "공모전") containing several distinct activities
+    (e.g. two different contests) must be split into separate sub-categories
+    so each gets its own fixed-question cycle instead of sharing one
+    answered-fact-type tracker (2026-09-06)."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    session_client.fake_llm._activity_items_queue = [["CS336 강의 학습", "Claude Code 가이드 학습"]]
+    _advance_to_interviewing(session_client, headers, session_id, category_types=("study",))
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["question_source"] == "split_check"
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer",
+        headers=headers,
+        json={"text": "CS336 강의랑 Claude Code 가이드요"},
+    )
+    candidates = resp.json()["candidates"]
+    assert [c["content"] for c in candidates] == ["CS336 강의 학습", "Claude Code 가이드 학습"]
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={"confirmations": [{"index": c["index"], "final_text": c["content"], "was_edited": False} for c in candidates]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "INTERVIEWING"
+    assert body["category_done"] is False
+    assert body["confirmed_facts"] == []  # routing info, not a citable fact
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    study = next(c for c in ctx["categories"] if c["category_type"] == "study" and c["parent_category_id"] is None)
+    assert study["status"] == "DONE"  # container — never interviewed directly
+    children = [c for c in ctx["categories"] if c["parent_category_id"] == study["id"]]
+    assert [c["custom_label"] for c in children] == ["CS336 강의 학습", "Claude Code 가이드 학습"]
+    assert ctx["current_category"]["id"] == children[0]["id"]
+
+    # The child gets its own fixed-question cycle, including the new
+    # "내용/활용" question added for `study` — not a continuation of the parent's.
+    first_question = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert first_question["question_source"] == "base"
+    assert first_question["question_text"] == BASE_QUESTIONS["study"][0].text
+
+
+def test_activity_breakdown_with_a_single_item_does_not_split(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("study",))
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    assert len(ctx["categories"]) == 1  # _advance_to_first_category's own "하나뿐이에요" didn't split
+    assert ctx["categories"][0]["status"] != "DONE"
+
+    ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert ask["question_source"] == "base"
+    assert ask["question_text"] == BASE_QUESTIONS["study"][0].text
+
+
+def test_child_category_falls_back_to_parents_records_when_it_has_none(session_client):
+    """Sub-categories don't get their own record-request step (records are
+    only attachable during RECORD_UPLOAD, which is long over by the time a
+    split happens mid-interview) — they share the parent's uploaded records
+    instead (2026-09-06 decision)."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    session_client.fake_llm._activity_items_queue = [["CS336 강의 학습", "Claude Code 가이드 학습"]]
+    _advance_to_interviewing(session_client, headers, session_id, category_types=("study",))
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    parent_id = ctx["categories"][0]["id"]
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "둘 다요"}
+    )
+    candidates = resp.json()["candidates"]
+    session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={"confirmations": [{"index": c["index"], "final_text": c["content"], "was_edited": False} for c in candidates]},
+    )
+
+    seen_category_ids = []
+
+    async def fake_chunk_search(session_id_arg, category_id):
+        seen_category_ids.append(str(category_id))
+        if str(category_id) == parent_id:
+            return [RecordChunkExcerpt(chunk_id=uuid.uuid4(), text="부모 카테고리에 올린 자료", published_at=None)]
+        return []
+
+    app.dependency_overrides[get_chunk_search] = lambda: fake_chunk_search
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    assert len(ctx["available_record_chunks"]) == 1
+    assert ctx["available_record_chunks"][0]["text"] == "부모 카테고리에 올린 자료"
+    # Child's own id was tried first (and came back empty) before falling back to the parent's.
+    assert ctx["current_category"]["id"] in seen_category_ids
+    assert parent_id in seen_category_ids
+
+
 def test_two_categories_second_starts_fresh_after_first_done(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
@@ -255,7 +397,10 @@ def test_two_categories_second_starts_fresh_after_first_done(session_client):
     part_time = next(c for c in ctx["categories"] if c["category_type"] == "part_time")
     assert part_time["status"] == "DONE"
 
-    # The new category asks its own first base question, not a continuation of part_time's.
+    # The new category asks its own first base question, not a continuation of
+    # part_time's — but first it gets its own "여러 활동 있나요?" check, same as
+    # every other freshly-entered category.
+    _skip_activity_breakdown(session_client, headers, session_id)
     ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
     assert ask["question_text"] == BASE_QUESTIONS["study"][0].text
 

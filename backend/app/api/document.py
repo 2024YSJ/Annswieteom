@@ -31,7 +31,7 @@ from app.services.embedding import get_embedding_provider
 from app.services.embedding.base import EmbeddingProvider
 from app.services.llm.base import LLMProvider
 from app.services.llm.fallback import get_llm_provider
-from app.services.record_pipeline.citation import get_fact_citation
+from app.services.record_pipeline.citation import get_fact_citations
 
 router = APIRouter(prefix="/sessions", tags=["document"])
 
@@ -73,13 +73,16 @@ async def _get_owned_paragraph(session: SessionModel, paragraph_id: uuid.UUID, d
     return paragraph
 
 
-async def _sentence_read(sentence: GeneratedSentence, db: AsyncSession, fact_citation) -> SentenceRead:
+async def _sentence_read(sentence: GeneratedSentence, db: AsyncSession, fact_citations) -> SentenceRead:
+    fact_ids = [uuid.UUID(fact_id_str) for fact_id_str in sentence.evidence_fact_ids]
+    citations = await fact_citations(fact_ids, db)
+
     evidence: list[EvidenceRead] = []
-    for fact_id_str in sentence.evidence_fact_ids:
-        fact = await db.get(ConfirmedFact, uuid.UUID(fact_id_str))
+    for fact_id in fact_ids:
+        fact = await db.get(ConfirmedFact, fact_id)
         if fact is None:
             continue
-        citation = await fact_citation(fact.id)
+        citation = citations.get(fact_id)
         evidence.append(EvidenceRead(
             fact_id=fact.id,
             content=fact.content,
@@ -96,7 +99,7 @@ async def _sentence_read(sentence: GeneratedSentence, db: AsyncSession, fact_cit
     )
 
 
-async def _paragraph_read(paragraph: GeneratedParagraph, db: AsyncSession, fact_citation) -> ParagraphRead:
+async def _paragraph_read(paragraph: GeneratedParagraph, db: AsyncSession, fact_citations) -> ParagraphRead:
     stmt = (
         select(GeneratedSentence)
         .where(GeneratedSentence.paragraph_id == paragraph.id)
@@ -108,18 +111,18 @@ async def _paragraph_read(paragraph: GeneratedParagraph, db: AsyncSession, fact_
         order_index=paragraph.order_index,
         topic=paragraph.topic,
         user_confirmed=paragraph.user_confirmed,
-        sentences=[await _sentence_read(s, db, fact_citation) for s in sentences],
+        sentences=[await _sentence_read(s, db, fact_citations) for s in sentences],
     )
 
 
-async def _document_read(document: GeneratedDocument, db: AsyncSession, fact_citation) -> DocumentRead:
+async def _document_read(document: GeneratedDocument, db: AsyncSession, fact_citations) -> DocumentRead:
     para_stmt = (
         select(GeneratedParagraph)
         .where(GeneratedParagraph.document_id == document.id)
         .order_by(GeneratedParagraph.order_index)
     )
     paragraphs = (await db.execute(para_stmt)).scalars().all()
-    paragraph_reads = [await _paragraph_read(p, db, fact_citation) for p in paragraphs]
+    paragraph_reads = [await _paragraph_read(p, db, fact_citations) for p in paragraphs]
 
     # Sentences pre-dating the paragraph_id column (or otherwise orphaned)
     # each become their own single-sentence paragraph, so old documents
@@ -133,7 +136,7 @@ async def _document_read(document: GeneratedDocument, db: AsyncSession, fact_cit
     for s in orphan_sentences:
         paragraph_reads.append(ParagraphRead(
             id=s.id, order_index=s.order_index, topic="", user_confirmed=False,
-            sentences=[await _sentence_read(s, db, fact_citation)],
+            sentences=[await _sentence_read(s, db, fact_citations)],
         ))
     paragraph_reads.sort(key=lambda p: p.order_index)
 
@@ -153,7 +156,7 @@ async def generate_document(
     db: AsyncSession = Depends(get_db),
     llm: LLMProvider = Depends(get_llm_provider),
     embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> DocumentRead:
     try:
         next_status = orchestrator.require_simple_transition("generate", session.status)
@@ -166,19 +169,19 @@ async def generate_document(
     session.status = next_status
     await db.commit()
 
-    return await _document_read(document, db, fact_citation)
+    return await _document_read(document, db, fact_citations)
 
 
 @router.get("/{session_id}/document", response_model=DocumentRead)
 async def get_document(
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> DocumentRead:
     document = await _get_latest_document(session.id, db)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document_not_found")
-    return await _document_read(document, db, fact_citation)
+    return await _document_read(document, db, fact_citations)
 
 
 @router.post("/{session_id}/document/regenerate", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
@@ -188,7 +191,7 @@ async def regenerate_document(
     db: AsyncSession = Depends(get_db),
     llm: LLMProvider = Depends(get_llm_provider),
     embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> DocumentRead:
     try:
         orchestrator.require_status("regenerate", session.status, "RESULT_REVIEW")
@@ -202,7 +205,7 @@ async def regenerate_document(
     document = await document_generator.generate_full_document(
         session.id, payload.tone, db, llm, version=latest.version + 1, embedding_provider=embedding_provider
     )
-    return await _document_read(document, db, fact_citation)
+    return await _document_read(document, db, fact_citations)
 
 
 @router.patch("/{session_id}/document/sentences/{sentence_id}", response_model=SentenceRead)
@@ -211,7 +214,7 @@ async def update_sentence(
     payload: SentenceUpdate,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> SentenceRead:
     sentence = await _get_owned_sentence(session, sentence_id, db)
 
@@ -222,7 +225,7 @@ async def update_sentence(
     await db.commit()
     await db.refresh(sentence)
 
-    return await _sentence_read(sentence, db, fact_citation)
+    return await _sentence_read(sentence, db, fact_citations)
 
 
 @router.patch("/{session_id}/document/paragraphs/{paragraph_id}", response_model=ParagraphRead)
@@ -231,7 +234,7 @@ async def update_paragraph(
     payload: ParagraphUpdate,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> ParagraphRead:
     paragraph = await _get_owned_paragraph(session, paragraph_id, db)
     if payload.topic is not None:
@@ -240,7 +243,7 @@ async def update_paragraph(
         paragraph.user_confirmed = payload.user_confirmed
     await db.commit()
     await db.refresh(paragraph)
-    return await _paragraph_read(paragraph, db, fact_citation)
+    return await _paragraph_read(paragraph, db, fact_citations)
 
 
 @router.post("/{session_id}/document/paragraphs/{paragraph_id}/merge-next", response_model=ParagraphRead)
@@ -248,7 +251,7 @@ async def merge_paragraph_with_next(
     paragraph_id: uuid.UUID,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> ParagraphRead:
     """관련성 확인 단계의 핵심 조작: 인접한 두 문단이 같은 이야기라고 판단되면
     합친다. 임의의 두 문단을 고르는 UI 대신 "다음 문단과 합치기"로 단순화했다
@@ -284,7 +287,40 @@ async def merge_paragraph_with_next(
     await db.delete(next_paragraph)
     await db.commit()
     await db.refresh(paragraph)
-    return await _paragraph_read(paragraph, db, fact_citation)
+    return await _paragraph_read(paragraph, db, fact_citations)
+
+
+@router.delete("/{session_id}/document/paragraphs/{paragraph_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_paragraph(
+    paragraph_id: uuid.UUID,
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+):
+    # No `-> None` return annotation here — see the comment on
+    # sessions.delete_session for why that trips FastAPI's 204-response-body
+    # assertion under `from __future__ import annotations`.
+    #
+    # Removes the paragraph's sentences along with it, rather than re-homing
+    # them on a neighbor the way merge-next does — this is "delete this whole
+    # block", not "combine it with another one". The underlying confirmed_facts
+    # those sentences cited are untouched, so nothing about the
+    # interview/honesty-guardrail data is lost.
+    #
+    # Sentences are deleted explicitly (not left to generated_sentences.paragraph_id's
+    # ON DELETE CASCADE) — GeneratedParagraph.sentences has no ORM-level delete
+    # cascade, and without one, SQLAlchemy's unit-of-work de-associates a
+    # deleted parent's loaded children by nulling their FK instead of deleting
+    # them, pre-empting the DB constraint entirely. Confirmed by a failing test:
+    # deleting a paragraph this way left its sentence behind as an "orphaned
+    # sentence" (paragraph_id NULL) rather than removing it.
+    paragraph = await _get_owned_paragraph(session, paragraph_id, db)
+    sentences = (
+        await db.execute(select(GeneratedSentence).where(GeneratedSentence.paragraph_id == paragraph.id))
+    ).scalars().all()
+    for sentence in sentences:
+        await db.delete(sentence)
+    await db.delete(paragraph)
+    await db.commit()
 
 
 @router.post("/{session_id}/document/sentences/{sentence_id}/move", response_model=SentenceRead)
@@ -293,7 +329,7 @@ async def move_sentence(
     payload: MoveSentenceRequest,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> SentenceRead:
     """관련성 확인의 또 다른 조작: 문장 하나가 잘못된 문단에 묶였다고 판단되면
     이웃 문단으로 옮긴다. 문단을 하나씩 비우면서 옮기면 사실상 분리(split)도
@@ -324,7 +360,7 @@ async def move_sentence(
     sentence.paragraph_id = target_paragraph.id
     await db.commit()
     await db.refresh(sentence)
-    return await _sentence_read(sentence, db, fact_citation)
+    return await _sentence_read(sentence, db, fact_citations)
 
 
 @router.post("/{session_id}/document/sentences/{sentence_id}/regenerate", response_model=SentenceRead)
@@ -334,7 +370,7 @@ async def regenerate_sentence(
     db: AsyncSession = Depends(get_db),
     llm: LLMProvider = Depends(get_llm_provider),
     embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> SentenceRead:
     sentence = await _get_owned_sentence(session, sentence_id, db)
     document = await db.get(GeneratedDocument, sentence.document_id)
@@ -346,14 +382,14 @@ async def regenerate_sentence(
     except document_generator.NoEvidenceToRegenerateError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    return await _sentence_read(sentence, db, fact_citation)
+    return await _sentence_read(sentence, db, fact_citations)
 
 
 @router.post("/{session_id}/document/finalize", response_model=DocumentRead)
 async def finalize_document(
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
-    fact_citation=Depends(get_fact_citation),
+    fact_citations=Depends(get_fact_citations),
 ) -> DocumentRead:
     document = await _get_latest_document(session.id, db)
     if document is None:
@@ -363,7 +399,7 @@ async def finalize_document(
     await db.commit()
     await db.refresh(document)
 
-    return await _document_read(document, db, fact_citation)
+    return await _document_read(document, db, fact_citations)
 
 
 @router.get("/{session_id}/export")
