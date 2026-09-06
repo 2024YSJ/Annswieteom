@@ -41,6 +41,12 @@ export interface CandidateDraft {
   finalText: string;
   wasEdited: boolean;
   include: boolean;
+  /** True for a row the user added themselves (2026-09-06) — the AI's
+   * original candidate list may have missed an item (e.g. splitting "공모전"
+   * into sub-activities), and excluding rows alone can never grow the count
+   * back up, only shrink it. Starts the row in edit mode since there's no
+   * AI-drafted text to show. */
+  isManual?: boolean;
 }
 
 export function InterviewChatThread({
@@ -50,6 +56,7 @@ export function InterviewChatThread({
   pendingAnswerText,
   candidates,
   onUpdateCandidate,
+  onAddCandidate,
   onSubmit,
   isSubmitting,
   isWaitingForAnswer,
@@ -63,6 +70,10 @@ export function InterviewChatThread({
   pendingAnswerText?: string | null;
   candidates: CandidateDraft[] | null;
   onUpdateCandidate: (index: number, patch: Partial<Omit<CandidateDraft, "candidate">>) => void;
+  /** Appends a new, empty, user-authored row to the review list — the only
+   * way to grow the list beyond what the AI proposed (excluding a row can
+   * only shrink it). */
+  onAddCandidate: () => void;
   onSubmit: () => void;
   isSubmitting: boolean;
   /** True while the just-submitted answer is being processed by the AI (no
@@ -141,7 +152,10 @@ export function InterviewChatThread({
                       onUpdate={(patch) => onUpdateCandidate(index, patch)}
                     />
                   ))}
-                  <div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="button" disabled={isSubmitting} onClick={onAddCandidate} style={{ fontSize: 13 }}>
+                      + 새 항목 추가
+                    </button>
                     <button type="button" disabled={isSubmitting} onClick={onSubmit}>
                       다음
                     </button>
@@ -164,7 +178,10 @@ function CandidateRow({
   draft: CandidateDraft;
   onUpdate: (patch: Partial<Omit<CandidateDraft, "candidate">>) => void;
 }) {
-  const [isEditing, setIsEditing] = useState(false);
+  // A freshly-added manual row starts empty with nothing sensible to display
+  // read-only, so it opens straight into edit mode instead of showing a
+  // blank paragraph the user would have to know to click "고쳐 쓰기" on.
+  const [isEditing, setIsEditing] = useState(draft.isManual === true);
   const [editText, setEditText] = useState(draft.finalText);
 
   // Reset the edit box whenever this row's underlying candidate text changes
@@ -195,6 +212,7 @@ function CandidateRow({
           rows={3}
           value={editText}
           onChange={(e) => setEditText(e.target.value)}
+          placeholder={draft.isManual ? "내용을 입력하세요" : undefined}
           style={{ width: "100%" }}
         />
       ) : (

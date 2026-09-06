@@ -466,11 +466,13 @@ async def interview_confirm(
     if pending["fact_type_hint"] == "activity_breakdown":
         # "활동 목록"은 인용 가능한 서사적 사실이 아니라 라우팅 정보이므로, 일반
         # ConfirmedFact 삽입/충분성 판단 로직을 완전히 건너뛴다.
-        items = [
-            candidate_facts[c.index]["content"]
-            for c in payload.confirmations
-            if c.include and 0 <= c.index < len(candidate_facts) and candidate_facts[c.index]["content"].strip()
-        ]
+        #
+        # final_text(사용자가 확정한 값)를 쓴다 — candidate_facts[index]["content"](AI가
+        # 처음 제안한 값)를 썼던 이전 버전은 "고쳐 쓰기"로 항목 이름을 수정해도 반영이
+        # 안 되는 버그였다. index가 candidate_facts 범위를 넘어가는 항목(프론트에서 새로
+        # 추가한 항목)도 그냥 final_text 그대로 받아들인다 — 애초에 이 목록엔 서버가 검증할
+        # "근거"가 없으므로(전부 generic_pattern) candidate_facts 조회 자체가 필요 없다.
+        items = [c.final_text.strip() for c in payload.confirmations if c.include and c.final_text.strip()]
         category.activity_split_checked = True
         if len(items) >= 2:
             children = [
@@ -499,18 +501,23 @@ async def interview_confirm(
 
     inserted: list[ConfirmedFact] = []
     for confirmation in payload.confirmations:
-        if not (0 <= confirmation.index < len(candidate_facts)):
+        if confirmation.index < 0:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="invalid_candidate_index")
-        if not confirmation.include:
+        if not confirmation.include or not confirmation.final_text.strip():
+            # 빈 문자열은 그냥 조용히 건너뛴다 — 새로 추가한 항목을 다 채우지 않고
+            # 제출한 경우(2026-09-06, "+ 새 항목 추가") 빈 확정 사실이 만들어지는 걸 막는다.
             continue
 
-        candidate = candidate_facts[confirmation.index]
-        based_on = candidate.get("based_on") or {"type": "generic_pattern", "excerpts": []}
+        # index >= len(candidate_facts)는 프론트에서 새로 추가한 항목(원래 AI 후보
+        # 목록에 없던 것)이다 — candidate=None으로 두고, 근거 없는 사용자 작성 항목으로
+        # 취급한다(아래에서 was_edited와 동일하게 처리).
+        candidate = candidate_facts[confirmation.index] if confirmation.index < len(candidate_facts) else None
+        based_on = (candidate or {}).get("based_on") or {"type": "generic_pattern", "excerpts": []}
 
         # 정직성 가드레일: source_type은 클라이언트가 아니라 서버가 캐시해둔 후보의
         # was_edited/based_on으로부터만 결정한다 (임의로 record_cited를 주장하지 못하게).
         source_chunk_id: uuid.UUID | None = None
-        if confirmation.was_edited:
+        if confirmation.was_edited or candidate is None:
             source_type = "user_edited"
         elif based_on.get("type") == "record" and based_on.get("excerpts"):
             source_type = "record_cited"
@@ -520,11 +527,14 @@ async def interview_confirm(
 
         fact = ConfirmedFact(
             category_id=category_id,
-            fact_type=candidate["fact_type"],
+            # candidate_payload always sets fact_type to pending["fact_type_hint"]
+            # uniformly (interview_answer, above) — reading it from here directly
+            # also correctly covers a manually-added candidate (candidate=None).
+            fact_type=pending["fact_type_hint"],
             content=confirmation.final_text,
             source_type=source_type,
             source_record_chunk_id=source_chunk_id,
-            ai_draft_text=candidate["content"],
+            ai_draft_text=(candidate or {}).get("content"),
             source_question_text=pending["question_text"],
         )
         db.add(fact)

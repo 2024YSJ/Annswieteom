@@ -337,6 +337,48 @@ def test_activity_breakdown_with_a_single_item_does_not_split(session_client):
     assert ask["question_text"] == BASE_QUESTIONS["study"][0].text
 
 
+def test_activity_breakdown_review_can_edit_and_add_items_beyond_the_ai_list(session_client):
+    """The candidate review screen for this question is the same shared UI as
+    normal fact review — editing an item's text ("고쳐 쓰기") or adding a new
+    one beyond what the AI proposed must both actually take effect, not just
+    silently fall back to the AI's original suggestion (2026-09-06 bug: the
+    confirm handler read candidate_facts[index]["content"] — the AI's
+    original text — instead of the user's final_text)."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    session_client.fake_llm._activity_items_queue = [["공모전 A"]]
+    _advance_to_interviewing(session_client, headers, session_id, category_types=("project",))
+
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "공모전 A요"}
+    )
+    candidates = resp.json()["candidates"]
+    assert len(candidates) == 1
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={
+            "confirmations": [
+                # Edited to a different name than the AI proposed.
+                {"index": 0, "final_text": "공모전 A (수정됨)", "was_edited": True, "include": True},
+                # A second item the AI never suggested, added by hand.
+                {"index": 1, "final_text": "공모전 B (직접 추가)", "was_edited": True, "include": True},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    parent = next(c for c in ctx["categories"] if c["category_type"] == "project" and c["parent_category_id"] is None)
+    children = sorted(
+        (c for c in ctx["categories"] if c["parent_category_id"] == parent["id"]),
+        key=lambda c: c["order_index"],
+    )
+    assert [c["custom_label"] for c in children] == ["공모전 A (수정됨)", "공모전 B (직접 추가)"]
+
+
 def test_child_category_falls_back_to_parents_records_when_it_has_none(session_client):
     """Sub-categories don't get their own record-request step (records are
     only attachable during RECORD_UPLOAD, which is long over by the time a
@@ -489,7 +531,7 @@ def test_ask_before_period_returns_409(session_client):
     assert resp.status_code == 409
 
 
-def test_confirm_with_out_of_range_index_returns_409(session_client):
+def test_confirm_with_negative_index_returns_409(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
@@ -499,9 +541,41 @@ def test_confirm_with_out_of_range_index_returns_409(session_client):
     resp = session_client.post(
         f"/api/v1/sessions/{session_id}/interview/confirm",
         headers=headers,
-        json={"confirmations": [{"index": 99, "final_text": "x", "was_edited": False}]},
+        json={"confirmations": [{"index": -1, "final_text": "x", "was_edited": False}]},
     )
     assert resp.status_code == 409
+
+
+def test_confirm_with_index_past_the_candidate_list_adds_a_manual_fact(session_client):
+    """An index beyond the AI-extracted candidate list is a manually-added
+    row (2026-09-06: the candidate review screen — reused for both normal
+    fact review and the "여러 활동 있나요?" split-check — needs a way to add
+    more entries than the AI proposed, not just edit/exclude existing ones).
+    It has no AI draft to compare against, so it's always user_edited."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "답변"})
+    candidates = resp.json()["candidates"]
+    assert len(candidates) == 1  # the fake LLM's default: one candidate per non-empty answer
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={
+            "confirmations": [
+                {"index": 0, "final_text": candidates[0]["content"], "was_edited": False, "include": True},
+                {"index": 1, "final_text": "AI가 안 뽑아낸, 직접 추가한 사실", "was_edited": True, "include": True},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    facts = resp.json()["confirmed_facts"]
+    assert len(facts) == 2
+    manual_fact = next(f for f in facts if f["content"] == "AI가 안 뽑아낸, 직접 추가한 사실")
+    assert manual_fact["source_type"] == "user_edited"
 
 
 def test_empty_answer_yields_no_candidates_and_does_not_get_stuck(session_client):
