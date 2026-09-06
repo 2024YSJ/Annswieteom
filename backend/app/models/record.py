@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
 
-RECORD_TYPES = ("blog_url", "image", "text")
+RECORD_TYPES = ("blog_url", "image", "text", "document")
 PLATFORMS = ("naver", "tistory", "velog", "brunch", "other", "unknown")
 PARSE_STATUSES = ("PENDING", "PROCESSING", "DONE", "FAILED")
 
@@ -32,6 +32,9 @@ class Record(Base):
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     platform: Mapped[str] = mapped_column(Text, nullable=False, default="unknown")
     storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 업로드된 파일(이미지/문서)의 원래 파일명 — storage_path는 UUID 기반이라 목록에서
+    # 여러 파일을 구분할 방법이 없어서 추가(2026-09-06, 다중 파일 업로드 지원과 함께).
+    original_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     parse_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING")
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)

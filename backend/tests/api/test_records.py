@@ -204,6 +204,41 @@ def test_upload_image_record_stores_bytes_under_isolated_path(records_client):
     assert resp.json()["parse_status"] == "DONE"
 
 
+def test_upload_txt_record_is_a_document_with_original_filename(records_client):
+    headers = _register_and_login(records_client)
+    session_id = _create_session_at_record_upload(records_client, headers)
+
+    resp = records_client.post(
+        f"/api/v1/sessions/{session_id}/records/upload",
+        headers=headers,
+        files={"file": ("이력서 메모.txt", "텍스트 파일 내용입니다.".encode("utf-8"), "text/plain")},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["record_type"] == "document"
+    assert body["original_filename"] == "이력서 메모.txt"
+    assert len(records_client.process_document_record_calls) == 1
+    assert len(records_client.process_image_record_calls) == 0
+
+    resp = records_client.get(f"/api/v1/sessions/{session_id}/records/{body['id']}", headers=headers)
+    assert resp.json()["parse_status"] == "DONE"
+
+
+def test_upload_is_routed_by_extension_not_content_type(records_client):
+    """Browsers report unreliable/blank content_type for .md/.hwp, so the
+    decision must be made from the filename's extension, not file.content_type."""
+    headers = _register_and_login(records_client)
+    session_id = _create_session_at_record_upload(records_client, headers)
+
+    resp = records_client.post(
+        f"/api/v1/sessions/{session_id}/records/upload",
+        headers=headers,
+        files={"file": ("notes.md", b"# heading", "application/octet-stream")},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["record_type"] == "document"
+
+
 def test_upload_rejects_unsupported_content_type(records_client):
     headers = _register_and_login(records_client)
     session_id = _create_session_at_record_upload(records_client, headers)

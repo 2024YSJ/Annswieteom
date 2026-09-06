@@ -99,16 +99,25 @@ export function RecordsSection({
     );
   }
 
-  async function uploadImage(file: File) {
+  async function uploadFile(file: File) {
     setError(null);
     setIsSubmitting(true);
     try {
-      const record = await recordsApi.uploadImage(sessionId, file, accessToken);
+      const record = await recordsApi.uploadFile(sessionId, file, accessToken);
       addRecord(record);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  // Each file gets its own request (one bad file — e.g. an unreadable .hwp —
+  // shouldn't block the rest), run one after another rather than in parallel
+  // so isSubmitting/error reflect a single in-flight request at a time.
+  async function uploadFiles(files: FileList | File[]) {
+    for (const file of Array.from(files)) {
+      await uploadFile(file);
     }
   }
 
@@ -130,11 +139,15 @@ export function RecordsSection({
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = ""; // allow re-selecting the same file later
+    // event.target.files is a *live* FileList tied to the input — clearing
+    // the input's value below (to allow re-selecting the same file(s) later)
+    // clears this list in place too, so it must be copied out first or the
+    // upload below would see zero files.
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
     setIsAttachMenuOpen(false);
-    if (!file) return;
-    uploadImage(file);
+    if (files.length === 0) return;
+    uploadFiles(files);
   }
 
   async function handleAdvance() {
@@ -209,7 +222,7 @@ export function RecordsSection({
             </div>
             <ChatBubble side="left">
               <span aria-live="polite">
-                {categoryLabel(category)}에 대한 자료(블로그 글, 자격증 이미지, 메모)가 있으면 알려주세요. 없어도 괜찮아요.
+                {categoryLabel(category)}에 대한 자료(블로그 글, 이미지, 문서 파일(txt/md/docx/hwp), 메모)가 있으면 알려주세요. 없어도 괜찮아요.
               </span>
             </ChatBubble>
 
@@ -236,8 +249,7 @@ export function RecordsSection({
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-                const file = e.dataTransfer.files?.[0];
-                if (file) uploadImage(file);
+                if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
               }}
             >
               {error && <p style={{ color: "crimson" }}>{error}</p>}
@@ -288,14 +300,15 @@ export function RecordsSection({
                         setIsAttachMenuOpen(false);
                       }}
                     >
-                      이미지 추가
+                      파일 추가
                     </button>
                   </div>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp,.md,.txt,.docx,.hwp"
                   onChange={handleFileChange}
                   disabled={isSubmitting}
                   style={{ display: "none" }}

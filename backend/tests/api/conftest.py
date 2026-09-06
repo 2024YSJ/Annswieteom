@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.services.llm.fallback import get_llm_provider
-from app.api.records import get_process_image_record, get_process_record
+from app.api.records import get_process_document_record, get_process_image_record, get_process_record
 from app.db.session import Base, get_db
 from app.main import app
 from app.models.activity_category import ActivityCategory
@@ -329,6 +329,7 @@ def records_client():
 
     process_record_calls: list = []
     process_image_record_calls: list = []
+    process_document_record_calls: list = []
 
     async def fake_process_record(record_id):
         process_record_calls.append(record_id)
@@ -348,17 +349,28 @@ def records_client():
                 record.raw_text = "ocr text"
                 await session.commit()
 
+    async def fake_process_document_record(record_id):
+        process_document_record_calls.append(record_id)
+        async with test_session_local() as session:
+            record = await session.get(Record, record_id)
+            if record is not None:
+                record.parse_status = "DONE"
+                record.raw_text = "document text"
+                await session.commit()
+
     fake_storage = FakeStorage()
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_process_record] = lambda: fake_process_record
     app.dependency_overrides[get_process_image_record] = lambda: fake_process_image_record
+    app.dependency_overrides[get_process_document_record] = lambda: fake_process_document_record
     app.dependency_overrides[get_storage] = lambda: fake_storage
     try:
         with TestClient(app) as test_client:
             test_client.fake_storage = fake_storage
             test_client.process_record_calls = process_record_calls
             test_client.process_image_record_calls = process_image_record_calls
+            test_client.process_document_record_calls = process_document_record_calls
             yield test_client
     finally:
         app.dependency_overrides.clear()
