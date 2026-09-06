@@ -10,9 +10,9 @@ def _all_sentences(doc: dict) -> list[dict]:
     return [s for p in doc["paragraphs"] for s in p["sentences"]]
 
 # part_time은 고정 질문 4개, study는 5개(2026-09-06: "내용/활용" 질문 추가)를
-# 정의해둔다(interview_question_bank.py). MAX_QUESTIONS_PER_CATEGORY는 둘 다보다
-# 넉넉하므로(드릴다운 여지를 남기기 위해), _advance_to_result_generate는 드릴다운
-# 없이(FakeLLMProvider 기본값) 카테고리 타입별 고정 질문 개수만큼만 돈다.
+# 정의해둔다(interview_question_bank.py). 고정 질문은 budget 상한과 무관하게 전부
+# 진행되므로(2026-09-06 재설계), _advance_to_result_generate는 드릴다운 없이
+# (FakeLLMProvider 기본값) 카테고리 타입별 고정 질문 개수만큼만 돈다.
 FACTS_PER_CATEGORY = len(BASE_QUESTIONS["part_time"])
 
 

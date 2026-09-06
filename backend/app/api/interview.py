@@ -59,6 +59,19 @@ ACTIVITY_BREAKDOWN_QUESTION = (
 )
 
 
+# judge_drilldown이 모든 LLM provider 실패로 아예 호출 불가능할 때 쓰는 규칙 기반
+# 백업(2026-09-06) — 로컬 dev 환경처럼 폴백 provider(Gemini)도 플레이스홀더 키라 실패하는
+# 상황에서, LLM 판단 없이도 최소한의 구체화 질문 하나는 보장하기 위함이다. LLM 판단만큼
+# 정교하지 않다 — 정밀한 판단이 필요 없는 최후의 안전망일 뿐이므로 임계값은 넉넉하게 잡는다.
+_VAGUE_ANSWER_MIN_LENGTH = 20
+_GENERIC_PROBE_QUESTION = "조금 더 구체적으로 말씀해주시겠어요? 그때 있었던 구체적인 상황이나 예시를 알려주세요."
+
+
+def _is_vague_answer(facts: list[ConfirmedFact]) -> bool:
+    combined = " ".join(f.content for f in facts).strip()
+    return len(combined) < _VAGUE_ANSWER_MIN_LENGTH
+
+
 def _violation_to_409(exc: orchestrator.StateMachineViolation) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
@@ -255,9 +268,9 @@ async def _build_pending_turn(
     is_structural: bool = False,
 ) -> dict:
     """`is_structural=True` is for the "여러 활동 있나요?" check only — it's
-    routing info, not a content question, so it shouldn't eat into
-    MAX_QUESTIONS_PER_CATEGORY's budget, and there's nothing meaningful for
-    the AI to draft an answer to."""
+    routing info, not a content question, so it shouldn't eat into either
+    question budget, and there's nothing meaningful for the AI to draft an
+    answer to."""
     if is_structural:
         draft_answer = ""
     else:
@@ -272,10 +285,15 @@ async def _build_pending_turn(
     # Every fresh question — whether the next fixed one, an interleaved
     # drill-down, or a post-base followup — goes through this one function,
     # so incrementing here (rather than at each of its call sites) is the
-    # single place that keeps ActivityCategory.questions_asked accurate
-    # against MAX_QUESTIONS_PER_CATEGORY.
+    # single place that keeps the two budgets accurate: fixed ("base")
+    # questions and AI-added ("followup", covering both drill-downs and
+    # post-base followups) are tracked separately since only the latter is
+    # capped (MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY).
     if not is_structural:
-        category.questions_asked += 1
+        if question_source == "followup":
+            category.followup_questions_asked += 1
+        else:
+            category.questions_asked += 1
 
     return {
         "category_id": str(category.id),
@@ -543,44 +561,58 @@ async def interview_confirm(
     session.pending_turn = None
     await db.flush()
 
-    # 카테고리당 총 질문 수(고정+AI 합산) 상한 — 도달했으면 남은 고정 질문이 있든,
-    # AI가 더 캐묻고 싶어하든 무조건 다음으로 넘긴다 (2026-09-05: "카테고리당 질문
-    # 횟수를 늘리자. 3회까지" — 총 개수를 낮춰 AI 판단의 비중을 상대적으로 높이는 방향).
-    if category.questions_asked >= orchestrator.MAX_QUESTIONS_PER_CATEGORY:
-        advance = True
-    else:
-        answered_fact_types = {
-            f.fact_type
-            for f in (await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category_id))).scalars().all()
-        }
-        remaining_base_question = next_base_question(category.category_type, answered_fact_types)
+    answered_fact_types = {
+        f.fact_type
+        for f in (await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category_id))).scalars().all()
+    }
+    remaining_base_question = next_base_question(category.category_type, answered_fact_types)
+    # AI 추가 질문(드릴다운/후속) 전용 예산 — 고정 질문 자체는 이 예산과 무관하게
+    # 항상 전부 물어본다(2026-09-06, orchestrator.MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+    # 참고). 예전엔 고정+AI를 하나의 상한으로 묶어서, 예산이 바닥나면 "성과/결과"
+    # 같은 마지막 고정 질문이 아직 안 나왔어도 강제로 다음 카테고리로 넘어가 버렸다.
+    followup_budget_left = category.followup_questions_asked < orchestrator.MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
 
-        if remaining_base_question is not None:
-            advance = False
-            # Even while fixed questions remain, let the AI interject one
-            # narrower drill-down when the answer just confirmed bundled
-            # several things together or stayed vague (e.g. "기획과 개발을
-            # 담당했어요") instead of marching straight on to the next,
-            # unrelated fixed question with no chance to get a concrete
-            # example (2026-09-05 request: "답변마다 AI가 바로 파고들지 판단").
+    if remaining_base_question is not None:
+        advance = False
+        # Even while fixed questions remain, let the AI interject one
+        # narrower drill-down when the answer just confirmed bundled
+        # several things together or stayed vague (e.g. "기획과 개발을
+        # 담당했어요") instead of marching straight on to the next,
+        # unrelated fixed question with no chance to get a concrete
+        # example (2026-09-05 request: "답변마다 AI가 바로 파고들지 판단"). Skipped
+        # entirely once the followup budget is spent — no point spending an
+        # LLM call on a decision we won't act on.
+        if followup_budget_left:
+            should_ask, drilldown_question_text = False, None
             try:
                 context, _ = await _build_context(db, session, category, chunk_search)
                 decision = await llm.judge_drilldown(context)
+                should_ask, drilldown_question_text = decision.should_ask, decision.question_text
             except AllProvidersFailedError:
-                decision = None
-            if decision is not None and decision.should_ask and decision.question_text:
+                # 모든 LLM provider가 막혀 있으면(로컬 dev 환경의 알려진 한계 — 플레이스홀더
+                # GEMINI_API_KEY라 로컬 모델이 JSON 파싱에 실패해도 폴백이 안 됨) 정교한
+                # 판단 대신 규칙 기반 백업으로 최소한의 구체화는 보장한다: 방금 확정된
+                # 답변이 아주 짧으면(명사구 수준, 구체적 설명 없음) 정형화된 구체화
+                # 질문을 하나 끼워넣는다.
+                if _is_vague_answer(inserted):
+                    should_ask, drilldown_question_text = True, _GENERIC_PROBE_QUESTION
+            if should_ask and drilldown_question_text:
                 session.pending_turn = await _build_pending_turn(
-                    llm, context, category, decision.question_text, "followup", "followup"
+                    llm, context, category, drilldown_question_text, "followup", "followup"
                 )
-        else:
-            try:
-                context, _ = await _build_context(db, session, category, chunk_search)
-                result = await llm.judge_sufficiency(context)
-                advance = result.sufficient
-            except AllProvidersFailedError:
-                # LLM 판단이 안 되면 안전하게 계속 진행하기보다 멈추지 않도록 다음으로 넘긴다 —
-                # 무한정 붙잡아두는 것보다 사용자가 다음 카테고리로 진행할 수 있는 편이 낫다.
-                advance = True
+    elif followup_budget_left:
+        try:
+            context, _ = await _build_context(db, session, category, chunk_search)
+            result = await llm.judge_sufficiency(context)
+            advance = result.sufficient
+        except AllProvidersFailedError:
+            # LLM 판단이 안 되면 안전하게 계속 진행하기보다 멈추지 않도록 다음으로 넘긴다 —
+            # 무한정 붙잡아두는 것보다 사용자가 다음 카테고리로 진행할 수 있는 편이 낫다.
+            advance = True
+    else:
+        # 후속 질문 예산 소진 — LLM이 계속 부족하다고 판단하더라도(judge_sufficiency를
+        # 호출할 필요조차 없이) 더 묻지 않고 다음 카테고리로 넘긴다.
+        advance = True
 
     categories = (
         await db.execute(select(ActivityCategory).where(ActivityCategory.session_id == session.id))
