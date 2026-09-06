@@ -52,15 +52,23 @@
 
 html {
   height: 100%;
-}
-
-html,
-body {
   max-width: 100vw;
   overflow-x: hidden;
 }
 
 body {
+  /* overflow-x: hidden here too (redundant with html's) used to make body
+     compute overflow-y: auto per spec (one axis non-visible forces the
+     other to auto) — nesting a second, independent scroll container inside
+     html's. Next.js's scroll-reset-on-navigation only resets window/html
+     scroll, not this inner one, so a scroll offset left over from a taller
+     previous page carried over through client-side navigation and could
+     push the sticky header (and page content) out of view on the next,
+     shorter page — intermittent, since it depended on prior scroll state
+     (found chasing "메뉴바가 안 보임", 2026-09-06). Clipping horizontal
+     overflow at the html level alone is enough; body doesn't need its own.
+     */
+  max-width: 100vw;
   min-height: 100%;
   display: flex;
   flex-direction: column;
@@ -177,7 +185,7 @@ textarea:focus {
   width: 220px;
   flex-shrink: 0;
   border-left: 1px solid var(--border);
-  padding: 80px 16px 16px;
+  padding: 16px;
   min-height: 100vh;
   box-sizing: border-box;
   background: var(--background);
