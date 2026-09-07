@@ -5,8 +5,9 @@ export type ParseStatus = "PENDING" | "PROCESSING" | "DONE" | "FAILED";
 export interface RecordRead {
   id: string;
   category_id: string | null;
-  record_type: "blog_url" | "image" | "text";
+  record_type: "blog_url" | "image" | "text" | "document";
   source_url: string | null;
+  original_filename: string | null;
   platform: string;
   parse_status: ParseStatus;
   parse_error: string | null;
@@ -31,7 +32,10 @@ export const recordsApi = {
       body: JSON.stringify({ text }),
     }),
 
-  uploadImage: (sessionId: string, file: File, accessToken: string) => {
+  // Handles images (OCR) and documents (txt/md/docx/hwp — direct text
+  // extraction) alike; the backend decides which by the file's extension.
+  // Uploading several files at once means calling this once per file.
+  uploadFile: (sessionId: string, file: File, accessToken: string) => {
     const formData = new FormData();
     formData.append("file", file);
     return requestForm<RecordRead>(`/api/v1/sessions/${sessionId}/records/upload`, formData, accessToken);

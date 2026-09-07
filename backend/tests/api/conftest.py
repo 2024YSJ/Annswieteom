@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.services.llm.fallback import get_llm_provider
-from app.api.records import get_process_image_record, get_process_record
+from app.api.records import get_process_document_record, get_process_image_record, get_process_record
 from app.db.session import Base, get_db
 from app.main import app
 from app.models.activity_category import ActivityCategory
@@ -18,6 +18,7 @@ from app.models.gap_period import GapPeriod
 from app.models.generated_document import GeneratedDocument
 from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
+from app.models.job_search_preferences import JobSearchPreferences
 from app.models.record import Record
 from app.models.record_chunk import RecordChunk
 from app.models.refresh_token import RefreshToken
@@ -30,6 +31,9 @@ from app.services.llm.base import (
     DraftDocument,
     DrilldownDecision,
     FactCandidate,
+    JobFitResult,
+    JobPreferenceInferenceResult,
+    JobPreferences,
     ParagraphDraft,
     PeriodSuggestion,
     SentenceWithEvidence,
@@ -97,6 +101,9 @@ class FakeLLMProvider:
         period_suggestion=_DEFAULT_PERIOD_SUGGESTION,
         drilldown_decisions: list[DrilldownDecision] | None = None,
         activity_items: list[list[str]] | None = None,
+        job_preference_suggestion: "JobPreferences | None" = None,
+        job_fit_results: list["JobFitResult"] | None = None,
+        job_preference_inference: "JobPreferenceInferenceResult | None" = None,
     ):
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
@@ -107,6 +114,10 @@ class FakeLLMProvider:
         self._period_suggestion = period_suggestion
         self._drilldown_queue = list(drilldown_decisions) if drilldown_decisions else None
         self._activity_items_queue = list(activity_items) if activity_items else None
+        self._job_preference_suggestion = job_preference_suggestion
+        self._job_fit_queue = list(job_fit_results) if job_fit_results else None
+        self._job_preference_inference = job_preference_inference
+        self.job_fit_calls: list[tuple] = []
         self.activity_items_calls: list[tuple[str, str]] = []
         self.extract_facts_calls: list[tuple[str, str, str]] = []
         self.followup_calls: list[str] = []
@@ -186,6 +197,22 @@ class FakeLLMProvider:
             return PeriodSuggestion(start_date=date(2025, 1, 1), end_date=date(2025, 6, 30))
         return self._period_suggestion
 
+    async def extract_job_preferences(self, free_text):
+        if self._job_preference_suggestion is not None:
+            return self._job_preference_suggestion
+        return JobPreferences()
+
+    async def judge_job_fit(self, preferences, posting):
+        self.job_fit_calls.append((preferences, posting))
+        if self._job_fit_queue:
+            return self._job_fit_queue.pop(0)
+        return JobFitResult(fit=True, reason="조건에 맞습니다")
+
+    async def infer_job_preferences_from_facts(self, confirmed_facts):
+        if self._job_preference_inference is not None:
+            return self._job_preference_inference
+        return JobPreferenceInferenceResult()
+
     async def health_check(self) -> bool:
         return True
 
@@ -235,6 +262,7 @@ def session_client():
         Record.__table__,
         GeneratedDocument.__table__,
         GeneratedParagraph.__table__,
+        JobSearchPreferences.__table__,
     ]
 
     async def _create_tables():
@@ -313,6 +341,7 @@ def records_client():
         RecordChunk.__table__,
         GeneratedDocument.__table__,
         GeneratedParagraph.__table__,
+        JobSearchPreferences.__table__,
     ]
 
     async def _create_tables():
@@ -329,6 +358,7 @@ def records_client():
 
     process_record_calls: list = []
     process_image_record_calls: list = []
+    process_document_record_calls: list = []
 
     async def fake_process_record(record_id):
         process_record_calls.append(record_id)
@@ -348,17 +378,28 @@ def records_client():
                 record.raw_text = "ocr text"
                 await session.commit()
 
+    async def fake_process_document_record(record_id):
+        process_document_record_calls.append(record_id)
+        async with test_session_local() as session:
+            record = await session.get(Record, record_id)
+            if record is not None:
+                record.parse_status = "DONE"
+                record.raw_text = "document text"
+                await session.commit()
+
     fake_storage = FakeStorage()
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_process_record] = lambda: fake_process_record
     app.dependency_overrides[get_process_image_record] = lambda: fake_process_image_record
+    app.dependency_overrides[get_process_document_record] = lambda: fake_process_document_record
     app.dependency_overrides[get_storage] = lambda: fake_storage
     try:
         with TestClient(app) as test_client:
             test_client.fake_storage = fake_storage
             test_client.process_record_calls = process_record_calls
             test_client.process_image_record_calls = process_image_record_calls
+            test_client.process_document_record_calls = process_document_record_calls
             yield test_client
     finally:
         app.dependency_overrides.clear()
@@ -390,6 +431,7 @@ def document_client():
         GeneratedDocument.__table__,
         GeneratedParagraph.__table__,
         GeneratedSentence.__table__,
+        JobSearchPreferences.__table__,
     ]
 
     async def _create_tables():

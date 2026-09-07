@@ -95,6 +95,52 @@ class InterviewContext:
     asked_questions: list[str] = field(default_factory=list)
 
 
+@dataclass
+class JobPreferences:
+    """Structured job-search preferences — used both as the result of
+    extract_job_preferences (a suggestion, possibly partial) and as the
+    confirmed input to judge_job_fit. Any field the user hasn't stated stays
+    None/empty rather than guessed — same honesty-guardrail spirit as the
+    rest of this Protocol (an unstated preference must never be invented)."""
+    salary_min: int | None = None
+    salary_max: int | None = None
+    location: str | None = None
+    education_level: str | None = None
+    career_years: int | None = None
+    work_style_tags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class JobPosting:
+    source: str
+    external_id: str
+    title: str
+    company: str
+    salary_text: str
+    location: str
+    education_requirement: str
+    career_requirement: str
+    work_type: str
+    url: str
+    raw_snippet: str = ""
+
+
+@dataclass
+class JobFitResult:
+    fit: bool
+    reason: str
+
+
+@dataclass
+class JobPreferenceInferenceResult:
+    """Output of infer_job_preferences_from_facts — deliberately excludes
+    salary_min/max/location, which can't be derived from STAR facts alone
+    and must stay for the user to fill in themselves."""
+    work_style_tags: list[str] = field(default_factory=list)
+    keyword_hints: list[str] = field(default_factory=list)
+    notes: str = ""
+
+
 class ProviderUnavailableError(Exception):
     pass
 
@@ -118,4 +164,9 @@ class LLMProvider(Protocol):
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]: ...
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None: ...
+    async def extract_job_preferences(self, free_text: str) -> JobPreferences: ...
+    async def judge_job_fit(self, preferences: JobPreferences, posting: JobPosting) -> JobFitResult: ...
+    async def infer_job_preferences_from_facts(
+        self, confirmed_facts: list[ConfirmedFact]
+    ) -> JobPreferenceInferenceResult: ...
     async def health_check(self) -> bool: ...

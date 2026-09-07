@@ -7,7 +7,12 @@ export type SessionStatus =
   | "RECORD_UPLOAD"
   | "INTERVIEWING"
   | "RESULT_GENERATE"
-  | "RESULT_REVIEW";
+  | "RESULT_REVIEW"
+  | "JOB_PREFERENCES_INPUT"
+  | "JOB_SEARCHING"
+  | "JOB_RESULTS_REVIEW";
+
+export type SessionKind = "gap_fill" | "job_search";
 
 export type CategoryType =
   | "part_time"
@@ -22,6 +27,8 @@ export type CategoryType =
 export interface SessionRead {
   id: string;
   title: string | null;
+  kind: SessionKind;
+  linked_gap_session_id: string | null;
   status: SessionStatus;
   created_at: string;
 }
@@ -139,10 +146,11 @@ export interface InterviewConfirmRead {
 }
 
 export const sessionApi = {
-  create: (accessToken: string) =>
+  create: (accessToken: string, options?: { kind?: SessionKind; linked_gap_session_id?: string }) =>
     request<SessionRead>("/api/v1/sessions", {
       method: "POST",
       headers: authHeaders(accessToken),
+      body: JSON.stringify(options ?? {}),
     }),
 
   list: (accessToken: string) =>

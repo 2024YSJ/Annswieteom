@@ -116,6 +116,33 @@ export function InterviewSection({
     setCandidates((prev) => (prev ? prev.map((c, i) => (i === index ? { ...c, ...patch } : c)) : prev));
   }
 
+  // Appends a new, empty, user-authored row — the only way to grow the
+  // review list past what the AI proposed (excluding a row can only shrink
+  // it). fact_type/based_on on the synthetic candidate are display-only —
+  // the confirm request never sends them, the server always uses the
+  // question's own fact_type_hint for every row in this turn (interview.py).
+  function addManualCandidate() {
+    setCandidates((prev) => {
+      if (!prev) return prev;
+      const template = prev[0]?.candidate;
+      return [
+        ...prev,
+        {
+          candidate: {
+            index: prev.length,
+            content: "",
+            fact_type: template?.fact_type ?? "",
+            based_on: { type: "generic_pattern", excerpts: [] },
+          },
+          finalText: "",
+          wasEdited: true,
+          include: true,
+          isManual: true,
+        },
+      ];
+    });
+  }
+
   async function submit() {
     if (!candidates) return;
     setError(null);
@@ -169,6 +196,7 @@ export function InterviewSection({
         pendingAnswerText={pendingAnswerText}
         candidates={candidates}
         onUpdateCandidate={updateCandidate}
+        onAddCandidate={addManualCandidate}
         onSubmit={submit}
         isSubmitting={isSubmitting}
         isWaitingForAnswer={isSubmitting && candidates === null}

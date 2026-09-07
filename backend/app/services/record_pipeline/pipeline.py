@@ -11,6 +11,7 @@ from app.models.record_chunk import RecordChunk
 from app.models.gap_period import GapPeriod
 from app.services.embedding import FallbackEmbedding
 from app.services.record_pipeline.chunker import chunk_text
+from app.services.record_pipeline.document_parser import UnsupportedDocumentError, extract_text_from_document
 from app.services.record_pipeline.ocr import MIME_TYPES_BY_EXTENSION, extract_text_from_image
 from app.services.record_pipeline.parsers import generic, naver_blog, tistory, velog
 from app.services.record_pipeline.platform_detector import detect_platform
@@ -89,6 +90,42 @@ async def process_image_record(record_id: uuid.UUID) -> None:
             await db.commit()
 
 
+async def process_document_record(record_id: uuid.UUID) -> None:
+    """Extract text from an uploaded document (txt/md/docx/hwp), chunk it,
+    and embed each chunk. Unlike images, no OCR/date extraction — the text is
+    read directly from the file (see document_parser.py).
+
+    Sets parse_status to DONE or FAILED on completion.
+    """
+    async with AsyncSessionLocal() as db:
+        record = await db.get(Record, record_id)
+        if record is None:
+            return
+
+        record.parse_status = "PROCESSING"
+        await db.commit()
+
+        try:
+            if not record.storage_path:
+                raise ValueError("No storage_path for document record")
+
+            storage = get_storage()
+            content = await storage.download(record.storage_path)
+            text = extract_text_from_document(content, record.original_filename or record.storage_path)
+
+            chunks = chunk_text(text, None)
+            await _embed_and_store(db, record, chunks)
+
+            record.raw_text = text
+            record.parse_status = "DONE"
+            await db.commit()
+
+        except Exception as exc:
+            record.parse_status = "FAILED"
+            record.parse_error = _user_message(exc)
+            await db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -148,6 +185,9 @@ def _guess_mime_type(storage_path: str) -> str:
 
 
 def _user_message(exc: Exception) -> str:
+    if isinstance(exc, UnsupportedDocumentError):
+        return "이 파일을 읽을 수 없어요. 암호로 보호되었거나 지원하지 않는 형식일 수 있어요."
+
     msg = str(exc)
     if "private" in msg.lower() or "비공개" in msg:
         return "비공개 게시물은 가져올 수 없어요."

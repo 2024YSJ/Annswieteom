@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 // height; beyond this it scrolls internally like any textarea.
 const TEXTAREA_MAX_HEIGHT_PX = 160;
 
-export type ActiveStep = "period" | "categories" | "records" | "interview";
+export type ActiveStep = "period" | "categories" | "records" | "interview" | "job_preferences";
 
 export type ComposerEvent = { kind: "text"; value: string; nonce: number; forStep: ActiveStep };
 

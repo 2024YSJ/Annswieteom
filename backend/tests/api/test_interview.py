@@ -4,9 +4,10 @@ import uuid
 
 from app.main import app
 from app.services import interview_orchestrator as orchestrator
-from app.services.interview_orchestrator import MAX_QUESTIONS_PER_CATEGORY
+from app.services.interview_orchestrator import MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
 from app.services.interview_question_bank import BASE_QUESTIONS
-from app.services.llm.base import BasedOn, DrilldownDecision, FactCandidate, RecordExcerpt, SufficiencyResult
+from app.services.llm.base import AllProvidersFailedError, BasedOn, DrilldownDecision, FactCandidate, RecordExcerpt, SufficiencyResult
+from app.services.llm.fallback import get_llm_provider
 from app.services.record_pipeline.search import RecordChunkExcerpt, get_chunk_search
 
 
@@ -124,11 +125,9 @@ def test_base_questions_asked_in_order_for_part_time(session_client):
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
 
-    # MAX_QUESTIONS_PER_CATEGORY (3) is smaller than part_time's fixed set
-    # (4) — only the first 3 fixed questions are ever reached, in order; the
-    # category finishes there instead of exhausting all 4 (2026-09-05: "카테
-    # 고리당 질문 횟수를 늘리자. 3회까지").
-    expected_questions = BASE_QUESTIONS["part_time"][:MAX_QUESTIONS_PER_CATEGORY]
+    # Fixed questions are never truncated by the followup budget (2026-09-06)
+    # — all of part_time's questions are reached, in order.
+    expected_questions = BASE_QUESTIONS["part_time"]
     confirm_body = None
     for i, expected in enumerate(expected_questions):
         ask_body, _, confirm_body = _do_turn(session_client, headers, session_id)
@@ -185,9 +184,10 @@ def test_ai_can_interleave_a_drilldown_question_between_fixed_base_questions(ses
     assert resp.json()["question_source"] == "base"
 
     # The remaining fixed questions (frequency was only peeked via /ask above,
-    # not yet answered; then hardship, outcome) still fit comfortably under
-    # MAX_QUESTIONS_PER_CATEGORY (well above 4 + 1 drilldown), so the
-    # interview keeps going through the rest of the fixed set as normal.
+    # not yet answered; then hardship, outcome) are never budget-capped, so
+    # the interview keeps going through the rest of the fixed set as normal
+    # regardless of how much of the (separate) followup budget the one
+    # drill-down above used.
     for _ in BASE_QUESTIONS["project"][1:]:
         _, _, confirm_body = _do_turn(session_client, headers, session_id)
 
@@ -201,7 +201,7 @@ def test_ai_can_interleave_a_drilldown_question_between_fixed_base_questions(ses
     assert len(fact_types) == len(BASE_QUESTIONS["project"]) + 1
 
 
-def test_candidate_fact_type_is_forced_to_the_question_hint_not_the_llm_choice(session_client, monkeypatch):
+def test_candidate_fact_type_is_forced_to_the_question_hint_not_the_llm_choice(session_client):
     """A weaker LLM can echo back the wrong fact_type for a base question
     (observed live with the local dev model: a hardship_and_coping answer kept
     getting relabeled study_goal/study_method). Since next_base_question()
@@ -210,12 +210,7 @@ def test_candidate_fact_type_is_forced_to_the_question_hint_not_the_llm_choice(s
     unanswered and it repeats forever — the "질문에 답해도 다음 단계로 안 넘어감"
     bug (2026-09-05). The server must ignore the LLM's own fact_type and
     always use the hint the question was actually asked under.
-
-    This test is about fact_type forcing specifically, not the total
-    per-category question cap, so the cap is raised here to let all 4 fixed
-    questions play out and isolate the two concerns.
     """
-    monkeypatch.setattr(orchestrator, "MAX_QUESTIONS_PER_CATEGORY", 8)
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
@@ -236,12 +231,11 @@ def test_candidate_fact_type_is_forced_to_the_question_hint_not_the_llm_choice(s
     assert len(ctx["confirmed_facts"]) == len(BASE_QUESTIONS["part_time"])
 
 
-def test_followup_question_asked_when_sufficiency_says_not_enough_yet(session_client, monkeypatch):
-    """Tests the post-base judge_sufficiency loop specifically, so the total
-    per-category question cap is raised here — under the real default (3),
-    a category with a 4-question fixed set never reaches the post-base phase
-    at all, which is a different behavior covered by its own cap tests."""
-    monkeypatch.setattr(orchestrator, "MAX_QUESTIONS_PER_CATEGORY", 8)
+def test_followup_question_asked_when_sufficiency_says_not_enough_yet(session_client):
+    """Tests the post-base judge_sufficiency loop specifically — fixed
+    questions are never budget-capped (2026-09-06), so a 4-question fixed
+    set always reaches this post-base phase regardless of the (separate,
+    still-untouched) followup budget."""
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
@@ -335,6 +329,48 @@ def test_activity_breakdown_with_a_single_item_does_not_split(session_client):
     ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
     assert ask["question_source"] == "base"
     assert ask["question_text"] == BASE_QUESTIONS["study"][0].text
+
+
+def test_activity_breakdown_review_can_edit_and_add_items_beyond_the_ai_list(session_client):
+    """The candidate review screen for this question is the same shared UI as
+    normal fact review — editing an item's text ("고쳐 쓰기") or adding a new
+    one beyond what the AI proposed must both actually take effect, not just
+    silently fall back to the AI's original suggestion (2026-09-06 bug: the
+    confirm handler read candidate_facts[index]["content"] — the AI's
+    original text — instead of the user's final_text)."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    session_client.fake_llm._activity_items_queue = [["공모전 A"]]
+    _advance_to_interviewing(session_client, headers, session_id, category_types=("project",))
+
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "공모전 A요"}
+    )
+    candidates = resp.json()["candidates"]
+    assert len(candidates) == 1
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={
+            "confirmations": [
+                # Edited to a different name than the AI proposed.
+                {"index": 0, "final_text": "공모전 A (수정됨)", "was_edited": True, "include": True},
+                # A second item the AI never suggested, added by hand.
+                {"index": 1, "final_text": "공모전 B (직접 추가)", "was_edited": True, "include": True},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    parent = next(c for c in ctx["categories"] if c["category_type"] == "project" and c["parent_category_id"] is None)
+    children = sorted(
+        (c for c in ctx["categories"] if c["parent_category_id"] == parent["id"]),
+        key=lambda c: c["order_index"],
+    )
+    assert [c["custom_label"] for c in children] == ["공모전 A (수정됨)", "공모전 B (직접 추가)"]
 
 
 def test_child_category_falls_back_to_parents_records_when_it_has_none(session_client):
@@ -489,7 +525,7 @@ def test_ask_before_period_returns_409(session_client):
     assert resp.status_code == 409
 
 
-def test_confirm_with_out_of_range_index_returns_409(session_client):
+def test_confirm_with_negative_index_returns_409(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
@@ -499,9 +535,41 @@ def test_confirm_with_out_of_range_index_returns_409(session_client):
     resp = session_client.post(
         f"/api/v1/sessions/{session_id}/interview/confirm",
         headers=headers,
-        json={"confirmations": [{"index": 99, "final_text": "x", "was_edited": False}]},
+        json={"confirmations": [{"index": -1, "final_text": "x", "was_edited": False}]},
     )
     assert resp.status_code == 409
+
+
+def test_confirm_with_index_past_the_candidate_list_adds_a_manual_fact(session_client):
+    """An index beyond the AI-extracted candidate list is a manually-added
+    row (2026-09-06: the candidate review screen — reused for both normal
+    fact review and the "여러 활동 있나요?" split-check — needs a way to add
+    more entries than the AI proposed, not just edit/exclude existing ones).
+    It has no AI draft to compare against, so it's always user_edited."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "답변"})
+    candidates = resp.json()["candidates"]
+    assert len(candidates) == 1  # the fake LLM's default: one candidate per non-empty answer
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={
+            "confirmations": [
+                {"index": 0, "final_text": candidates[0]["content"], "was_edited": False, "include": True},
+                {"index": 1, "final_text": "AI가 안 뽑아낸, 직접 추가한 사실", "was_edited": True, "include": True},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    facts = resp.json()["confirmed_facts"]
+    assert len(facts) == 2
+    manual_fact = next(f for f in facts if f["content"] == "AI가 안 뽑아낸, 직접 추가한 사실")
+    assert manual_fact["source_type"] == "user_edited"
 
 
 def test_empty_answer_yields_no_candidates_and_does_not_get_stuck(session_client):
@@ -665,13 +733,15 @@ def test_excluded_candidate_is_not_persisted(session_client):
     assert ctx["confirmed_facts"] == []
 
 
-def test_max_questions_per_category_forces_advance_even_with_llm_never_satisfied(session_client):
-    """MAX_QUESTIONS_PER_CATEGORY (2026-09-05: lowered to 3 on request —
-    "카테고리당 질문 횟수를 늘리자. 3회까지") is a hard ceiling on the TOTAL number
-    of questions (fixed + AI-added combined), not just AI follow-ups on top of
-    an already-exhausted fixed set — so it must force an advance even while
-    judge_drilldown/judge_sufficiency would keep wanting more, and even while
-    part_time's fixed set (4 questions) still has one left unasked."""
+def test_followup_budget_caps_ai_questions_but_never_skips_a_fixed_one(session_client):
+    """Regression guard for the 2026-09-06 redesign: the old single shared
+    cap (MAX_QUESTIONS_PER_CATEGORY) could force a category to advance
+    before its fixed "achievement" question (STAR's Result) was ever asked,
+    if AI-added drill-downs had already eaten the whole budget. Now the
+    followup/drill-down budget (MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY) is
+    tracked separately and only caps AI-added questions — even an LLM that
+    wants to drill down after every single answer can't stop all of
+    part_time's 4 fixed questions from eventually being asked."""
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
@@ -679,12 +749,95 @@ def test_max_questions_per_category_forces_advance_even_with_llm_never_satisfied
     session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
     session_client.fake_llm._drilldown_queue = [DrilldownDecision(should_ask=True, question_text="더 자세히 말해주세요")] * 10
 
-    confirm_body = None
-    for _ in range(MAX_QUESTIONS_PER_CATEGORY):
-        _, _, confirm_body = _do_turn(session_client, headers, session_id)
+    asked_base_questions: list[str] = []
+    followup_count = 0
+    confirm_body = {"category_done": False}
+    for _ in range(20):  # generous safety cap against an infinite loop bug
+        if confirm_body["category_done"]:
+            break
+        ask_body, _, confirm_body = _do_turn(session_client, headers, session_id)
+        if ask_body["question_source"] == "base":
+            asked_base_questions.append(ask_body["question_text"])
+        else:
+            followup_count += 1
 
     assert confirm_body["category_done"] is True
     assert confirm_body["status"] == "RESULT_GENERATE"
+    # All 4 fixed questions landed, in order, despite the LLM wanting to
+    # drill down after every one of them.
+    assert asked_base_questions == [q.text for q in BASE_QUESTIONS["part_time"]]
+    # The AI-added budget was fully used but not exceeded.
+    assert followup_count == MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+
+    ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
+    fact_types = [f["fact_type"] for f in ctx["confirmed_facts"]]
+    assert fact_types.count("followup") == MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+    assert len(fact_types) == len(BASE_QUESTIONS["part_time"]) + MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+
+
+def test_drilldown_heuristic_backup_probes_a_vague_answer_when_all_llm_providers_fail(session_client):
+    """When judge_drilldown itself can't be called because every LLM
+    provider is down (the known local-dev limitation: a placeholder
+    GEMINI_API_KEY means the fallback provider can't rescue a local model's
+    malformed JSON), a rule-based backup still guarantees at least a minimal
+    probe for an answer too short to be useful — instead of silently moving
+    straight to the next fixed question (2026-09-06)."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("project",))
+
+    class DrilldownFailingProvider:
+        def __getattr__(self, name):
+            return getattr(session_client.fake_llm, name)
+
+        async def judge_drilldown(self, context):
+            raise AllProvidersFailedError()
+
+    app.dependency_overrides[get_llm_provider] = lambda: DrilldownFailingProvider()
+    try:
+        session_client.fake_llm._facts_queue = [
+            [FactCandidate(content="개발함", fact_type="task", based_on=BasedOn(type="generic_pattern"))],
+        ]
+        _, _, confirm_body = _do_turn(session_client, headers, session_id, answer_text="개발함")
+        assert confirm_body["category_done"] is False
+
+        resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+        assert resp.json()["question_source"] == "followup"
+        assert "구체적으로" in resp.json()["question_text"]
+    finally:
+        app.dependency_overrides[get_llm_provider] = lambda: session_client.fake_llm
+
+
+def test_drilldown_heuristic_backup_does_not_probe_a_detailed_answer(session_client):
+    """The rule-based backup (see test above) must not over-trigger — a
+    reasonably detailed answer shouldn't get an extra probe question just
+    because the LLM providers happened to be unavailable that turn."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("project",))
+
+    class DrilldownFailingProvider:
+        def __getattr__(self, name):
+            return getattr(session_client.fake_llm, name)
+
+        async def judge_drilldown(self, context):
+            raise AllProvidersFailedError()
+
+    app.dependency_overrides[get_llm_provider] = lambda: DrilldownFailingProvider()
+    try:
+        detailed_answer = "학교 축제 웹사이트 예약 시스템을 기획하고 백엔드 API를 FastAPI로 직접 개발했습니다"
+        session_client.fake_llm._facts_queue = [
+            [FactCandidate(content=detailed_answer, fact_type="task", based_on=BasedOn(type="generic_pattern"))],
+        ]
+        _, _, confirm_body = _do_turn(session_client, headers, session_id, answer_text=detailed_answer)
+        assert confirm_body["category_done"] is False
+
+        resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+        # No drill-down interjected — straight to the second fixed question.
+        assert resp.json()["question_source"] == "base"
+        assert resp.json()["question_text"] == BASE_QUESTIONS["project"][1].text
+    finally:
+        app.dependency_overrides[get_llm_provider] = lambda: session_client.fake_llm
 
 
 def test_session_create_and_delete(session_client):

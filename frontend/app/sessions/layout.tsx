@@ -4,20 +4,17 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { sessionApi, type SessionRead } from "@/lib/api-client";
+import { sessionApi, type SessionKind, type SessionRead } from "@/lib/api-client";
 import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
 import { useAuth } from "@/lib/auth-context";
 import { useSessionsList } from "@/lib/use-sessions-list";
+import { GAP_FILL_STATUS_LABELS, JOB_SEARCH_STATUS_LABELS } from "@/lib/session-routes";
 
-const STATUS_LABELS: Record<string, string> = {
-  PERIOD_INPUT: "기간 입력",
-  CATEGORY_SELECT: "카테고리 선택",
-  RECORD_UPLOAD: "기록물 업로드",
-  INTERVIEWING: "인터뷰 중",
-  RESULT_GENERATE: "결과 생성 중",
-  RESULT_REVIEW: "결과 확인",
-};
+function statusLabel(session: SessionRead): string {
+  const labels = session.kind === "job_search" ? JOB_SEARCH_STATUS_LABELS : GAP_FILL_STATUS_LABELS;
+  return labels[session.status] ?? session.status;
+}
 
 function SessionRow({ session, isActive, accessToken }: { session: SessionRead; isActive: boolean; accessToken: string }) {
   const router = useRouter();
@@ -87,7 +84,7 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
             <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {session.title ?? new Date(session.created_at).toLocaleDateString("ko-KR")}
             </div>
-            <div style={{ color: "var(--muted-text)" }}>{STATUS_LABELS[session.status] ?? session.status}</div>
+            <div style={{ color: "var(--muted-text)" }}>{statusLabel(session)}</div>
           </Link>
         )}
         {!isEditing && (
@@ -145,12 +142,12 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions() });
   }, [pathname, queryClient]);
 
-  async function handleNewSession() {
+  async function handleNewSession(kind: SessionKind) {
     if (!accessToken) return;
     setCreateError(null);
     setIsCreating(true);
     try {
-      const session = await sessionApi.create(accessToken);
+      const session = await sessionApi.create(accessToken, { kind });
       await queryClient.invalidateQueries({ queryKey: queryKeys.sessions() });
       router.push(`/sessions/${session.id}`);
     } catch (err) {
@@ -159,6 +156,9 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
       setIsCreating(false);
     }
   }
+
+  const gapFillSessions = sessions?.filter((s) => s.kind !== "job_search") ?? [];
+  const jobSearchSessions = sessions?.filter((s) => s.kind === "job_search") ?? [];
 
   return (
     <div className="app-shell">
@@ -176,25 +176,69 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
       <div className={`sidebar-backdrop ${isSidebarOpen ? "is-open" : ""}`} onClick={() => setIsSidebarOpen(false)} />
 
       <aside className={`app-sidebar ${isSidebarOpen ? "is-open" : ""}`}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ fontSize: 14, color: "var(--muted-text)", margin: 0 }}>내 세션</h2>
-          <button type="button" onClick={handleNewSession} disabled={isCreating} title="새 세션 시작" style={{ fontSize: 12 }}>
-            {isCreating ? "..." : "+ 새 세션"}
-          </button>
-        </div>
         {createError && <p style={{ color: "crimson", fontSize: 11, marginBottom: 8 }}>{createError}</p>}
-        {!sessions || sessions.length === 0 ? (
-          <p style={{ fontSize: 13, color: "var(--muted-text)" }}>세션이 없습니다.</p>
-        ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-            {sessions.map((session) =>
-              accessToken ? (
-                <SessionRow key={session.id} session={session} isActive={session.id === params.id} accessToken={accessToken} />
-              ) : null,
-            )}
-          </ul>
-        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <SessionGroup
+            title="공백기 채우기"
+            newLabel="+ 공백기 채우기"
+            onNew={() => handleNewSession("gap_fill")}
+            isCreating={isCreating}
+            sessions={gapFillSessions}
+            activeId={params.id}
+            accessToken={accessToken}
+          />
+          <SessionGroup
+            title="일자리 찾기"
+            newLabel="+ 일자리 찾기"
+            onNew={() => handleNewSession("job_search")}
+            isCreating={isCreating}
+            sessions={jobSearchSessions}
+            activeId={params.id}
+            accessToken={accessToken}
+          />
+        </div>
       </aside>
+    </div>
+  );
+}
+
+function SessionGroup({
+  title,
+  newLabel,
+  onNew,
+  isCreating,
+  sessions,
+  activeId,
+  accessToken,
+}: {
+  title: string;
+  newLabel: string;
+  onNew: () => void;
+  isCreating: boolean;
+  sessions: SessionRead[];
+  activeId: string | undefined;
+  accessToken: string | null;
+}) {
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <h2 style={{ fontSize: 14, color: "var(--muted-text)", margin: 0 }}>{title}</h2>
+        <button type="button" onClick={onNew} disabled={isCreating} title={newLabel} style={{ fontSize: 12 }}>
+          {isCreating ? "..." : newLabel}
+        </button>
+      </div>
+      {sessions.length === 0 ? (
+        <p style={{ fontSize: 13, color: "var(--muted-text)" }}>세션이 없습니다.</p>
+      ) : (
+        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          {sessions.map((session) =>
+            accessToken ? (
+              <SessionRow key={session.id} session={session} isActive={session.id === activeId} accessToken={accessToken} />
+            ) : null,
+          )}
+        </ul>
+      )}
     </div>
   );
 }

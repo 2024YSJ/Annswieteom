@@ -21,6 +21,7 @@ class RecordRead(BaseModel):
     category_id: uuid.UUID | None
     record_type: str
     source_url: str | None
+    original_filename: str | None
     platform: str
     parse_status: str
     parse_error: str | None

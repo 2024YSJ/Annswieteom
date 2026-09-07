@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -13,16 +14,20 @@ from app.models.record import Record
 from app.models.session import Session as SessionModel
 from app.schemas.record import BlogRecordCreate, RecordRead, TextRecordCreate
 from app.services import interview_orchestrator as orchestrator
+from app.services.record_pipeline.document_parser import DOCUMENT_EXTENSIONS
 from app.services.record_pipeline.parsers import velog
-from app.services.record_pipeline.pipeline import process_image_record, process_record
+from app.services.record_pipeline.pipeline import process_document_record, process_image_record, process_record
 from app.services.storage import SupabaseStorage, get_storage
 
 router = APIRouter(prefix="/sessions", tags=["records"])
 
-_ALLOWED_IMAGE_CONTENT_TYPES = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
+# 확장자로 판별한다(브라우저가 넘기는 content_type은 .md/.hwp 등에서 신뢰도가 낮음 —
+# 비어있거나 "application/octet-stream"으로 오는 경우가 흔함).
+_ALLOWED_IMAGE_EXTENSIONS = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
 }
 
 
@@ -32,6 +37,10 @@ def get_process_record():
 
 def get_process_image_record():
     return process_image_record
+
+
+def get_process_document_record():
+    return process_document_record
 
 
 def _require_record_creatable(session: SessionModel) -> None:
@@ -132,33 +141,50 @@ async def create_text_record(
 
 
 @router.post("/{session_id}/records/upload", response_model=RecordRead, status_code=status.HTTP_201_CREATED)
-async def upload_image_record(
+async def upload_file_record(
     background_tasks: BackgroundTasks,
     file: UploadFile,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
     storage: SupabaseStorage = Depends(get_storage),
     process_image_record_fn=Depends(get_process_image_record),
+    process_document_record_fn=Depends(get_process_document_record),
 ) -> Record:
+    """이미지(OCR) 또는 문서(txt/md/docx/hwp — 텍스트 직접 추출) 하나를 업로드한다.
+    여러 파일을 한 번에 올리는 건 프론트가 파일마다 이 엔드포인트를 반복 호출하는
+    방식으로 처리한다(create_blog_record의 velog 목록 가져오기와 같은 패턴 — 파일
+    하나가 실패해도 나머지에 영향이 없다).
+    """
     _require_record_creatable(session)
 
-    extension = _ALLOWED_IMAGE_CONTENT_TYPES.get(file.content_type or "")
-    if extension is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported_image_type")
+    filename = file.filename or ""
+    extension = Path(filename).suffix.lower()
+    is_image = extension in _ALLOWED_IMAGE_EXTENSIONS
+    is_document = extension in DOCUMENT_EXTENSIONS
+    if not is_image and not is_document:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported_file_type")
 
     content = await file.read()
+    record_type = "image" if is_image else "document"
+    content_type = _ALLOWED_IMAGE_EXTENSIONS[extension] if is_image else "application/octet-stream"
 
-    record = Record(id=uuid.uuid4(), session_id=session.id, category_id=session.current_category_id, record_type="image")
+    record = Record(
+        id=uuid.uuid4(),
+        session_id=session.id,
+        category_id=session.current_category_id,
+        record_type=record_type,
+        original_filename=filename or None,
+    )
     # 사용자·세션·기록물 단위로 경로를 분리해 다른 사용자의 파일과 절대 겹치지 않게 한다
     # (person_B_frontend_backend/03_records_feature.md 1-1절).
     record.storage_path = f"records/{session.user_id}/{session.id}/{record.id}{extension}"
-    await storage.upload(record.storage_path, content, file.content_type)
+    await storage.upload(record.storage_path, content, content_type)
 
     db.add(record)
     await db.commit()
     await db.refresh(record)
 
-    background_tasks.add_task(process_image_record_fn, record.id)
+    background_tasks.add_task(process_image_record_fn if is_image else process_document_record_fn, record.id)
     return record
 
 

@@ -20,15 +20,26 @@ export function AuthHeader() {
   return (
     <header
       style={{
-        position: "fixed",
+        // sticky (not fixed) so it stays in normal document flow — every
+        // page's content naturally starts below it instead of needing its
+        // own top-padding to avoid being covered (it was `fixed` with no
+        // width/background before, so it just floated over whatever content
+        // happened to be underneath at scroll position 0, text overlapping
+        // text — reported as "메뉴바 형태로 나타나지 않아 글자가 겹침", 2026-09-06).
+        position: "sticky",
         top: 0,
         left: 0,
+        right: 0,
+        width: "100%",
         padding: "12px 16px",
         display: "flex",
         alignItems: "center",
         gap: 12,
         fontSize: 14,
+        background: "var(--background)",
+        borderBottom: "1px solid var(--border)",
         zIndex: 10,
+        boxSizing: "border-box",
       }}
     >
       {isLoading ? null : user ? (

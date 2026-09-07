@@ -18,6 +18,10 @@ from app.services.llm.base import (
     DrilldownDecision,
     FactCandidate,
     InterviewContext,
+    JobFitResult,
+    JobPosting,
+    JobPreferenceInferenceResult,
+    JobPreferences,
     ParagraphDraft,
     PeriodSuggestion,
     ProviderUnavailableError,
@@ -219,6 +223,46 @@ class GeminiProvider:
                 for p in data["paragraphs"]
             ]
             return DraftDocument(paragraphs=paragraphs)
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
+    async def extract_job_preferences(self, free_text: str) -> JobPreferences:
+        prompt = _render("extract_job_preferences.jinja", free_text=free_text)
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            return JobPreferences(
+                salary_min=data.get("salary_min"),
+                salary_max=data.get("salary_max"),
+                location=data.get("location") or None,
+                education_level=data.get("education_level") or None,
+                career_years=data.get("career_years"),
+                work_style_tags=[str(t) for t in data.get("work_style_tags", [])],
+            )
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
+    async def judge_job_fit(self, preferences: JobPreferences, posting: JobPosting) -> JobFitResult:
+        prompt = _render("job_fit_judgment.jinja", preferences=preferences, posting=posting)
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            return JobFitResult(fit=bool(data["fit"]), reason=data.get("reason", ""))
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
+    async def infer_job_preferences_from_facts(
+        self, confirmed_facts: list[ConfirmedFact]
+    ) -> JobPreferenceInferenceResult:
+        prompt = _render("infer_job_preferences.jinja", confirmed_facts=confirmed_facts)
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            return JobPreferenceInferenceResult(
+                work_style_tags=[str(t) for t in data.get("work_style_tags", [])],
+                keyword_hints=[str(t) for t in data.get("keyword_hints", [])],
+                notes=data.get("notes", ""),
+            )
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
 

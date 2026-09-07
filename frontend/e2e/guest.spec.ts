@@ -8,27 +8,32 @@ test.describe("guest sessions", () => {
   test("guest can start exactly one session and sees it in the sidebar", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("button", { name: /게스트로 시작하기/ })).toBeVisible();
+    await page.getByRole("button", { name: /게스트로 시작하기/ }).click();
 
+    // Logging in (guest or otherwise) with zero sessions lands on the
+    // 공백기 채우기/일자리 찾기 chooser instead of auto-creating a session —
+    // the actual POST /sessions only fires once one of those is picked.
+    await expect(page.getByRole("button", { name: "공백기 채우기" })).toBeVisible();
     const [createResponse] = await Promise.all([
       page.waitForResponse(
         (res) => res.url().endsWith("/api/v1/sessions") && res.request().method() === "POST",
       ),
-      page.getByRole("button", { name: /게스트로 시작하기/ }).click(),
+      page.getByRole("button", { name: "공백기 채우기" }).click(),
     ]);
     expect(createResponse.status()).toBe(201);
 
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
-    await expect(page.getByText("내 세션")).toBeVisible();
+    await expect(page.getByText("공백기 채우기", { exact: true })).toBeVisible();
 
     // A guest is already logged in now (with one session) - going back to "/"
-    // silently resumes that same session (no button to click through) rather
+    // silently resumes that same session (no chooser to click through) rather
     // than offering to start a new one.
     await page.goto("/");
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
-    // The sidebar's own "+ 새 세션" button is the only remaining path to
-    // attempt a second session, and that's what should hit the guest limit.
-    await page.getByRole("button", { name: "+ 새 세션" }).click();
+    // The sidebar's own "+ 공백기 채우기" button is the only remaining path
+    // to attempt a second session, and that's what should hit the guest limit.
+    await page.getByRole("button", { name: "+ 공백기 채우기" }).click();
     await expect(
       page.getByText("비회원은 세션을 1개까지만 만들 수 있어요. 회원가입하면 계속 이어서 쓸 수 있습니다."),
     ).toBeVisible();
@@ -41,6 +46,8 @@ test.describe("guest sessions", () => {
 
     await page.goto("/");
     await page.getByRole("button", { name: /게스트로 시작하기/ }).click();
+    await expect(page.getByRole("button", { name: "공백기 채우기" })).toBeVisible();
+    await page.getByRole("button", { name: "공백기 채우기" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
     const sessionUrl = page.url();
 

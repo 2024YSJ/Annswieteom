@@ -36,11 +36,17 @@ class ActivityCategory(Base):
     custom_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
-    # 이 카테고리에서 지금까지 던진 질문 총 개수(고정+AI 추가 합산) — /interview/ask가
-    # 새 질문을 만들 때마다 하나씩 올라간다(같은 질문을 idempotent하게 재반환할 때는
-    # 안 올라감). interview_orchestrator.MAX_QUESTIONS_PER_CATEGORY와 짝을 이뤄
-    # 카테고리당 총 질문 수 상한을 강제하는 근거 데이터다.
+    # 이 카테고리에서 지금까지 던진 고정 질문 개수. 고정 질문은 카테고리 유형별로
+    # 정해진 짧은 목록(BASE_QUESTIONS)이라 예산 상한이 필요 없다 — 순전히 기록용.
     questions_asked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 고정 질문 사이/이후에 AI가 끼워넣는 드릴다운·후속 질문 개수. questions_asked와
+    # 분리한 이유(2026-09-06): 예전엔 하나의 상한(MAX_QUESTIONS_PER_CATEGORY)이 고정+AI
+    # 질문을 합쳐서 셌는데, 그래서 고정 질문이 5개인 카테고리(project/freelance/other)는
+    # AI가 파고들 여지가 사실상 1턴뿐이었고, 예산이 바닥나면 고정 질문(특히 결과/성과
+    # 질문)이 아직 안 나왔어도 강제로 다음 카테고리로 넘어가 버렸다. 이제 고정 질문은
+    # 절대 건너뛰지 않고 전부 물어보며, 이 카운터만 interview_orchestrator.
+    # MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY와 짝을 이뤄 별도로 상한을 강제한다.
+    followup_questions_asked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 이 카테고리 하나 안에 서로 다른 개별 활동이 여러 개 있는지("공모전을 3개 했어요" 같은
     # 경우) 이미 물어봤는지 — 카테고리당 딱 한 번만 묻고, 자식으로 쪼개져 생성된 카테고리는
     # 생성 시점에 바로 True로 만들어 재귀적으로 다시 쪼개려 들지 않게 막는다

@@ -53,7 +53,10 @@ export function RecordStatusRow({
 
   return (
     <li>
-      <strong>{data.record_type === "blog_url" ? data.source_url : data.record_type === "image" ? "이미지" : "텍스트"}</strong>
+      <strong>
+        {data.original_filename ??
+          (data.record_type === "blog_url" ? data.source_url : data.record_type === "image" ? "이미지" : "텍스트")}
+      </strong>
       {" — "}
       {PARSE_STATUS_LABELS[data.parse_status]}
       {data.parse_status === "FAILED" && data.parse_error && (

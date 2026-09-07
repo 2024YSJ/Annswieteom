@@ -17,7 +17,7 @@ import { queryKeys } from "./query-keys";
 // stale-error re-render mid-cold-start (production, 2026-09-05).
 const SESSION_FETCH_TIMEOUT_MS = 65000;
 
-export function useSessionContext(sessionId: string) {
+export function useSessionContext(sessionId: string, enabled = true) {
   const { accessToken, isLoading: authLoading } = useAuth();
 
   return useQuery({
@@ -28,6 +28,6 @@ export function useSessionContext(sessionId: string) {
       );
       return Promise.race([sessionApi.get(sessionId, accessToken!), timeout]);
     },
-    enabled: !authLoading && !!accessToken,
+    enabled: enabled && !authLoading && !!accessToken,
   });
 }
