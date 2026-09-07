@@ -7,12 +7,14 @@ import { errorMessage } from "@/lib/error-messages";
 import { INTERVIEW_STATUSES, RESULT_STATUSES } from "@/lib/session-routes";
 import { queryKeys } from "@/lib/query-keys";
 import { useSessionContext } from "@/lib/use-session-context";
+import { useSessionsList } from "@/lib/use-sessions-list";
 import { useAuth } from "@/lib/auth-context";
 import { PeriodSection } from "@/components/PeriodSection";
 import { CategorySection } from "@/components/CategorySection";
 import { RecordsSection } from "@/components/RecordsSection";
 import { InterviewSection } from "@/components/InterviewSection";
 import { ResultSection } from "@/components/ResultSection";
+import { JobSearchChatPage } from "@/components/JobSearchChatPage";
 import { ChatComposer, type ActiveStep, type ComposerEvent } from "@/components/ChatComposer";
 import { LoadingNotice } from "@/components/LoadingNotice";
 
@@ -20,7 +22,14 @@ export default function SessionChatPage() {
   const { id: sessionId } = useParams<{ id: string }>();
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
-  const { data: ctx, isLoading, error: loadError } = useSessionContext(sessionId);
+  // 이 세션이 어느 kind인지는 사이드바가 이미 불러온 목록(useSessionsList,
+  // 같은 react-query 캐시를 공유)에서 알아낸다 — kind별로 완전히 다른
+  // 오케스트레이터(JobSearchChatPage vs 아래 공백기 채우기 트리)를 렌더링해야
+  // 하므로, gap-fill 전용 컨텍스트(useSessionContext)는 kind가 job_search로
+  // 확정되기 전까지만 활성화한다(불필요한 요청 방지).
+  const { data: sessions } = useSessionsList();
+  const kind = sessions?.find((s) => s.id === sessionId)?.kind;
+  const { data: ctx, isLoading, error: loadError } = useSessionContext(sessionId, kind !== "job_search");
   const bottomRef = useRef<HTMLDivElement>(null);
   const [composerEvent, setComposerEvent] = useState<ComposerEvent | null>(null);
   const [composerPrefill, setComposerPrefill] = useState<string | null>(null);
@@ -41,6 +50,24 @@ export default function SessionChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [ctx?.status]);
+
+  // All hooks above this point must run on every render regardless of kind
+  // (React's rules of hooks) — this branch is the earliest point it's safe
+  // to diverge into the completely separate job-search orchestrator.
+  if (kind === "job_search") {
+    return <JobSearchChatPage sessionId={sessionId} />;
+  }
+  if (kind === undefined) {
+    // Still resolving which kind this session is (sessions list not loaded
+    // yet) — avoid flashing the gap-fill tree (or its loading/error states,
+    // which depend on a query we deliberately didn't enable yet) before we
+    // know which orchestrator actually applies.
+    return (
+      <main style={{ maxWidth: 640, margin: "80px auto" }}>
+        <LoadingNotice />
+      </main>
+    );
+  }
 
   // Must be checked before the loading branch below: react-query resolves
   // `isLoading` to false once a query settles into an error, but `data`

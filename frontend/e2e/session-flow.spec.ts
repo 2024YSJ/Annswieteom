@@ -70,8 +70,10 @@ test.describe("unified session chat flow", () => {
     await page.getByRole("button", { name: "로그인" }).click();
 
     // A freshly registered user has no sessions yet, so the landing page
-    // auto-creates one and redirects straight into it — there's no longer a
-    // manual "새로 시작하기" button to click through.
+    // offers the 공백기 채우기/일자리 찾기 choice instead of auto-creating —
+    // this flow exercises 공백기 채우기.
+    await expect(page.getByRole("button", { name: "공백기 채우기" })).toBeVisible();
+    await page.getByRole("button", { name: "공백기 채우기" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
 
     // --- Period section (active): calendar date inputs, not free text ---
@@ -89,20 +91,24 @@ test.describe("unified session chat flow", () => {
     await page.getByRole("button", { name: "확인" }).click();
 
     // --- Category completed, Records section (active) ---
-    await expect(page.getByText("선택한 활동: 아르바이트")).toBeVisible();
-    await expect(page.getByRole("button", { name: "기록물 없이 넘어가기" })).toBeVisible();
-    await page.getByRole("button", { name: "기록물 없이 넘어가기" }).click();
+    await expect(page.getByText("선택한 활동: 아르바이트")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "이 카테고리 자료 없이 넘어가기" })).toBeVisible();
+    await page.getByRole("button", { name: "이 카테고리 자료 없이 넘어가기" }).click();
 
     // --- Records completed, Interview section (active) ---
-    await expect(page.getByText("기록물 업로드를 완료했어요.")).toBeVisible();
+    // Longer timeout: this step chains a real skip-records call, a session
+    // status transition, and a session-context refetch against the real
+    // backend/DB, which can run past the default 5s assertion window.
+    await expect(page.getByText("기록물 업로드를 완료했어요.")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("▸ 아르바이트")).toBeVisible();
     await expect(page.getByText("이 아르바이트를 얼마나 자주, 어느 정도 기간 동안 하셨나요?")).toBeVisible();
 
     // Unlike the old draft-confirm flow, the composer stays mounted through
-    // the whole interview — free text answers the question, and the attach
-    // (📎) button is available at any point, not gated to the records step.
+    // the whole interview — free text answers the question. The attach (📎)
+    // control itself lives only in RecordsSection (gated to that step, per
+    // Phase 4's "move attach control off the shared composer"), so it isn't
+    // expected here.
     await expect(composerInput).toBeVisible();
-    await expect(page.getByTitle("첨부")).toBeVisible();
 
     // The composer arrives pre-filled with the AI's draft answer (editable,
     // not just a placeholder) and a tag marking it as a suggestion.
@@ -110,7 +116,7 @@ test.describe("unified session chat flow", () => {
     await expect(page.getByText("AI가 미리 써봤어요", { exact: false })).toBeVisible();
 
     // Sidebar reflects progress without a URL change.
-    await expect(page.getByText("내 세션")).toBeVisible();
+    await expect(page.getByText("공백기 채우기", { exact: true })).toBeVisible();
     await expect(page.getByText("인터뷰 중")).toBeVisible();
   });
 });

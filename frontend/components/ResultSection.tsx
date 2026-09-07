@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   documentApi,
+  sessionApi,
   type DocumentRead,
   type ParagraphRead,
   type SentenceRead,
@@ -209,10 +211,12 @@ export function ResultSection({
   accessToken: string;
   status: SessionStatus;
 }) {
+  const router = useRouter();
   const queryClient = useQueryClient();
 
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isStartingJobSearch, setIsStartingJobSearch] = useState(false);
   const [exportedText, setExportedText] = useState<string | null>(null);
   const generateFiredRef = useRef(false);
 
@@ -391,6 +395,21 @@ export function ResultSection({
     if (exportedText) await navigator.clipboard.writeText(exportedText);
   }
 
+  async function handleStartJobSearch() {
+    setError(null);
+    setIsStartingJobSearch(true);
+    try {
+      const jobSession = await sessionApi.create(accessToken, {
+        kind: "job_search",
+        linked_gap_session_id: sessionId,
+      });
+      router.push(`/sessions/${jobSession.id}`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setIsStartingJobSearch(false);
+    }
+  }
+
   if (status === "RESULT_GENERATE" && !document) {
     return (
       <ChatBubble side="left" variant="card">
@@ -445,7 +464,7 @@ export function ResultSection({
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
 
-      <div style={{ marginTop: 24, display: "flex", gap: 8 }}>
+      <div style={{ marginTop: 24, display: "flex", gap: 8, flexWrap: "wrap" }}>
         {document.status !== "FINAL" ? (
           <button type="button" disabled={isBusy} onClick={handleFinalize}>
             최종 확정
@@ -453,6 +472,11 @@ export function ResultSection({
         ) : (
           <button type="button" onClick={handleExport}>
             텍스트로 내보내기
+          </button>
+        )}
+        {paragraphs.length > 0 && (
+          <button type="button" disabled={isStartingJobSearch} onClick={handleStartJobSearch}>
+            {isStartingJobSearch ? "시작하는 중..." : "이 결과로 일자리 찾기 시작"}
           </button>
         )}
       </div>

@@ -8,9 +8,9 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import get_current_user, get_owned_session
 from app.db.session import get_db
 from app.models.activity_category import ActivityCategory
-from app.models.session import Session as SessionModel
+from app.models.session import SESSION_KINDS, Session as SessionModel
 from app.models.user import User
-from app.schemas.session import RecordChunkExcerptRead, SessionContextRead, SessionRead, SessionRename
+from app.schemas.session import RecordChunkExcerptRead, SessionContextRead, SessionCreate, SessionRead, SessionRename
 from app.services.record_pipeline.search import get_chunk_search
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -18,9 +18,16 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 @router.post("", response_model=SessionRead, status_code=status.HTTP_201_CREATED)
 async def create_session(
+    # 기본값 있는 파라미터라 기존 "본문 없는 POST /sessions" 호출도 그대로
+    # 동작한다(kind="gap_fill"로 처리) — FastAPI는 Pydantic 모델 파라미터에
+    # 기본값이 있으면 요청 본문 자체를 선택적으로 취급한다.
+    payload: SessionCreate = SessionCreate(),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionModel:
+    if payload.kind not in SESSION_KINDS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_kind")
+
     if current_user.is_guest:
         # Explicit count query, not current_user.sessions — touching a lazy
         # relationship here raises MissingGreenlet inside an async function.
@@ -30,7 +37,22 @@ async def create_session(
         if existing_count and existing_count > 0:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="guest_session_limit_reached")
 
-    session = SessionModel(user_id=current_user.id)
+    linked_gap_session_id = None
+    if payload.linked_gap_session_id is not None:
+        if payload.kind != "job_search":
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="linked_session_requires_job_search_kind")
+        linked = await db.get(SessionModel, payload.linked_gap_session_id)
+        if linked is None or linked.user_id != current_user.id or linked.kind != "gap_fill":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="linked_session_not_found")
+        linked_gap_session_id = linked.id
+
+    initial_status = "PERIOD_INPUT" if payload.kind == "gap_fill" else "JOB_PREFERENCES_INPUT"
+    session = SessionModel(
+        user_id=current_user.id,
+        kind=payload.kind,
+        linked_gap_session_id=linked_gap_session_id,
+        status=initial_status,
+    )
     db.add(session)
     await db.commit()
     await db.refresh(session)

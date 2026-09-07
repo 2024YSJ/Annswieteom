@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { sessionApi } from "@/lib/api-client";
+import { sessionApi, type SessionKind } from "@/lib/api-client";
 import { errorMessage } from "@/lib/error-messages";
 import { useSessionsList } from "@/lib/use-sessions-list";
 import { LoadingNotice } from "@/components/LoadingNotice";
@@ -16,44 +16,47 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   // Guards against firing the redirect twice (React 19 dev-mode double-invoked
-  // effects) — this effect has a side effect (session creation) when the user
-  // has none yet, same reasoning as InterviewSection's fetchedForRef.
+  // effects).
   const hasRedirectedRef = useRef(false);
 
   useEffect(() => {
-    if (isLoading || !user || sessionsLoading || !sessions || hasRedirectedRef.current) return;
+    // Only resumes an existing session — creating a brand-new one now always
+    // goes through the explicit 공백기 채우기/일자리 찾기 choice below instead
+    // of silently defaulting to gap-fill, so a user with zero sessions falls
+    // through to the chooser render branch rather than being redirected here.
+    if (isLoading || !user || sessionsLoading || !sessions || sessions.length === 0 || hasRedirectedRef.current) return;
     hasRedirectedRef.current = true;
-
-    async function goToSession() {
-      try {
-        // Sessions come back newest-first (backend orders by created_at desc)
-        // — landing here should resume the most recent one, matching the
-        // sidebar's own ordering.
-        const target = sessions![0] ?? (await sessionApi.create(accessToken!));
-        router.replace(`/sessions/${target.id}`);
-      } catch (err) {
-        hasRedirectedRef.current = false;
-        setError(errorMessage(err));
-      }
-    }
-    goToSession();
-  }, [isLoading, user, sessionsLoading, sessions, accessToken, router]);
+    // Sessions come back newest-first (backend orders by created_at desc) —
+    // landing here should resume the most recent one, matching the sidebar's
+    // own ordering.
+    router.replace(`/sessions/${sessions[0].id}`);
+  }, [isLoading, user, sessionsLoading, sessions, router]);
 
   async function handleGuestStart() {
     setError(null);
     setIsCreating(true);
     try {
-      // Only sign in here — creating the first session and navigating is
-      // left entirely to the redirect effect above. It previously happened
-      // in both places: `guestLogin()` sets `user`, which is exactly the
-      // effect's own trigger, so the effect's "sessions is empty → create
-      // one" logic and this handler's own sessionApi.create() call ran as
-      // an uncoordinated race for the very same brand-new guest, sometimes
-      // creating two sessions instead of one (production bug, 2026-09-05).
-      // Once `user` is set below, the render logic immediately shows the
-      // loading screen instead of this button, so there's no visible gap
-      // before the effect's own redirect takes over.
+      // Only sign in here — picking a flow (and creating the first session)
+      // is left entirely to the chooser buttons below, once `user` is set
+      // and the render logic shows them. Previously this also auto-created a
+      // session, racing the redirect effect for the very same brand-new
+      // guest and sometimes creating two sessions instead of one (production
+      // bug, 2026-09-05) — removing the auto-create here (and from the
+      // effect above) eliminates that race entirely rather than just guarding it.
       await guestLogin();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function startFlow(kind: SessionKind) {
+    setError(null);
+    setIsCreating(true);
+    try {
+      const session = await sessionApi.create(accessToken!, { kind });
+      router.replace(`/sessions/${session.id}`);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -84,6 +87,35 @@ export default function Home() {
         <button type="button" onClick={() => refetchSessions()} style={{ alignSelf: "center" }}>
           다시 시도
         </button>
+      </main>
+    );
+  }
+
+  // 로그인/게스트 로그인 상태고 세션 목록도 다 불러왔는데 세션이 하나도
+  // 없으면 — 새 사용자든, 딱 게스트 로그인만 막 한 사람이든 — 여기서
+  // 공백기 채우기/일자리 찾기 중 뭘로 시작할지 직접 고르게 한다. 그 외
+  // (아직 로딩 중이거나, 이미 세션이 있어 위 effect가 리다이렉트를
+  // 처리하는 중)에는 계속 로딩 화면만 보여준다.
+  if (user && !sessionsLoading && sessions && sessions.length === 0) {
+    return (
+      <main style={mainStyle}>
+        <h1>안 쉬었음</h1>
+        <p>무엇부터 시작할까요?</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <button type="button" onClick={() => startFlow("gap_fill")} disabled={isCreating}>
+            {isCreating ? "시작하는 중..." : "공백기 채우기"}
+          </button>
+          <p style={{ fontSize: 13, color: "var(--muted-text)", margin: 0 }}>
+            공백기 활동을 인터뷰로 정리해 근거 있는 STAR 경력기술서를 만들어요.
+          </p>
+          <button type="button" onClick={() => startFlow("job_search")} disabled={isCreating}>
+            {isCreating ? "시작하는 중..." : "일자리 찾기"}
+          </button>
+          <p style={{ fontSize: 13, color: "var(--muted-text)", margin: 0 }}>
+            희망 조건을 알려주시면 채용정보를 찾아 적합도까지 판단해드려요.
+          </p>
+        </div>
+        {error && <p style={{ color: "crimson" }}>{error}</p>}
       </main>
     );
   }

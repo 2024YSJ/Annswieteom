@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     supabase_service_key: str = ""
     supabase_storage_bucket: str = "records"
 
+    # 워크넷(고용24) 채용정보 Open API — 무료 즉시 발급, 조회 전용.
+    # https://www.work24.go.kr 회원가입 후 Open API 메뉴에서 발급.
+    worknet_api_key: str = ""
+    worknet_api_base_url: str = "https://openapi.work.go.kr/opi/opi/opia/wantedApi.do"
+
     # 12-4절: 생성된 문장과 인용된 confirmed_facts 간 코사인 유사도 최소값.
     # 0.45~0.65 범위에서 실제 생성 샘플로 튜닝 — app/services/consistency_check.py 참고.
     consistency_threshold: float = 0.55

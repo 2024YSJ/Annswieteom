@@ -18,6 +18,7 @@ from app.models.gap_period import GapPeriod
 from app.models.generated_document import GeneratedDocument
 from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
+from app.models.job_search_preferences import JobSearchPreferences
 from app.models.record import Record
 from app.models.record_chunk import RecordChunk
 from app.models.refresh_token import RefreshToken
@@ -30,6 +31,9 @@ from app.services.llm.base import (
     DraftDocument,
     DrilldownDecision,
     FactCandidate,
+    JobFitResult,
+    JobPreferenceInferenceResult,
+    JobPreferences,
     ParagraphDraft,
     PeriodSuggestion,
     SentenceWithEvidence,
@@ -97,6 +101,9 @@ class FakeLLMProvider:
         period_suggestion=_DEFAULT_PERIOD_SUGGESTION,
         drilldown_decisions: list[DrilldownDecision] | None = None,
         activity_items: list[list[str]] | None = None,
+        job_preference_suggestion: "JobPreferences | None" = None,
+        job_fit_results: list["JobFitResult"] | None = None,
+        job_preference_inference: "JobPreferenceInferenceResult | None" = None,
     ):
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
@@ -107,6 +114,10 @@ class FakeLLMProvider:
         self._period_suggestion = period_suggestion
         self._drilldown_queue = list(drilldown_decisions) if drilldown_decisions else None
         self._activity_items_queue = list(activity_items) if activity_items else None
+        self._job_preference_suggestion = job_preference_suggestion
+        self._job_fit_queue = list(job_fit_results) if job_fit_results else None
+        self._job_preference_inference = job_preference_inference
+        self.job_fit_calls: list[tuple] = []
         self.activity_items_calls: list[tuple[str, str]] = []
         self.extract_facts_calls: list[tuple[str, str, str]] = []
         self.followup_calls: list[str] = []
@@ -186,6 +197,22 @@ class FakeLLMProvider:
             return PeriodSuggestion(start_date=date(2025, 1, 1), end_date=date(2025, 6, 30))
         return self._period_suggestion
 
+    async def extract_job_preferences(self, free_text):
+        if self._job_preference_suggestion is not None:
+            return self._job_preference_suggestion
+        return JobPreferences()
+
+    async def judge_job_fit(self, preferences, posting):
+        self.job_fit_calls.append((preferences, posting))
+        if self._job_fit_queue:
+            return self._job_fit_queue.pop(0)
+        return JobFitResult(fit=True, reason="조건에 맞습니다")
+
+    async def infer_job_preferences_from_facts(self, confirmed_facts):
+        if self._job_preference_inference is not None:
+            return self._job_preference_inference
+        return JobPreferenceInferenceResult()
+
     async def health_check(self) -> bool:
         return True
 
@@ -235,6 +262,7 @@ def session_client():
         Record.__table__,
         GeneratedDocument.__table__,
         GeneratedParagraph.__table__,
+        JobSearchPreferences.__table__,
     ]
 
     async def _create_tables():
@@ -313,6 +341,7 @@ def records_client():
         RecordChunk.__table__,
         GeneratedDocument.__table__,
         GeneratedParagraph.__table__,
+        JobSearchPreferences.__table__,
     ]
 
     async def _create_tables():
@@ -402,6 +431,7 @@ def document_client():
         GeneratedDocument.__table__,
         GeneratedParagraph.__table__,
         GeneratedSentence.__table__,
+        JobSearchPreferences.__table__,
     ]
 
     async def _create_tables():
