@@ -186,6 +186,36 @@ def test_get_state_after_search_returns_cached_results_without_calling_worknet_a
     assert len(fake_client.search_calls) == 1  # unchanged — no re-fetch on GET
 
 
+def test_extract_preferences_works_after_confirm_for_conversational_edits(session_client):
+    """확정(JOB_SEARCHING) 이후에도 자유 텍스트로 조건을 다시 말하면 여전히
+    해석해준다 — 더 이상 최초 1턴에서만 되는 게 아니다. 검색까지 마친
+    JOB_RESULTS_REVIEW에서도 동일하게 허용돼야 한다."""
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/preferences",
+        json={"location": "서울", "work_style_tags": []},
+        headers=_auth(token),
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/preferences/extract",
+        json={"text": "생각해보니 부산도 괜찮아요"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200
+
+    _override_job_client()
+    session_client.post(f"/api/v1/sessions/{session_id}/job-search/search", headers=_auth(token))
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/preferences/extract",
+        json={"text": "역시 재택도 필요해요"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200
+
+
 def test_job_search_endpoints_reject_gap_fill_sessions(session_client):
     token = _register_and_login(session_client)
     gap_session = session_client.post("/api/v1/sessions", headers=_auth(token)).json()

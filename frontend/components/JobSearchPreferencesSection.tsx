@@ -40,6 +40,17 @@ function mergeDraft(prev: Draft, incoming: Partial<Draft>): Draft {
   };
 }
 
+function toDraft(preferences: JobPreferencesRead): Draft {
+  return {
+    salary_min: preferences.salary_min,
+    salary_max: preferences.salary_max,
+    location: preferences.location,
+    education_level: preferences.education_level,
+    career_years: preferences.career_years,
+    work_style_tags: [...preferences.work_style_tags],
+  };
+}
+
 function summaryLine(preferences: JobPreferencesRead | null): string[] {
   if (!preferences) return [];
   const lines: string[] = [];
@@ -69,18 +80,24 @@ export function JobSearchPreferencesSection({
   composerEvent: ComposerEvent | null;
 }) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [draft, setDraft] = useState<Draft>(() => (preferences ? toDraft(preferences) : EMPTY_DRAFT));
   const [newTag, setNewTag] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const answeredNonceRef = useRef<number | null>(null);
   const seedFiredRef = useRef(false);
+  // 확정(mode="completed")된 뒤에도 사용자가 이 값을 다시 대화로 고칠 수 있게
+  // 하는 로컬 재편집 상태 — mode prop 자체는 "한 번이라도 확정됐는가"만
+  // 나타내고 더 이상 바뀌지 않으므로(JOB_PREFERENCES_INPUT을 벗어나면 세션
+  // 상태가 되돌아가지 않음), "지금 폼을 보여줄지"는 이 상태가 따로 결정한다.
+  const [isReopened, setIsReopened] = useState(false);
+  const showForm = mode === "active" || isReopened;
 
   // 연동된 공백기 세션이 있으면 처음 진입 시 자동으로 시드 제안을 받아 태그를
   // 미리 채운다 — 급여/근무지는 seed 응답 자체에 없으므로(STAR 사실만으로는
   // 유추 불가) 항상 사용자가 직접 채운다.
   useEffect(() => {
-    if (mode !== "active" || !linkedGapSessionId || seedFiredRef.current) return;
+    if (!showForm || !linkedGapSessionId || seedFiredRef.current) return;
     seedFiredRef.current = true;
     async function run() {
       try {
@@ -91,13 +108,16 @@ export function JobSearchPreferencesSection({
       }
     }
     run();
-  }, [mode, linkedGapSessionId, sessionId, accessToken]);
+  }, [showForm, linkedGapSessionId, sessionId, accessToken]);
 
   useEffect(() => {
     if (!composerEvent || composerEvent.kind !== "text" || composerEvent.forStep !== "job_preferences") return;
     if (answeredNonceRef.current === composerEvent.nonce) return;
     answeredNonceRef.current = composerEvent.nonce;
 
+    // 완료 요약만 보이던 중에 새 메시지가 오면, 그 자체가 "다시 고치겠다"는
+    // 의사표시다 — 폼을 다시 연다(이미 열려 있었으면 기존 draft 위에 얹기만).
+    setIsReopened(true);
     setError(null);
     async function run() {
       try {
@@ -110,6 +130,15 @@ export function JobSearchPreferencesSection({
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composerEvent?.nonce]);
+
+  function handleReopen() {
+    if (preferences) setDraft(toDraft(preferences));
+    setIsReopened(true);
+  }
+
+  function handleCancelReopen() {
+    setIsReopened(false);
+  }
 
   function updateTag(index: number, value: string) {
     setDraft((prev) => ({ ...prev, work_style_tags: prev.work_style_tags.map((t, i) => (i === index ? value : t)) }));
@@ -132,6 +161,7 @@ export function JobSearchPreferencesSection({
     try {
       await jobSearchApi.confirmPreferences(sessionId, draft, accessToken);
       await queryClient.invalidateQueries({ queryKey: queryKeys.jobSearch(sessionId) });
+      setIsReopened(false);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -139,7 +169,7 @@ export function JobSearchPreferencesSection({
     }
   }
 
-  if (mode === "completed") {
+  if (!showForm) {
     const lines = summaryLine(preferences);
     return (
       <>
@@ -147,6 +177,9 @@ export function JobSearchPreferencesSection({
         <ChatBubble side="right">
           {lines.length > 0 ? lines.map((line) => <div key={line}>{line}</div>) : "조건 없음"}
         </ChatBubble>
+        <button type="button" onClick={handleReopen} style={{ alignSelf: "flex-end", fontSize: 12 }}>
+          조건 수정하기
+        </button>
       </>
     );
   }
@@ -242,9 +275,19 @@ export function JobSearchPreferencesSection({
             </div>
           </div>
           {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
-          <button type="button" onClick={handleConfirm} disabled={isSubmitting} style={{ alignSelf: "flex-start" }}>
-            {isSubmitting ? "저장 중..." : "확인"}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={handleConfirm} disabled={isSubmitting} style={{ alignSelf: "flex-start" }}>
+              {isSubmitting ? "저장 중..." : "확인"}
+            </button>
+            {/* mode==="completed"일 때만(=이미 한 번 확정된 값을 다시 여는
+             * 경우만) 보여준다 — 최초 1회차는 아직 확정된 값 자체가 없어
+             * "취소"가 되돌아갈 곳이 없다. */}
+            {mode === "completed" && (
+              <button type="button" onClick={handleCancelReopen} disabled={isSubmitting} style={{ alignSelf: "flex-start" }}>
+                취소
+              </button>
+            )}
+          </div>
         </div>
       </ChatBubble>
     </>

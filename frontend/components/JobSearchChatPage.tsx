@@ -50,7 +50,10 @@ export function JobSearchChatPage({ sessionId }: { sessionId: string }) {
 
   const preferencesDone = state.status !== "JOB_PREFERENCES_INPUT";
   const resultsActive = state.status === "JOB_SEARCHING" || state.status === "JOB_RESULTS_REVIEW";
-  const activeStep: ActiveStep | null = preferencesDone ? null : "job_preferences";
+  // 이 페이지에서 공유 입력창이 쓰이는 곳은 선호도 편집뿐이다(결과 섹션은
+  // 버튼만 쓰고 입력창을 소비하지 않음) — 확정 후에도 조건을 자유 텍스트로
+  // 다시 말할 수 있어야 하므로(대화형 수정), 상태와 무관하게 항상 켜둔다.
+  const activeStep: ActiveStep = "job_preferences";
 
   return (
     <div style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>

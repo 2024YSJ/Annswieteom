@@ -111,7 +111,11 @@ async def extract_job_preferences(
     llm: LLMProvider = Depends(get_llm_provider),
 ) -> JobPreferencesSuggestionRead:
     _require_job_search(session)
-    _require_status("job_preferences_extract", session, "JOB_PREFERENCES_INPUT")
+    # confirm_job_preferences와 동일한 허용 목록 — 확정 후에도(검색/결과 확인
+    # 중에도) 자유 텍스트로 조건을 다시 말하면 이 엔드포인트가 해석해준다.
+    _require_status(
+        "job_preferences_extract", session, "JOB_PREFERENCES_INPUT", "JOB_SEARCHING", "JOB_RESULTS_REVIEW"
+    )
 
     # 카테고리/기간 추출과 동일한 원칙: DB에 아무것도 안 씀 — 사용자가 확인한
     # 뒤 POST /preferences를 직접 호출해야 실제로 저장된다.
