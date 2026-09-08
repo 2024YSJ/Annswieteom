@@ -181,4 +181,45 @@ test.describe("job search flow", () => {
     await expect(page.getByText("테스트회사")).toBeVisible();
     await expect(page.getByText("적합", { exact: true })).toBeVisible();
   });
+
+  test("answer the AI can't parse into this field shows an example and asks again", async ({ page }) => {
+    const email = uniqueEmail();
+    const password = "password123";
+    const composerInput = page.getByPlaceholder("메시지를 입력하세요");
+    const answerInput = page.getByLabel("답변 수정");
+
+    await page.goto("/register");
+    await page.getByLabel("이메일").fill(email);
+    await page.getByLabel("닉네임").fill("Parse Retry Tester");
+    await page.getByLabel("비밀번호 (8자 이상)").fill(password);
+    await page.getByRole("button", { name: "가입하기" }).click();
+    await expect(page).toHaveURL(/\/login$/);
+
+    await page.getByLabel("이메일").fill(email);
+    await page.getByLabel("비밀번호").fill(password);
+    await page.getByRole("button", { name: "로그인" }).click();
+
+    await page.getByRole("button", { name: "일자리 찾기" }).click();
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
+
+    // --- Q1: 직무/분야 — 이 필드와 무관한 답이면(추출 결과가 전부 빈 값)
+    // 곧장 후보 카드로 넘어가지 않고, 예시를 보여주며 다시 물어야 한다.
+    await expect(page.getByText("어떤 직무나 분야의 일자리를 찾고 계신가요?", { exact: false })).toBeVisible();
+    await mockNextExtract(page, {}); // 전부 빈 값 — 아무것도 못 뽑은 상황을 흉내
+    await composerInput.fill("음... 잘 모르겠어요");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await expect(page.getByText("답변에서 직무/분야를 이해하지 못했어요.", { exact: false })).toBeVisible({ timeout: 10000 });
+    // 아직 후보 카드로 안 넘어갔으므로 "다음" 버튼도, 편집 입력창도 없다 —
+    // "건너뛰기"만 있고, 다시 답하거나 명시적으로 건너뛸 수 있어야 한다.
+    await expect(page.getByRole("button", { name: "다음" })).not.toBeVisible();
+    await expect(answerInput).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "특별히 없어요 / 건너뛰기" })).toBeVisible();
+
+    // 이번엔 제대로 답하면 힌트가 사라지고 정상적으로 후보 카드가 뜬다.
+    await mockNextExtract(page, { desired_keyword: "백엔드 개발" });
+    await composerInput.fill("백엔드 개발 쪽 일을 하고 싶어요.");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await expect(answerInput).toHaveValue("백엔드 개발", { timeout: 10000 });
+    await expect(page.getByText("답변에서 직무/분야를 이해하지 못했어요.", { exact: false })).not.toBeVisible();
+  });
 });

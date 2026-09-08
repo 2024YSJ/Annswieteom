@@ -89,6 +89,44 @@ function summarize(v: TurnValue): string {
   }
 }
 
+/** 자유 텍스트에서 이번 턴의 필드에 해당하는 값을 하나도 못 뽑은 경우 —
+ * "특별히 없어요" 버튼으로 명시적으로 건너뛴 것과 구분해야 한다(그건 이미
+ * 의도된 스킵). 이 경우는 사용자가 뭔가 답했는데 API가 쓸 수 있는 형태로
+ * 못 알아들은 것이므로, 조용히 빈 값으로 넘기지 않고 예시를 보여주며
+ * 다시 답해달라고 해야 워크넷 검색 파라미터가 무의미한 값으로 채워지지
+ * 않는다. */
+function isEmptyCandidate(v: TurnValue): boolean {
+  switch (v.field) {
+    case "keyword":
+    case "location":
+    case "education":
+      return v.value.trim() === "";
+    case "salary":
+      return v.min == null && v.max == null;
+    case "career":
+      return v.value == null;
+    case "work_style":
+      return v.tags.length === 0;
+  }
+}
+
+function exampleHint(field: string): string {
+  switch (field) {
+    case "keyword":
+      return "답변에서 직무/분야를 이해하지 못했어요. \"백엔드 개발\", \"마케팅\", \"물류\"처럼 구체적으로 다시 말씀해주세요.";
+    case "location":
+      return "답변에서 근무지를 이해하지 못했어요. \"서울\", \"부산\", \"재택\"처럼 답하거나, 상관없으면 \"상관없음\"이라고 말씀해주세요.";
+    case "salary":
+      return "답변에서 급여 조건을 이해하지 못했어요. \"3000만원 이상\", \"3000에서 4000만원\"처럼 숫자를 포함해서 다시 말씀해주세요.";
+    case "education":
+      return "답변에서 학력 조건을 이해하지 못했어요. \"고졸 이상\", \"대졸\", \"학력무관\"처럼 다시 말씀해주세요.";
+    case "career":
+      return "답변에서 경력을 이해하지 못했어요. \"3년\", \"신입\"처럼 숫자로 다시 답해주세요.";
+    default:
+      return "답변에서 선호하는 업무 스타일을 이해하지 못했어요. \"재택 가능\", \"유연근무\", \"야근 없음\"처럼 다시 말씀해주세요.";
+  }
+}
+
 interface AnsweredTurn {
   questionText: string;
   summaryText: string;
@@ -115,6 +153,7 @@ export function JobSearchInterviewSection({
   const [question, setQuestion] = useState<JobSearchQuestionRead | null>(null);
   const [answered, setAnswered] = useState<AnsweredTurn[]>([]);
   const [turnValue, setTurnValue] = useState<TurnValue | null>(null);
+  const [parseHint, setParseHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmittingState] = useState(false);
   function setIsSubmitting(value: boolean) {
@@ -133,6 +172,7 @@ export function JobSearchInterviewSection({
       const q = await jobSearchApi.askPreferenceQuestion(sessionId, accessToken);
       setQuestion(q);
       setTurnValue(null);
+      setParseHint(null);
       onPrefillChange(q.draft_answer || null);
     } catch (err) {
       setError(errorMessage(err));
@@ -158,7 +198,17 @@ export function JobSearchInterviewSection({
     async function run() {
       try {
         const suggestion = await jobSearchApi.extractPreferences(sessionId, composerEvent!.value, accessToken);
-        setTurnValue(candidateFromSuggestion(question!.field!, suggestion));
+        const candidate = candidateFromSuggestion(question!.field!, suggestion);
+        if (isEmptyCandidate(candidate)) {
+          // 뭔가 답하긴 했는데 이번 필드에 쓸 값을 하나도 못 뽑았다 — "특별히
+          // 없어요"로 명시적으로 건너뛴 것과 달리, 조용히 빈 값으로 넘어가면
+          // 워크넷 검색 파라미터가 의미 없는 값으로 채워질 수 있으므로 후보
+          // 카드로 넘어가지 않고 예시를 보여주며 다시 답해달라고 한다.
+          setParseHint(exampleHint(question!.field!));
+        } else {
+          setParseHint(null);
+          setTurnValue(candidate);
+        }
       } catch (err) {
         setError(errorMessage(err));
       } finally {
@@ -171,6 +221,7 @@ export function JobSearchInterviewSection({
 
   function handleSkip() {
     if (!question?.field) return;
+    setParseHint(null);
     setTurnValue(emptyValue(question.field));
   }
 
@@ -214,9 +265,17 @@ export function JobSearchInterviewSection({
           <ChatBubble side="left">{question.question_text}</ChatBubble>
 
           {turnValue === null ? (
-            <button type="button" onClick={handleSkip} disabled={isSubmitting} style={{ alignSelf: "flex-start", fontSize: 13 }}>
-              특별히 없어요 / 건너뛰기
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+              {parseHint && (
+                <ChatBubble side="left" variant="card">
+                  <p style={{ margin: 0, fontSize: 13 }}>{parseHint}</p>
+                </ChatBubble>
+              )}
+              {error && <p style={{ color: "crimson", fontSize: 13, margin: 0 }}>{error}</p>}
+              <button type="button" onClick={handleSkip} disabled={isSubmitting} style={{ fontSize: 13 }}>
+                특별히 없어요 / 건너뛰기
+              </button>
+            </div>
           ) : (
             <ChatBubble side="left" variant="card">
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
