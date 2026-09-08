@@ -99,6 +99,7 @@ class FakeLLMProvider:
         drilldown_decisions: list[DrilldownDecision] | None = None,
         activity_items: list[list[str]] | None = None,
         job_info_categories: list["JobInfoCategoryQuery"] | None = None,
+        job_info_relevant_indices: list[int] | None = None,
         draft_job_info_query: str | None = None,
     ):
         self._facts_queue = list(fact_candidates) if fact_candidates else None
@@ -111,8 +112,10 @@ class FakeLLMProvider:
         self._drilldown_queue = list(drilldown_decisions) if drilldown_decisions else None
         self._activity_items_queue = list(activity_items) if activity_items else None
         self._job_info_categories = job_info_categories
+        self._job_info_relevant_indices = job_info_relevant_indices
         self._draft_job_info_query = draft_job_info_query
         self.job_info_query_calls: list[str] = []
+        self.select_relevant_calls: list[tuple] = []
         self.draft_job_info_query_calls: list[list] = []
         self.activity_items_calls: list[tuple[str, str]] = []
         self.extract_facts_calls: list[tuple[str, str, str]] = []
@@ -198,6 +201,15 @@ class FakeLLMProvider:
         if self._job_info_categories is not None:
             return self._job_info_categories
         return []
+
+    async def select_relevant_job_info_results(self, query, category_label, candidates):
+        self.select_relevant_calls.append((query, category_label, candidates))
+        if self._job_info_relevant_indices is not None:
+            return self._job_info_relevant_indices
+        # Default: everything the client fetched is "relevant" — tests that
+        # only care about category routing/aggregation don't need to also
+        # configure this.
+        return [c.index for c in candidates]
 
     async def draft_job_info_query_from_facts(self, confirmed_facts):
         self.draft_job_info_query_calls.append(confirmed_facts)

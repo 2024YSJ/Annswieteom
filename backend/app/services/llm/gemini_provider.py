@@ -19,6 +19,7 @@ from app.services.llm.base import (
     FactCandidate,
     InterviewContext,
     JOB_INFO_CATEGORIES,
+    JobInfoCandidate,
     JobInfoCategoryQuery,
     ParagraphDraft,
     PeriodSuggestion,
@@ -229,12 +230,24 @@ class GeminiProvider:
         text = await self._call(prompt)
         try:
             data = json.loads(text)
-            return [
-                JobInfoCategoryQuery(category=c["category"], keywords=[str(k) for k in c.get("keywords", [])])
-                for c in data["categories"]
-                if c["category"] in JOB_INFO_CATEGORIES
-            ]
+            return [JobInfoCategoryQuery(category=c) for c in data["categories"] if c in JOB_INFO_CATEGORIES]
         except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
+    async def select_relevant_job_info_results(
+        self, query: str, category_label: str, candidates: list[JobInfoCandidate]
+    ) -> list[int]:
+        if not candidates:
+            return []
+        prompt = _render(
+            "select_relevant_job_info_results.jinja", query=query, category_label=category_label, candidates=candidates
+        )
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            valid_indices = {c.index for c in candidates}
+            return [i for i in data["relevant_indices"] if i in valid_indices]
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
 
     async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:

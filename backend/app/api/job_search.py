@@ -19,7 +19,7 @@ from app.schemas.job_search import (
     JobInfoResultRead,
 )
 from app.services.job_pipeline.job_info_client import CATEGORY_LABELS, JobInfoClient, WorknetApiError, get_job_info_client
-from app.services.llm.base import AllProvidersFailedError, LLMProvider
+from app.services.llm.base import AllProvidersFailedError, JobInfoCandidate, LLMProvider
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
 from app.services.llm.fallback import get_llm_provider
 
@@ -29,6 +29,10 @@ _CLARIFICATION_QUESTION = (
     "어떤 종류의 정보를 찾으시나요? 채용행사, 최근 공채 소식, 채용 기업 정보, "
     "직업훈련과정, 취업 지원 프로그램, 강소기업 중에서 궁금하신 걸 말씀해주세요."
 )
+
+# 관련 있다고 판단된 항목이 너무 많아도(예: 훈련과정 4개 엔드포인트 합쳐서
+# 40건 중 30건이 관련) 카드가 끝없이 늘어지지 않도록 화면에 보여줄 상한.
+_MAX_RESULTS_PER_CATEGORY = 8
 
 
 def _require_job_search(session: SessionModel) -> None:
@@ -46,7 +50,14 @@ async def query_job_info(
     """무상태 대화형 검색 — 매 질문마다 관련 카테고리(들)를 판단하고 그
     자리에서 바로 조회한다. 확정/저장할 게 없어(급여/조건을 모아뒀다가
     나중에 검색하던 이전 버전과 달리) 세션에 아무것도 영속화하지 않는다 —
-    대화 이력은 프론트가 로컬 상태로만 누적한다(devlog 16)."""
+    대화 이력은 프론트가 로컬 상태로만 누적한다(devlog 16).
+
+    카테고리 안에서 실제로 어떤 항목을 보여줄지는 워크넷 원본 목록을 통째로
+    LLM에게 보여주고 고르게 한다(select_relevant_job_info_results) — 사용자
+    질문 키워드를 응답 텍스트에 문자열로 부분일치시키던 이전 방식은 "경기
+    북부"라고 물었을 때 실제 데이터엔 "의정부"/"파주"처럼 구체적인 지명만
+    있는 경우를 전혀 못 잡아서(2026-09-08 실사용 피드백) 폐기했다 —
+    devlog 18 참고."""
     _require_job_search(session)
 
     try:
@@ -57,22 +68,38 @@ async def query_job_info(
     if not category_queries:
         return JobInfoQueryRead(categories=[], clarification_question=_CLARIFICATION_QUESTION)
 
-    async def _search_category(category: str, keywords: list[str]) -> JobInfoCategoryResultRead | None:
+    async def _search_category(category: str) -> JobInfoCategoryResultRead | None:
+        label = CATEGORY_LABELS[category]
         try:
-            results = await job_client.search(category, keywords)
+            raw_results = await job_client.search(category)
         except WorknetApiError:
             # 이 카테고리만 실패 처리하고 나머지는 계속 보여준다 — 카테고리
             # 하나가 승인 대기/오류라고 질문 전체가 실패로 보이면 안 된다.
             return None
+
+        if not raw_results:
+            return JobInfoCategoryResultRead(category=category, category_label=label, results=[])
+
+        candidates = [
+            JobInfoCandidate(index=i, title=r.title, subtitle=r.subtitle, meta_lines=r.meta_lines)
+            for i, r in enumerate(raw_results)
+        ]
+        try:
+            relevant_indices = await llm.select_relevant_job_info_results(payload.query, label, candidates)
+        except AllProvidersFailedError:
+            # 원본 목록은 받아왔지만 관련성 판단이 안 되면, 걸러지지 않은
+            # 목록을 그대로 보여주느니 이 카테고리를 빼는 쪽이 낫다 — 그게
+            # 바로 이번에 고치려는 문제(무관한 결과 노출)이기 때문이다.
+            return None
+
+        selected = [raw_results[i] for i in relevant_indices][:_MAX_RESULTS_PER_CATEGORY]
         return JobInfoCategoryResultRead(
             category=category,
-            category_label=CATEGORY_LABELS[category],
-            results=[JobInfoResultRead(**r.__dict__) for r in results],
+            category_label=label,
+            results=[JobInfoResultRead(**r.__dict__) for r in selected],
         )
 
-    searched = await asyncio.gather(
-        *[_search_category(cq.category, cq.keywords) for cq in category_queries]
-    )
+    searched = await asyncio.gather(*[_search_category(cq.category) for cq in category_queries])
     categories = [c for c in searched if c is not None]
 
     return JobInfoQueryRead(categories=categories, clarification_question=None)
