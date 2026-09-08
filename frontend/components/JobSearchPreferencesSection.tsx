@@ -6,6 +6,7 @@ import { jobSearchApi, type JobPreferencesConfirmInput, type JobPreferencesRead 
 import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
 import { ChatBubble } from "@/components/ChatBubble";
+import { JobStyleTagEditor } from "@/components/JobStyleTagEditor";
 import type { ComposerEvent } from "@/components/ChatComposer";
 
 const QUESTION_TEXT =
@@ -14,6 +15,7 @@ const QUESTION_TEXT =
 type Draft = JobPreferencesConfirmInput;
 
 const EMPTY_DRAFT: Draft = {
+  desired_keyword: null,
   salary_min: null,
   salary_max: null,
   location: null,
@@ -22,12 +24,13 @@ const EMPTY_DRAFT: Draft = {
   work_style_tags: [],
 };
 
-/** 새로 들어온 값(추출 제안이든 연동 시드든)을 기존 초안 위에 얹는다 — 이번
- * 턴에 언급 안 된 필드(null/undefined)는 기존 값을 그대로 유지해서, 사용자가
- * 여러 턴에 걸쳐 조건을 나눠 말해도 앞서 준 값이 지워지지 않게 한다.
- * work_style_tags는 교체가 아니라 중복 없이 추가한다. */
+/** 새로 들어온 값(추출 제안)을 기존 초안 위에 얹는다 — 이번 턴에 언급 안 된
+ * 필드(null/undefined)는 기존 값을 그대로 유지해서, 사용자가 여러 턴에 걸쳐
+ * 조건을 나눠 말해도 앞서 준 값이 지워지지 않게 한다. work_style_tags는
+ * 교체가 아니라 중복 없이 추가한다. */
 function mergeDraft(prev: Draft, incoming: Partial<Draft>): Draft {
   return {
+    desired_keyword: incoming.desired_keyword ?? prev.desired_keyword,
     salary_min: incoming.salary_min ?? prev.salary_min,
     salary_max: incoming.salary_max ?? prev.salary_max,
     location: incoming.location ?? prev.location,
@@ -42,6 +45,7 @@ function mergeDraft(prev: Draft, incoming: Partial<Draft>): Draft {
 
 function toDraft(preferences: JobPreferencesRead): Draft {
   return {
+    desired_keyword: preferences.desired_keyword,
     salary_min: preferences.salary_min,
     salary_max: preferences.salary_max,
     location: preferences.location,
@@ -54,6 +58,7 @@ function toDraft(preferences: JobPreferencesRead): Draft {
 function summaryLine(preferences: JobPreferencesRead | null): string[] {
   if (!preferences) return [];
   const lines: string[] = [];
+  if (preferences.desired_keyword) lines.push(`찾는 직무/분야: ${preferences.desired_keyword}`);
   if (preferences.salary_min != null || preferences.salary_max != null) {
     lines.push(`희망 급여: ${preferences.salary_min ?? "?"} ~ ${preferences.salary_max ?? "?"}`);
   }
@@ -64,59 +69,40 @@ function summaryLine(preferences: JobPreferencesRead | null): string[] {
   return lines;
 }
 
+/** 최초 1회차 입력(6개 질문을 하나씩 묻는 `JobSearchInterviewSection`)이 끝난
+ * 뒤부터만 렌더링된다 — 그래서 이 컴포넌트는 "완료 요약 + 자유롭게 다시
+ * 고치기" 역할만 맡는다(처음 입력은 더 이상 이 컴포넌트의 책임이 아니다). */
 export function JobSearchPreferencesSection({
   sessionId,
   accessToken,
-  mode,
-  linkedGapSessionId,
   preferences,
   composerEvent,
 }: {
   sessionId: string;
   accessToken: string;
-  mode: "completed" | "active";
-  linkedGapSessionId: string | null;
   preferences: JobPreferencesRead | null;
   composerEvent: ComposerEvent | null;
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<Draft>(() => (preferences ? toDraft(preferences) : EMPTY_DRAFT));
-  const [newTag, setNewTag] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const answeredNonceRef = useRef<number | null>(null);
-  const seedFiredRef = useRef(false);
-  // 확정(mode="completed")된 뒤에도 사용자가 이 값을 다시 대화로 고칠 수 있게
-  // 하는 로컬 재편집 상태 — mode prop 자체는 "한 번이라도 확정됐는가"만
-  // 나타내고 더 이상 바뀌지 않으므로(JOB_PREFERENCES_INPUT을 벗어나면 세션
-  // 상태가 되돌아가지 않음), "지금 폼을 보여줄지"는 이 상태가 따로 결정한다.
+  // JobSearchInterviewSection이 끝나자마자 이 컴포넌트가 그 자리에 새로
+  // 마운트되는데, 이때 부모의 composerEvent는 인터뷰 마지막 질문에 답할 때
+  // 쓴 메시지가 그대로 남아있다(같은 상태를 공유). 초기값을 null로 두면 그
+  // 이미 소비된 메시지를 "새 메시지"로 오인해 곧장 재편집 폼을 열어버리므로
+  // (요약 화면이 안 보이는 버그), 마운트 시점의 nonce를 "이미 처리됨"으로
+  // 시드해서 진짜 새 메시지만 반응하게 한다.
+  const answeredNonceRef = useRef<number | null>(composerEvent?.nonce ?? null);
+  // 완료 요약이 기본값이고, 사용자가 "조건 수정하기"를 누르거나 composer로
+  // 새 메시지를 보내면 그 순간에만 폼을 다시 연다.
   const [isReopened, setIsReopened] = useState(false);
-  const showForm = mode === "active" || isReopened;
-
-  // 연동된 공백기 세션이 있으면 처음 진입 시 자동으로 시드 제안을 받아 태그를
-  // 미리 채운다 — 급여/근무지는 seed 응답 자체에 없으므로(STAR 사실만으로는
-  // 유추 불가) 항상 사용자가 직접 채운다.
-  useEffect(() => {
-    if (!showForm || !linkedGapSessionId || seedFiredRef.current) return;
-    seedFiredRef.current = true;
-    async function run() {
-      try {
-        const seed = await jobSearchApi.seedFromGap(sessionId, accessToken);
-        setDraft((prev) => mergeDraft(prev, { work_style_tags: seed.work_style_tags }));
-      } catch {
-        // 연동 실패는 조용히 무시 — 사용자는 여전히 직접 입력할 수 있다.
-      }
-    }
-    run();
-  }, [showForm, linkedGapSessionId, sessionId, accessToken]);
 
   useEffect(() => {
     if (!composerEvent || composerEvent.kind !== "text" || composerEvent.forStep !== "job_preferences") return;
     if (answeredNonceRef.current === composerEvent.nonce) return;
     answeredNonceRef.current = composerEvent.nonce;
 
-    // 완료 요약만 보이던 중에 새 메시지가 오면, 그 자체가 "다시 고치겠다"는
-    // 의사표시다 — 폼을 다시 연다(이미 열려 있었으면 기존 draft 위에 얹기만).
     setIsReopened(true);
     setError(null);
     async function run() {
@@ -140,21 +126,6 @@ export function JobSearchPreferencesSection({
     setIsReopened(false);
   }
 
-  function updateTag(index: number, value: string) {
-    setDraft((prev) => ({ ...prev, work_style_tags: prev.work_style_tags.map((t, i) => (i === index ? value : t)) }));
-  }
-
-  function removeTag(index: number) {
-    setDraft((prev) => ({ ...prev, work_style_tags: prev.work_style_tags.filter((_, i) => i !== index) }));
-  }
-
-  function addTag() {
-    const trimmed = newTag.trim();
-    if (!trimmed) return;
-    setDraft((prev) => ({ ...prev, work_style_tags: [...prev.work_style_tags, trimmed] }));
-    setNewTag("");
-  }
-
   async function handleConfirm() {
     setError(null);
     setIsSubmitting(true);
@@ -169,7 +140,7 @@ export function JobSearchPreferencesSection({
     }
   }
 
-  if (!showForm) {
+  if (!isReopened) {
     const lines = summaryLine(preferences);
     return (
       <>
@@ -191,6 +162,14 @@ export function JobSearchPreferencesSection({
       </ChatBubble>
       <ChatBubble side="left" variant="card">
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            찾는 직무/분야
+            <input
+              type="text"
+              value={draft.desired_keyword ?? ""}
+              onChange={(e) => setDraft((p) => ({ ...p, desired_keyword: e.target.value || null }))}
+            />
+          </label>
           <div style={{ display: "flex", gap: 8 }}>
             <label style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
               희망 급여(최소, 만원)
@@ -237,56 +216,19 @@ export function JobSearchPreferencesSection({
           </div>
           <div>
             <div style={{ fontSize: 13, marginBottom: 4, color: "var(--muted-text)" }}>선호하는 업무 스타일</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {draft.work_style_tags.map((tag, i) => (
-                <div
-                  key={i}
-                  style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--hover-surface)", padding: "4px 8px", borderRadius: 999 }}
-                >
-                  <input
-                    value={tag}
-                    onChange={(e) => updateTag(i, e.target.value)}
-                    aria-label="업무 스타일 태그"
-                    style={{ border: "none", background: "transparent", width: `${Math.max(tag.length, 3)}ch`, fontSize: 13 }}
-                  />
-                  <button type="button" onClick={() => removeTag(i)} aria-label="태그 삭제" title="삭제" style={{ fontSize: 11 }}>
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-              <input
-                type="text"
-                value={newTag}
-                placeholder="새 태그"
-                onChange={(e) => setNewTag(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addTag();
-                  }
-                }}
-                style={{ fontSize: 13 }}
-              />
-              <button type="button" onClick={addTag} style={{ fontSize: 13 }}>
-                + 태그 추가
-              </button>
-            </div>
+            <JobStyleTagEditor
+              tags={draft.work_style_tags}
+              onChange={(work_style_tags) => setDraft((p) => ({ ...p, work_style_tags }))}
+            />
           </div>
           {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" onClick={handleConfirm} disabled={isSubmitting} style={{ alignSelf: "flex-start" }}>
               {isSubmitting ? "저장 중..." : "확인"}
             </button>
-            {/* mode==="completed"일 때만(=이미 한 번 확정된 값을 다시 여는
-             * 경우만) 보여준다 — 최초 1회차는 아직 확정된 값 자체가 없어
-             * "취소"가 되돌아갈 곳이 없다. */}
-            {mode === "completed" && (
-              <button type="button" onClick={handleCancelReopen} disabled={isSubmitting} style={{ alignSelf: "flex-start" }}>
-                취소
-              </button>
-            )}
+            <button type="button" onClick={handleCancelReopen} disabled={isSubmitting} style={{ alignSelf: "flex-start" }}>
+              취소
+            </button>
           </div>
         </div>
       </ChatBubble>
