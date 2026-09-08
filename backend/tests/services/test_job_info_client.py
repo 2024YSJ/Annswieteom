@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.services.job_pipeline import job_info_client as jic
-from app.services.job_pipeline.job_info_client import WorknetApiError, _filter_by_keywords, JobInfoResult
+from app.services.job_pipeline.job_info_client import WorknetApiError
 
 # 실제로 관찰된 오류 응답 두 형태(2026-09-08) — 정상 응답과 구분하려면 둘 다
 # 정확히 잡아내야 한다.
@@ -67,25 +67,10 @@ def _mock_get(monkeypatch, xml_text: str):
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
 
 
-def test_filter_by_keywords_returns_top_n_when_no_keywords():
-    items = [(JobInfoResult(title=f"공고{i}", subtitle="", meta_lines=[]), f"공고{i}") for i in range(5)]
-    assert len(_filter_by_keywords(items, [], limit=3)) == 3
-
-
-def test_filter_by_keywords_matches_any_keyword_case_insensitively():
-    items = [
-        (JobInfoResult(title="백엔드 개발자", subtitle="", meta_lines=[]), "백엔드 개발자 IT"),
-        (JobInfoResult(title="영업 담당자", subtitle="", meta_lines=[]), "영업 담당자 sales"),
-    ]
-    result = _filter_by_keywords(items, ["it"], limit=8)
-    assert len(result) == 1
-    assert result[0].title == "백엔드 개발자"
-
-
 @pytest.mark.asyncio
 async def test_search_job_fairs_parses_real_shaped_response(monkeypatch):
     _mock_get(monkeypatch, _JOB_FAIR_XML)
-    results = await jic.search_job_fairs(keywords=[])
+    results = await jic.search_job_fairs()
     assert len(results) == 1
     assert results[0].title == "2026년 충청권 취업박람회"
     assert results[0].subtitle == "대전/충청 지역"
@@ -95,7 +80,7 @@ async def test_search_job_fairs_parses_real_shaped_response(monkeypatch):
 @pytest.mark.asyncio
 async def test_search_public_recruitment_parses_real_shaped_response(monkeypatch):
     _mock_get(monkeypatch, _PUBLIC_RECRUITMENT_XML)
-    results = await jic.search_public_recruitment(keywords=[])
+    results = await jic.search_public_recruitment()
     assert results[0].title == "2026년 신규직원 채용"
     assert results[0].subtitle == "농업협동조합중앙회"
     assert results[0].detail_url == "https://nhcenter.incruit.com/hire/1"
@@ -105,7 +90,7 @@ async def test_search_public_recruitment_parses_real_shaped_response(monkeypatch
 @pytest.mark.asyncio
 async def test_search_public_recruitment_companies_parses_real_shaped_response(monkeypatch):
     _mock_get(monkeypatch, _PUBLIC_RECRUITMENT_COMPANY_XML)
-    results = await jic.search_public_recruitment_companies(keywords=[])
+    results = await jic.search_public_recruitment_companies()
     assert results[0].title == "한독헬스케어"
     assert "헬스케어" in results[0].meta_lines[-1]
 
@@ -113,7 +98,7 @@ async def test_search_public_recruitment_companies_parses_real_shaped_response(m
 @pytest.mark.asyncio
 async def test_search_job_seeker_programs_parses_real_shaped_response(monkeypatch):
     _mock_get(monkeypatch, _JOB_SEEKER_PROGRAM_XML)
-    results = await jic.search_job_seeker_programs(keywords=[])
+    results = await jic.search_job_seeker_programs()
     assert results[0].title == "성취"
     assert any("구미고용센터" in m for m in results[0].meta_lines)
 
@@ -121,7 +106,7 @@ async def test_search_job_seeker_programs_parses_real_shaped_response(monkeypatc
 @pytest.mark.asyncio
 async def test_search_promising_smes_parses_real_shaped_response(monkeypatch):
     _mock_get(monkeypatch, _PROMISING_SME_XML)
-    results = await jic.search_promising_smes(keywords=[])
+    results = await jic.search_promising_smes()
     assert results[0].title == "주식회사 케이피에프"
     assert "업종: 금속가공제품 제조업" in results[0].meta_lines
 
@@ -130,7 +115,7 @@ async def test_search_promising_smes_parses_real_shaped_response(monkeypatch):
 async def test_get_raises_worknet_api_error_on_wanted_root_error_envelope(monkeypatch):
     _mock_get(monkeypatch, _ERROR_XML_WANTED_ROOT)
     with pytest.raises(WorknetApiError) as exc_info:
-        await jic.search_job_fairs(keywords=[])
+        await jic.search_job_fairs()
     assert "인증키" in exc_info.value.message
 
 
@@ -138,14 +123,14 @@ async def test_get_raises_worknet_api_error_on_wanted_root_error_envelope(monkey
 async def test_get_raises_worknet_api_error_on_go24_error_envelope(monkeypatch):
     _mock_get(monkeypatch, _ERROR_XML_GO24)
     with pytest.raises(WorknetApiError) as exc_info:
-        await jic.search_promising_smes(keywords=[])
+        await jic.search_promising_smes()
     assert "개인회원" in exc_info.value.message
 
 
 @pytest.mark.asyncio
 async def test_search_training_courses_aggregates_all_four_endpoints(monkeypatch):
     _mock_get(monkeypatch, _TRAINING_XML)
-    results = await jic.search_training_courses(keywords=[])
+    results = await jic.search_training_courses()
     # 4개 엔드포인트가 전부 같은 mock을 쓰므로 항목당 1건씩 총 4건이 합쳐진다.
     assert len(results) == 4
     assert all(r.title == "(주)휴넷" for r in results)
@@ -164,5 +149,5 @@ async def test_search_training_courses_continues_when_one_endpoint_fails(monkeyp
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
 
-    results = await jic.search_training_courses(keywords=[])
+    results = await jic.search_training_courses()
     assert len(results) == 3

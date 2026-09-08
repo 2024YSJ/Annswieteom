@@ -111,12 +111,23 @@ JOB_INFO_CATEGORIES = (
 @dataclass
 class JobInfoCategoryQuery:
     """classify_job_info_query 한 건 — 사용자의 자유 텍스트 질문이 이 카테고리와
-    관련 있다고 LLM이 판단했다는 뜻. keywords는 그 카테고리 안에서 결과를
-    좁히는 데 쓸 검색어(서버 API가 자유 키워드 검색을 지원 안 하는 경우가
-    많아 응답 텍스트에 대한 부분일치 필터로 쓰인다 — job_info_client 참고).
-    한 질문이 여러 카테고리에 동시에 걸릴 수 있으므로 리스트로 여러 개 온다."""
+    관련 있다고 LLM이 판단했다는 뜻. 한 질문이 여러 카테고리에 동시에 걸릴 수
+    있으므로 리스트로 여러 개 온다. 이 카테고리 안에서 실제로 어떤 항목이
+    관련 있는지는 select_relevant_job_info_results가 따로 판단한다(문자열
+    부분일치 대신 — 예: "경기 북부"라고 물었을 때 실제 데이터엔 "의정부"/
+    "파주"처럼 구체적인 지명만 있는 경우를 문자열 매칭으로는 못 잡는다,
+    devlog 18)."""
     category: str
-    keywords: list[str] = field(default_factory=list)
+
+
+@dataclass
+class JobInfoCandidate:
+    """select_relevant_job_info_results에 넘기는 조회된 항목 하나 — 실제
+    JobInfoResult 필드 중 LLM이 관련성을 판단하는 데 필요한 것만."""
+    index: int
+    title: str
+    subtitle: str
+    meta_lines: list[str] = field(default_factory=list)
 
 
 class ProviderUnavailableError(Exception):
@@ -143,5 +154,8 @@ class LLMProvider(Protocol):
     ) -> list[CategorySuggestion]: ...
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None: ...
     async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]: ...
+    async def select_relevant_job_info_results(
+        self, query: str, category_label: str, candidates: list[JobInfoCandidate]
+    ) -> list[int]: ...
     async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str: ...
     async def health_check(self) -> bool: ...

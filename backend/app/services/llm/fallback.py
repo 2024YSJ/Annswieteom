@@ -12,6 +12,7 @@ from app.services.llm.base import (
     DrilldownDecision,
     FactCandidate,
     InterviewContext,
+    JobInfoCandidate,
     JobInfoCategoryQuery,
     LLMProvider,
     PeriodSuggestion,
@@ -153,6 +154,16 @@ class FallbackProvider:
                 return await provider.classify_job_info_query(query)
             except (TimeoutError, ProviderUnavailableError) as exc:
                 self._log_failure("classify_job_info_query", provider, exc)
+        raise AllProvidersFailedError()
+
+    async def select_relevant_job_info_results(
+        self, query: str, category_label: str, candidates: list[JobInfoCandidate]
+    ) -> list[int]:
+        for provider in self.providers:
+            try:
+                return await provider.select_relevant_job_info_results(query, category_label, candidates)
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("select_relevant_job_info_results", provider, exc)
         raise AllProvidersFailedError()
 
     async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:
