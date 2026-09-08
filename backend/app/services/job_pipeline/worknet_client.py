@@ -24,7 +24,14 @@ class WorknetJobPostingClient:
         self._api_key = settings.worknet_api_key
 
     async def search(self, preferences: JobPreferences, limit: int = 15) -> list[JobPosting]:
-        keyword_parts = [preferences.location, preferences.education_level, *preferences.work_style_tags]
+        # desired_keyword(직무/분야)가 실질적인 1순위 검색어다 — 나머지는
+        # desired_keyword가 없을 때만 보조로 이어붙인다. 워크넷 지역/학력
+        # 코드 매핑은 여전히 안 하므로(v1 단순화) location/education_level은
+        # 어차피 keyword 텍스트로만 반영된다.
+        if preferences.desired_keyword:
+            keyword_parts = [preferences.desired_keyword, preferences.location]
+        else:
+            keyword_parts = [preferences.location, preferences.education_level, *preferences.work_style_tags]
         keyword = " ".join(part for part in keyword_parts if part).strip()
 
         params: dict[str, str] = {

@@ -25,12 +25,20 @@ class JobSearchPreferences(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), unique=True, nullable=False
     )
+    # 직무/분야 키워드(예: "백엔드 개발", "마케팅") — 워크넷 검색의 실질적인
+    # 1순위 검색어. desired_ 접두어는 다른 desired_* 컬럼과의 일관성.
+    desired_keyword: Mapped[str | None] = mapped_column(String(200), nullable=True)
     desired_salary_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     desired_salary_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     desired_location: Mapped[str | None] = mapped_column(String(200), nullable=True)
     education_level: Mapped[str | None] = mapped_column(String(100), nullable=True)
     career_years: Mapped[int | None] = mapped_column(Integer, nullable=True)
     work_style_tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    # 최초 1회차 대화형 질문(job_search_question_bank.JOB_SEARCH_QUESTIONS) 중
+    # 이미 답한 필드 id 목록 — 다음 질문을 고르는 데만 쓰인다. 6개 다 채워지면
+    # 그 시점부터 이 세션은 "확정 후 재편집" 플로우로 넘어가고 이 컬럼은
+    # 더 이상 안 쓰인다.
+    completed_fields: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     free_text_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 마지막 검색+적합도 판단 결과 캐시 — 새로고침 시 외부 API/LLM을 다시
     # 호출하지 않고 바로 보여주기 위함. 세션당 가장 최근 검색 1건만 보관한다

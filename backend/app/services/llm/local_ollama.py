@@ -227,6 +227,7 @@ class LocalOllamaProvider:
         try:
             data = json.loads(response_text)
             return JobPreferences(
+                desired_keyword=data.get("desired_keyword") or None,
                 salary_min=data.get("salary_min"),
                 salary_max=data.get("salary_max"),
                 location=data.get("location") or None,

@@ -102,6 +102,7 @@ class JobPreferences:
     confirmed input to judge_job_fit. Any field the user hasn't stated stays
     None/empty rather than guessed — same honesty-guardrail spirit as the
     rest of this Protocol (an unstated preference must never be invented)."""
+    desired_keyword: str | None = None
     salary_min: int | None = None
     salary_max: int | None = None
     location: str | None = None

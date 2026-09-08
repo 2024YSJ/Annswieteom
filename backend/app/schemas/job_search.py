@@ -16,6 +16,7 @@ class JobPreferencesSuggestionRead(BaseModel):
     `POST /job-search/preferences`를 호출해야 실제로 저장된다.
     """
 
+    desired_keyword: str | None = None
     salary_min: int | None = None
     salary_max: int | None = None
     location: str | None = None
@@ -30,6 +31,7 @@ class JobPreferencesConfirmRequest(BaseModel):
     저장된다(카테고리 확정 후보와 동일하게, 서버는 사용자가 최종 제출한 값만
     받는다)."""
 
+    desired_keyword: str | None = None
     salary_min: int | None = None
     salary_max: int | None = None
     location: str | None = None
@@ -39,6 +41,7 @@ class JobPreferencesConfirmRequest(BaseModel):
 
 
 class JobPreferencesRead(BaseModel):
+    desired_keyword: str | None
     salary_min: int | None
     salary_max: int | None
     location: str | None
@@ -78,8 +81,38 @@ class JobSearchStateRead(BaseModel):
     status: str
     linked_gap_session_id: str | None
     preferences: JobPreferencesRead | None
+    # 최초 1회차 대화형 질문 중 이미 답한 필드 id 목록 — 프론트가 이걸로
+    # "아직 첫 입력을 안 끝냈다"(JobSearchInterviewSection) vs "이미 한 번
+    # 확정했다"(JobSearchPreferencesSection) 화면을 가른다.
+    completed_fields: list[str]
     last_searched_at: datetime | None
     results: list[JobPostingRead]
+
+
+class JobSearchQuestionRead(BaseModel):
+    """`POST /job-search/preferences/ask`와 `.../turn-confirm` 공용 응답 —
+    다음 질문이 있으면 그 질문을, 6개를 다 답했으면 done=true(이 시점에
+    session.status는 이미 JOB_SEARCHING으로 전이돼 있다)."""
+
+    done: bool
+    status: str
+    field: str | None = None
+    question_text: str | None = None
+    draft_answer: str = ""
+
+
+class JobSearchTurnConfirmRequest(BaseModel):
+    """진행 중인 턴(현재 질문)에 해당하는 값만 채워 보낸다 — 서버는
+    `pending_turn`에 캐싱해둔 field로 어느 값을 실제로 반영할지 스스로
+    판단하고 나머지는 무시한다(클라이언트가 엉뚱한 필드를 우길 수 없게)."""
+
+    desired_keyword: str | None = None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    location: str | None = None
+    education_level: str | None = None
+    career_years: int | None = None
+    work_style_tags: list[str] | None = None
 
 
 class JobSearchSeedRead(BaseModel):

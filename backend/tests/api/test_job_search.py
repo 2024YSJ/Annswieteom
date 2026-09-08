@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.main import app
 from app.services.job_pipeline.worknet_client import get_job_search_client
-from app.services.llm.base import JobFitResult, JobPosting, JobPreferences
+from app.services.llm.base import JobFitResult, JobPosting, JobPreferenceInferenceResult, JobPreferences
 from app.services.llm.fallback import get_llm_provider
 from tests.api.conftest import FakeLLMProvider
 
@@ -214,6 +214,123 @@ def test_extract_preferences_works_after_confirm_for_conversational_edits(sessio
         headers=_auth(token),
     )
     assert resp.status_code == 200
+
+
+def test_ask_returns_keyword_as_first_question(session_client):
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/job-search/preferences/ask", headers=_auth(token))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["done"] is False
+    assert body["field"] == "keyword"
+    assert "직무" in body["question_text"] or "분야" in body["question_text"]
+
+
+def test_ask_is_idempotent_returns_same_cached_question(session_client):
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+
+    first = session_client.post(f"/api/v1/sessions/{session_id}/job-search/preferences/ask", headers=_auth(token)).json()
+    second = session_client.post(f"/api/v1/sessions/{session_id}/job-search/preferences/ask", headers=_auth(token)).json()
+
+    assert first == second
+
+
+def test_turn_confirm_without_pending_question_returns_409(session_client):
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/preferences/turn-confirm",
+        json={"desired_keyword": "백엔드 개발"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 409
+
+
+def test_turn_confirm_walks_all_six_questions_then_transitions_to_job_searching(session_client):
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+
+    answers = [
+        {"desired_keyword": "백엔드 개발"},
+        {"location": "서울"},
+        {"salary_min": 3000, "salary_max": 4000},
+        {"education_level": "학력무관"},
+        {"career_years": 0},
+        {"work_style_tags": ["재택 가능", "유연근무"]},
+    ]
+
+    for i, answer in enumerate(answers):
+        ask_resp = session_client.post(f"/api/v1/sessions/{session_id}/job-search/preferences/ask", headers=_auth(token))
+        assert ask_resp.status_code == 200
+        assert ask_resp.json()["done"] is False
+
+        confirm_resp = session_client.post(
+            f"/api/v1/sessions/{session_id}/job-search/preferences/turn-confirm",
+            json=answer,
+            headers=_auth(token),
+        )
+        assert confirm_resp.status_code == 200
+        is_last = i == len(answers) - 1
+        assert confirm_resp.json()["done"] is is_last
+        assert confirm_resp.json()["status"] == ("JOB_SEARCHING" if is_last else "JOB_PREFERENCES_INPUT")
+
+    state = session_client.get(f"/api/v1/sessions/{session_id}/job-search", headers=_auth(token)).json()
+    assert state["status"] == "JOB_SEARCHING"
+    assert set(state["completed_fields"]) == {"keyword", "location", "salary", "education", "career", "work_style"}
+    assert state["preferences"]["desired_keyword"] == "백엔드 개발"
+    assert state["preferences"]["location"] == "서울"
+    assert state["preferences"]["work_style_tags"] == ["재택 가능", "유연근무"]
+
+    # ask는 더 이상 안 됨(JOB_PREFERENCES_INPUT을 벗어났으므로) — 확정 후엔
+    # 기존 whole-object 재편집 플로우(POST /job-search/preferences)로 넘어간다.
+    late_ask = session_client.post(f"/api/v1/sessions/{session_id}/job-search/preferences/ask", headers=_auth(token))
+    assert late_ask.status_code == 409
+
+
+def test_desired_keyword_is_the_primary_worknet_search_keyword(session_client):
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/preferences",
+        json={"desired_keyword": "백엔드 개발", "location": "서울", "work_style_tags": []},
+        headers=_auth(token),
+    )
+    fake_client = _override_job_client()
+
+    session_client.post(f"/api/v1/sessions/{session_id}/job-search/search", headers=_auth(token))
+
+    assert fake_client.search_calls[0].desired_keyword == "백엔드 개발"
+
+
+def test_ask_prefills_keyword_question_from_linked_gap_session_keyword_hints(session_client):
+    token = _register_and_login(session_client)
+    gap_session = session_client.post("/api/v1/sessions", headers=_auth(token)).json()
+    job_session = session_client.post(
+        "/api/v1/sessions",
+        json={"kind": "job_search", "linked_gap_session_id": gap_session["id"]},
+        headers=_auth(token),
+    ).json()
+
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLMProvider(
+        job_preference_inference=JobPreferenceInferenceResult(
+            work_style_tags=["협업 중시"], keyword_hints=["마케팅"], notes="팀 프로젝트 경험이 많아요"
+        )
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{job_session['id']}/job-search/preferences/ask", headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["field"] == "keyword"
+    assert body["draft_answer"] == "마케팅"
 
 
 def test_job_search_endpoints_reject_gap_fill_sessions(session_client):
