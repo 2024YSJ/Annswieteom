@@ -21,9 +21,13 @@ SESSION_STATUSES = (
     "INTERVIEWING",
     "RESULT_GENERATE",
     "RESULT_REVIEW",
-    # kind="job_search" 전용 3개 — gap-fill의 6개와 같은 컬럼을 공유한다(별도
-    # 상태 컬럼을 두지 않음, Session이 이미 상태머신 전용 모델이라 굳이 분리할
-    # 이유가 없음).
+    # kind="job_search" 전용 — gap-fill의 6개와 같은 컬럼을 공유한다(별도 상태
+    # 컬럼을 두지 않음, Session이 이미 상태머신 전용 모델이라 굳이 분리할
+    # 이유가 없음). 취업 정보 종합 검색으로 전환하면서(2026-09-08, devlog 16)
+    # 더 이상 단계 전이가 없는 상시 대화형 세션이 됐으므로 생성 시점부터
+    # 계속 이 값 하나로 고정된다 — JOB_PREFERENCES_INPUT/JOB_RESULTS_REVIEW는
+    # 이전 턴 기반 조건 입력 UI가 쓰던 값으로 이제 안 쓰이지만, CHECK 제약에서
+    # 빼는 마이그레이션까지는 필요 없어 그대로 남겨둔다.
     "JOB_PREFERENCES_INPUT",
     "JOB_SEARCHING",
     "JOB_RESULTS_REVIEW",
@@ -70,6 +74,3 @@ class Session(Base):
     categories: Mapped[list["ActivityCategory"]] = relationship("ActivityCategory", back_populates="session", cascade="all, delete-orphan", foreign_keys="ActivityCategory.session_id")
     records: Mapped[list["Record"]] = relationship("Record", back_populates="session", cascade="all, delete-orphan")
     documents: Mapped[list["GeneratedDocument"]] = relationship("GeneratedDocument", back_populates="session", cascade="all, delete-orphan")
-    job_search_preferences: Mapped["JobSearchPreferences | None"] = relationship(
-        "JobSearchPreferences", back_populates="session", cascade="all, delete-orphan", uselist=False
-    )

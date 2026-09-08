@@ -18,10 +18,8 @@ from app.services.llm.base import (
     DrilldownDecision,
     FactCandidate,
     InterviewContext,
-    JobFitResult,
-    JobPosting,
-    JobPreferenceInferenceResult,
-    JobPreferences,
+    JOB_INFO_CATEGORIES,
+    JobInfoCategoryQuery,
     ParagraphDraft,
     PeriodSuggestion,
     ProviderUnavailableError,
@@ -221,44 +219,16 @@ class LocalOllamaProvider:
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
-    async def extract_job_preferences(self, free_text: str) -> JobPreferences:
-        prompt = _render("extract_job_preferences.jinja", free_text=free_text)
+    async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]:
+        prompt = _render("classify_job_info_query.jinja", query=query)
         response_text = await self._generate(prompt, timeout=45.0)
         try:
             data = json.loads(response_text)
-            return JobPreferences(
-                desired_keyword=data.get("desired_keyword") or None,
-                salary_min=data.get("salary_min"),
-                salary_max=data.get("salary_max"),
-                location=data.get("location") or None,
-                education_level=data.get("education_level") or None,
-                career_years=data.get("career_years"),
-                work_style_tags=[str(t) for t in data.get("work_style_tags", [])],
-            )
-        except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
-
-    async def judge_job_fit(self, preferences: JobPreferences, posting: JobPosting) -> JobFitResult:
-        prompt = _render("job_fit_judgment.jinja", preferences=preferences, posting=posting)
-        response_text = await self._generate(prompt, timeout=45.0)
-        try:
-            data = json.loads(response_text)
-            return JobFitResult(fit=bool(data["fit"]), reason=data.get("reason", ""))
-        except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
-
-    async def infer_job_preferences_from_facts(
-        self, confirmed_facts: list[ConfirmedFact]
-    ) -> JobPreferenceInferenceResult:
-        prompt = _render("infer_job_preferences.jinja", confirmed_facts=confirmed_facts)
-        response_text = await self._generate(prompt, timeout=45.0)
-        try:
-            data = json.loads(response_text)
-            return JobPreferenceInferenceResult(
-                work_style_tags=[str(t) for t in data.get("work_style_tags", [])],
-                keyword_hints=[str(t) for t in data.get("keyword_hints", [])],
-                notes=data.get("notes", ""),
-            )
+            return [
+                JobInfoCategoryQuery(category=c["category"], keywords=[str(k) for k in c.get("keywords", [])])
+                for c in data["categories"]
+                if c["category"] in JOB_INFO_CATEGORIES  # hallucinated category name -> drop, don't guess
+            ]
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 

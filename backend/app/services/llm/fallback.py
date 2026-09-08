@@ -12,10 +12,7 @@ from app.services.llm.base import (
     DrilldownDecision,
     FactCandidate,
     InterviewContext,
-    JobFitResult,
-    JobPosting,
-    JobPreferenceInferenceResult,
-    JobPreferences,
+    JobInfoCategoryQuery,
     LLMProvider,
     PeriodSuggestion,
     ProviderUnavailableError,
@@ -150,30 +147,12 @@ class FallbackProvider:
                 self._log_failure("generate_document", provider, exc)
         raise AllProvidersFailedError()
 
-    async def extract_job_preferences(self, free_text: str) -> JobPreferences:
+    async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]:
         for provider in self.providers:
             try:
-                return await provider.extract_job_preferences(free_text)
+                return await provider.classify_job_info_query(query)
             except (TimeoutError, ProviderUnavailableError) as exc:
-                self._log_failure("extract_job_preferences", provider, exc)
-        raise AllProvidersFailedError()
-
-    async def judge_job_fit(self, preferences: JobPreferences, posting: JobPosting) -> JobFitResult:
-        for provider in self.providers:
-            try:
-                return await provider.judge_job_fit(preferences, posting)
-            except (TimeoutError, ProviderUnavailableError) as exc:
-                self._log_failure("judge_job_fit", provider, exc)
-        raise AllProvidersFailedError()
-
-    async def infer_job_preferences_from_facts(
-        self, confirmed_facts: list[ConfirmedFact]
-    ) -> JobPreferenceInferenceResult:
-        for provider in self.providers:
-            try:
-                return await provider.infer_job_preferences_from_facts(confirmed_facts)
-            except (TimeoutError, ProviderUnavailableError) as exc:
-                self._log_failure("infer_job_preferences_from_facts", provider, exc)
+                self._log_failure("classify_job_info_query", provider, exc)
         raise AllProvidersFailedError()
 
     async def health_check(self) -> bool:

@@ -95,51 +95,28 @@ class InterviewContext:
     asked_questions: list[str] = field(default_factory=list)
 
 
-@dataclass
-class JobPreferences:
-    """Structured job-search preferences — used both as the result of
-    extract_job_preferences (a suggestion, possibly partial) and as the
-    confirmed input to judge_job_fit. Any field the user hasn't stated stays
-    None/empty rather than guessed — same honesty-guardrail spirit as the
-    rest of this Protocol (an unstated preference must never be invented)."""
-    desired_keyword: str | None = None
-    salary_min: int | None = None
-    salary_max: int | None = None
-    location: str | None = None
-    education_level: str | None = None
-    career_years: int | None = None
-    work_style_tags: list[str] = field(default_factory=list)
+#: 취업 정보 종합 검색이 다루는 6개 카테고리 — 9개 워크넷/고용24 엔드포인트를
+#: 사용자 개념 단위로 묶은 것(직업훈련과정 하나가 실제로는 4개 엔드포인트를
+#: 가리킴). classify_job_info_query가 이 중에서 고른다.
+JOB_INFO_CATEGORIES = (
+    "job_fair",
+    "public_recruitment",
+    "public_recruitment_company",
+    "training_course",
+    "job_seeker_program",
+    "promising_sme",
+)
 
 
 @dataclass
-class JobPosting:
-    source: str
-    external_id: str
-    title: str
-    company: str
-    salary_text: str
-    location: str
-    education_requirement: str
-    career_requirement: str
-    work_type: str
-    url: str
-    raw_snippet: str = ""
-
-
-@dataclass
-class JobFitResult:
-    fit: bool
-    reason: str
-
-
-@dataclass
-class JobPreferenceInferenceResult:
-    """Output of infer_job_preferences_from_facts — deliberately excludes
-    salary_min/max/location, which can't be derived from STAR facts alone
-    and must stay for the user to fill in themselves."""
-    work_style_tags: list[str] = field(default_factory=list)
-    keyword_hints: list[str] = field(default_factory=list)
-    notes: str = ""
+class JobInfoCategoryQuery:
+    """classify_job_info_query 한 건 — 사용자의 자유 텍스트 질문이 이 카테고리와
+    관련 있다고 LLM이 판단했다는 뜻. keywords는 그 카테고리 안에서 결과를
+    좁히는 데 쓸 검색어(서버 API가 자유 키워드 검색을 지원 안 하는 경우가
+    많아 응답 텍스트에 대한 부분일치 필터로 쓰인다 — job_info_client 참고).
+    한 질문이 여러 카테고리에 동시에 걸릴 수 있으므로 리스트로 여러 개 온다."""
+    category: str
+    keywords: list[str] = field(default_factory=list)
 
 
 class ProviderUnavailableError(Exception):
@@ -165,9 +142,5 @@ class LLMProvider(Protocol):
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]: ...
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None: ...
-    async def extract_job_preferences(self, free_text: str) -> JobPreferences: ...
-    async def judge_job_fit(self, preferences: JobPreferences, posting: JobPosting) -> JobFitResult: ...
-    async def infer_job_preferences_from_facts(
-        self, confirmed_facts: list[ConfirmedFact]
-    ) -> JobPreferenceInferenceResult: ...
+    async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]: ...
     async def health_check(self) -> bool: ...
