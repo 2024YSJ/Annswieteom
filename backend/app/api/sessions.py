@@ -46,7 +46,9 @@ async def create_session(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="linked_session_not_found")
         linked_gap_session_id = linked.id
 
-    initial_status = "PERIOD_INPUT" if payload.kind == "gap_fill" else "JOB_PREFERENCES_INPUT"
+    # job_search는 더 이상 단계 전이가 없는 상시 대화형 세션이라 생성 즉시
+    # 활성 상태로 시작한다(devlog 16 참고).
+    initial_status = "PERIOD_INPUT" if payload.kind == "gap_fill" else "JOB_SEARCHING"
     session = SessionModel(
         user_id=current_user.id,
         kind=payload.kind,

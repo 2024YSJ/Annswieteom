@@ -8,12 +8,6 @@ export const INTERVIEW_STATUSES = new Set<SessionStatus>(["INTERVIEWING"]);
 
 export const RESULT_STATUSES = new Set<SessionStatus>(["RESULT_GENERATE", "RESULT_REVIEW"]);
 
-export const JOB_SEARCH_STATUSES = new Set<SessionStatus>([
-  "JOB_PREFERENCES_INPUT",
-  "JOB_SEARCHING",
-  "JOB_RESULTS_REVIEW",
-]);
-
 export const GAP_FILL_STATUS_LABELS: Record<string, string> = {
   PERIOD_INPUT: "기간 입력",
   CATEGORY_SELECT: "카테고리 선택",
@@ -23,9 +17,13 @@ export const GAP_FILL_STATUS_LABELS: Record<string, string> = {
   RESULT_REVIEW: "결과 확인",
 };
 
+// job_search 세션은 더 이상 단계 전이가 없는 상시 대화형 세션이라(devlog 16)
+// 생성 시점부터 계속 JOB_SEARCHING 하나로 고정된다 — 나머지 값은 이전
+// 턴 기반 조건 입력 UI가 쓰던 것으로 이제 안 나오지만, 혹시 남아있는 옛
+// 세션을 위해 매핑은 유지한다.
 export const JOB_SEARCH_STATUS_LABELS: Record<string, string> = {
   JOB_PREFERENCES_INPUT: "조건 입력",
-  JOB_SEARCHING: "채용정보 찾는 중",
+  JOB_SEARCHING: "취업 정보 검색",
   JOB_RESULTS_REVIEW: "결과 확인",
 };
 
