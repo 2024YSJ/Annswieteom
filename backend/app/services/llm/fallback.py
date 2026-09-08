@@ -155,6 +155,14 @@ class FallbackProvider:
                 self._log_failure("classify_job_info_query", provider, exc)
         raise AllProvidersFailedError()
 
+    async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:
+        for provider in self.providers:
+            try:
+                return await provider.draft_job_info_query_from_facts(confirmed_facts)
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("draft_job_info_query_from_facts", provider, exc)
+        raise AllProvidersFailedError()
+
     async def health_check(self) -> bool:
         for provider in self.providers:
             if await provider.health_check():

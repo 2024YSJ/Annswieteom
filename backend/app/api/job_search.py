@@ -3,17 +3,24 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_owned_session
+from app.db.session import get_db
+from app.models.activity_category import ActivityCategory
+from app.models.confirmed_fact import ConfirmedFact
 from app.models.session import Session as SessionModel
 from app.schemas.job_search import (
     JobInfoCategoryResultRead,
+    JobInfoDraftQueryRead,
     JobInfoQueryRead,
     JobInfoQueryRequest,
     JobInfoResultRead,
 )
 from app.services.job_pipeline.job_info_client import CATEGORY_LABELS, JobInfoClient, WorknetApiError, get_job_info_client
 from app.services.llm.base import AllProvidersFailedError, LLMProvider
+from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
 from app.services.llm.fallback import get_llm_provider
 
 router = APIRouter(prefix="/sessions", tags=["job_search"])
@@ -69,3 +76,43 @@ async def query_job_info(
     categories = [c for c in searched if c is not None]
 
     return JobInfoQueryRead(categories=categories, clarification_question=None)
+
+
+@router.post("/{session_id}/job-search/draft-query-from-gap", response_model=JobInfoDraftQueryRead)
+async def draft_query_from_gap(
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMProvider = Depends(get_llm_provider),
+) -> JobInfoDraftQueryRead:
+    """공백기 채우기 세션에서 "취업 정보 검색으로 이관"한 직후, 그 세션의
+    confirmed_facts를 요약해 컴포저에 미리 채워둘 첫 질문 초안을 만든다.
+    suggestion만 반환하고 아무것도 저장하지 않는다 — 사용자가 그대로 보내거나
+    고쳐 쓰거나 지우고 새로 써야 실제로 대화가 시작된다(다른 모든 AI 초안과
+    동일한 "AI가 쓰고 사용자가 확인" 원칙, devlog 17)."""
+    _require_job_search(session)
+    if session.linked_gap_session_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_linked_gap_session")
+
+    gap_session = await db.get(SessionModel, session.linked_gap_session_id)
+    if gap_session is None or gap_session.user_id != session.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="linked_session_not_found")
+
+    facts = (
+        await db.execute(
+            select(ConfirmedFact)
+            .join(ActivityCategory, ConfirmedFact.category_id == ActivityCategory.id)
+            .where(ActivityCategory.session_id == gap_session.id)
+        )
+    ).scalars().all()
+
+    try:
+        draft_query = await llm.draft_job_info_query_from_facts(
+            [
+                LLMConfirmedFact(id=str(f.id), content=f.content, source_type=f.source_type, fact_type=f.fact_type)
+                for f in facts
+            ]
+        )
+    except AllProvidersFailedError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
+
+    return JobInfoDraftQueryRead(draft_query=draft_query)

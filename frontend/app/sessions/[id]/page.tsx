@@ -28,7 +28,8 @@ export default function SessionChatPage() {
   // 하므로, gap-fill 전용 컨텍스트(useSessionContext)는 kind가 job_search로
   // 확정되기 전까지만 활성화한다(불필요한 요청 방지).
   const { data: sessions } = useSessionsList();
-  const kind = sessions?.find((s) => s.id === sessionId)?.kind;
+  const currentSession = sessions?.find((s) => s.id === sessionId);
+  const kind = currentSession?.kind;
   const { data: ctx, isLoading, error: loadError } = useSessionContext(sessionId, kind !== "job_search");
   const bottomRef = useRef<HTMLDivElement>(null);
   const [composerEvent, setComposerEvent] = useState<ComposerEvent | null>(null);
@@ -55,7 +56,7 @@ export default function SessionChatPage() {
   // (React's rules of hooks) — this branch is the earliest point it's safe
   // to diverge into the completely separate job-search orchestrator.
   if (kind === "job_search") {
-    return <JobSearchChatPage sessionId={sessionId} />;
+    return <JobSearchChatPage sessionId={sessionId} linkedGapSessionId={currentSession?.linked_gap_session_id ?? null} />;
   }
   if (kind === undefined) {
     // Still resolving which kind this session is (sessions list not loaded

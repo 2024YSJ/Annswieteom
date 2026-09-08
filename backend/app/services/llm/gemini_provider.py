@@ -237,6 +237,15 @@ class GeminiProvider:
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
 
+    async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:
+        prompt = _render("draft_job_info_query.jinja", confirmed_facts=confirmed_facts)
+        text = await self._call(prompt)
+        try:
+            data = json.loads(text)
+            return str(data.get("draft_query") or "")
+        except json.JSONDecodeError as exc:
+            raise ProviderUnavailableError(f"Gemini returned malformed response: {exc}") from exc
+
     async def health_check(self) -> bool:
         return bool(settings.gemini_api_key)
 

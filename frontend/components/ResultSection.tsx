@@ -476,7 +476,7 @@ export function ResultSection({
         )}
         {paragraphs.length > 0 && (
           <button type="button" disabled={isStartingJobSearch} onClick={handleStartJobSearch}>
-            {isStartingJobSearch ? "시작하는 중..." : "이 결과로 일자리 찾기 시작"}
+            {isStartingJobSearch ? "시작하는 중..." : "이 결과로 취업 정보 검색 시작"}
           </button>
         )}
       </div>
