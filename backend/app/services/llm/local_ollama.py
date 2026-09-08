@@ -232,6 +232,15 @@ class LocalOllamaProvider:
         except (json.JSONDecodeError, KeyError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
+    async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:
+        prompt = _render("draft_job_info_query.jinja", confirmed_facts=confirmed_facts)
+        response_text = await self._generate(prompt, timeout=45.0)
+        try:
+            data = json.loads(response_text)
+            return str(data.get("draft_query") or "")
+        except json.JSONDecodeError as exc:
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
     async def health_check(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:

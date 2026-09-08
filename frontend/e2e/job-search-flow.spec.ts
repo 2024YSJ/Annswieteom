@@ -6,8 +6,8 @@ function uniqueEmail(): string {
 
 /**
  * Drives the "취업 정보 종합 검색" flow against the real local backend/DB:
- * registering with zero sessions lands on the 공백기 채우기/일자리 찾기
- * chooser, picking 일자리 찾기 creates a kind="job_search" session, and the
+ * registering with zero sessions lands on the 공백기 채우기/취업 정보 검색
+ * chooser, picking 취업 정보 검색 creates a kind="job_search" session, and the
  * conversational multi-source search runs against a mocked `/job-search/query`
  * (mocked at the network layer since it needs real WorkNet keys this
  * environment doesn't have — the WorkNet clients themselves and the LLM
@@ -66,13 +66,13 @@ test.describe("job search flow", () => {
     await page.getByLabel("비밀번호").fill(password);
     await page.getByRole("button", { name: "로그인" }).click();
 
-    // Zero sessions -> chooser, picking 일자리 찾기 creates a job_search session.
-    await expect(page.getByRole("button", { name: "일자리 찾기" })).toBeVisible();
-    await page.getByRole("button", { name: "일자리 찾기" }).click();
+    // Zero sessions -> chooser, picking 취업 정보 검색 creates a job_search session.
+    await expect(page.getByRole("button", { name: "취업 정보 검색" })).toBeVisible();
+    await page.getByRole("button", { name: "취업 정보 검색" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
 
-    // Sidebar groups this under 일자리 찾기, not 공백기 채우기.
-    await expect(page.getByText("일자리 찾기", { exact: true })).toBeVisible();
+    // Sidebar groups this under 취업 정보 검색, not 공백기 채우기.
+    await expect(page.getByText("취업 정보 검색", { exact: true })).toBeVisible();
 
     // --- 첫 질문: 훈련과정 + 강소기업 두 카테고리에 동시에 걸치는 질문 ---
     await expect(page.getByText("어떤 취업 정보를 찾아드릴까요?", { exact: false })).toBeVisible();

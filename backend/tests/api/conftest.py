@@ -99,6 +99,7 @@ class FakeLLMProvider:
         drilldown_decisions: list[DrilldownDecision] | None = None,
         activity_items: list[list[str]] | None = None,
         job_info_categories: list["JobInfoCategoryQuery"] | None = None,
+        draft_job_info_query: str | None = None,
     ):
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
@@ -110,7 +111,9 @@ class FakeLLMProvider:
         self._drilldown_queue = list(drilldown_decisions) if drilldown_decisions else None
         self._activity_items_queue = list(activity_items) if activity_items else None
         self._job_info_categories = job_info_categories
+        self._draft_job_info_query = draft_job_info_query
         self.job_info_query_calls: list[str] = []
+        self.draft_job_info_query_calls: list[list] = []
         self.activity_items_calls: list[tuple[str, str]] = []
         self.extract_facts_calls: list[tuple[str, str, str]] = []
         self.followup_calls: list[str] = []
@@ -195,6 +198,12 @@ class FakeLLMProvider:
         if self._job_info_categories is not None:
             return self._job_info_categories
         return []
+
+    async def draft_job_info_query_from_facts(self, confirmed_facts):
+        self.draft_job_info_query_calls.append(confirmed_facts)
+        if self._draft_job_info_query is not None:
+            return self._draft_job_info_query
+        return ""
 
     async def health_check(self) -> bool:
         return True

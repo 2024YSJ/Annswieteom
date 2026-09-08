@@ -28,3 +28,9 @@ class JobInfoQueryRead(BaseModel):
 
     categories: list[JobInfoCategoryResultRead]
     clarification_question: str | None = None
+
+
+class JobInfoDraftQueryRead(BaseModel):
+    """`POST /job-search/draft-query-from-gap` 응답 — suggestion만, 미저장."""
+
+    draft_query: str

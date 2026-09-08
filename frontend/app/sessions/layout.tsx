@@ -21,6 +21,8 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState(session.title ?? "");
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function saveTitle() {
@@ -36,6 +38,7 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
   }
 
   async function handleDelete() {
+    setIsMenuOpen(false);
     if (!window.confirm("이 세션을 삭제할까요? 되돌릴 수 없습니다.")) return;
     setError(null);
     try {
@@ -47,8 +50,25 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
     }
   }
 
+  // 공백기 채우기 인터뷰로 확정한 사실을 취업 정보 검색으로 넘긴다 — 새
+  // job_search 세션을 만들어 연결해두면, 그 세션의 첫 진입 시 AI가 확정된
+  // 사실을 요약한 질문 초안을 컴포저에 미리 채워준다(JobSearchChatPage 참고).
+  async function handleMigrateToJobSearch() {
+    setIsMenuOpen(false);
+    setError(null);
+    setIsMigrating(true);
+    try {
+      const jobSession = await sessionApi.create(accessToken, { kind: "job_search", linked_gap_session_id: session.id });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions() });
+      router.push(`/sessions/${jobSession.id}`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setIsMigrating(false);
+    }
+  }
+
   return (
-    <li>
+    <li style={{ position: "relative" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         {isEditing ? (
           <input
@@ -84,32 +104,84 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
             <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {session.title ?? new Date(session.created_at).toLocaleDateString("ko-KR")}
             </div>
-            <div style={{ color: "var(--muted-text)" }}>{statusLabel(session)}</div>
+            <div style={{ color: "var(--muted-text)" }}>{isMigrating ? "이관하는 중..." : statusLabel(session)}</div>
           </Link>
         )}
         {!isEditing && (
-          <>
-            <button
-              type="button"
-              onClick={() => setIsEditing(true)}
-              title="이름 변경"
-              aria-label="이름 변경"
-              style={{ flexShrink: 0, fontSize: 12 }}
-            >
-              ✏️
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              title="삭제"
-              aria-label="삭제"
-              style={{ flexShrink: 0, fontSize: 12 }}
-            >
-              🗑
-            </button>
-          </>
+          <button
+            type="button"
+            onClick={() => setIsMenuOpen((v) => !v)}
+            title="더보기"
+            aria-label="더보기"
+            aria-haspopup="menu"
+            aria-expanded={isMenuOpen}
+            disabled={isMigrating}
+            style={{ flexShrink: 0, fontSize: 14, lineHeight: 1 }}
+          >
+            ⋯
+          </button>
         )}
       </div>
+
+      {isMenuOpen && (
+        <>
+          {/* 바깥을 클릭하면 메뉴를 닫는 투명 오버레이 — 모달 라이브러리 없이
+           * 클릭 아웃사이드를 처리하는 가장 단순한 방법. */}
+          <div
+            onClick={() => setIsMenuOpen(false)}
+            style={{ position: "fixed", inset: 0, zIndex: 10 }}
+          />
+          <div
+            role="menu"
+            style={{
+              position: "absolute",
+              right: 0,
+              top: "100%",
+              zIndex: 11,
+              minWidth: 160,
+              background: "var(--surface)",
+              color: "var(--surface-text)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              display: "flex",
+              flexDirection: "column",
+              padding: 4,
+            }}
+          >
+            {session.kind !== "job_search" && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleMigrateToJobSearch}
+                style={{ textAlign: "left", fontSize: 13, padding: "8px 10px", background: "transparent", border: "none" }}
+              >
+                취업 정보 검색으로 이관
+              </button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setIsMenuOpen(false);
+                setIsEditing(true);
+              }}
+              style={{ textAlign: "left", fontSize: 13, padding: "8px 10px", background: "transparent", border: "none" }}
+            >
+              이름 변경
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleDelete}
+              style={{ textAlign: "left", fontSize: 13, padding: "8px 10px", background: "transparent", border: "none", color: "crimson" }}
+            >
+              삭제
+            </button>
+          </div>
+        </>
+      )}
+
       {error && <p style={{ color: "crimson", fontSize: 11, margin: "2px 0 0" }}>{error}</p>}
     </li>
   );
@@ -189,8 +261,8 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
             accessToken={accessToken}
           />
           <SessionGroup
-            title="일자리 찾기"
-            newLabel="+ 일자리 찾기"
+            title="취업 정보 검색"
+            newLabel="+ 취업 정보 검색"
             onNew={() => handleNewSession("job_search")}
             isCreating={isCreating}
             sessions={jobSearchSessions}

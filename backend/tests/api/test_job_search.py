@@ -151,3 +151,52 @@ def test_query_empty_results_for_a_category_still_shown(session_client):
     body = resp.json()
     assert body["categories"][0]["category"] == "job_fair"
     assert body["categories"][0]["results"] == []
+
+
+def test_draft_query_requires_a_linked_session(session_client):
+    token = _register_and_login(session_client)
+    job_session_id = _create_job_search_session(session_client, token)
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{job_session_id}/job-search/draft-query-from-gap", headers=_auth(token)
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "no_linked_gap_session"
+
+
+def test_draft_query_rejects_a_linked_session_owned_by_another_user(session_client):
+    token_a = _register_and_login(session_client, "alice@example.com", nickname="Alice")
+    gap_session_a = session_client.post("/api/v1/sessions", headers=_auth(token_a)).json()
+
+    token_b = _register_and_login(session_client, "bob@example.com", nickname="Bob")
+    resp = session_client.post(
+        "/api/v1/sessions",
+        json={"kind": "job_search", "linked_gap_session_id": gap_session_a["id"]},
+        headers=_auth(token_b),
+    )
+
+    # linked_gap_session_id 자체가 다른 사용자 소유라 세션 생성 시점에 이미
+    # 거부된다(app/api/sessions.py) — draft-query까지 갈 필요도 없다.
+    assert resp.status_code == 404
+
+
+def test_draft_query_returns_llms_suggestion_without_persisting_anything(session_client):
+    token = _register_and_login(session_client)
+    gap_session = session_client.post("/api/v1/sessions", headers=_auth(token)).json()
+    job_session = session_client.post(
+        "/api/v1/sessions",
+        json={"kind": "job_search", "linked_gap_session_id": gap_session["id"]},
+        headers=_auth(token),
+    ).json()
+
+    fake_llm = FakeLLMProvider(draft_job_info_query="카페 아르바이트 경험이 있는데 관련 직업훈련과정 알려줘")
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{job_session['id']}/job-search/draft-query-from-gap", headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["draft_query"] == "카페 아르바이트 경험이 있는데 관련 직업훈련과정 알려줘"
+    assert len(fake_llm.draft_job_info_query_calls) == 1

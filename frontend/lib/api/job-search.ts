@@ -21,11 +21,21 @@ export interface JobInfoQueryRead {
   clarification_question: string | null;
 }
 
+export interface JobInfoDraftQueryRead {
+  draft_query: string;
+}
+
 export const jobSearchApi = {
   query: (sessionId: string, query: string, accessToken: string) =>
     request<JobInfoQueryRead>(`/api/v1/sessions/${sessionId}/job-search/query`, {
       method: "POST",
       headers: authHeaders(accessToken),
       body: JSON.stringify({ query }),
+    }),
+
+  draftQueryFromGap: (sessionId: string, accessToken: string) =>
+    request<JobInfoDraftQueryRead>(`/api/v1/sessions/${sessionId}/job-search/draft-query-from-gap`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
     }),
 };

@@ -6,6 +6,7 @@ import { errorMessage } from "@/lib/error-messages";
 import { useAuth } from "@/lib/auth-context";
 import { ChatBubble } from "@/components/ChatBubble";
 import { ChatComposer, type ComposerEvent } from "@/components/ChatComposer";
+import { LoadingNotice } from "@/components/LoadingNotice";
 
 interface Turn {
   query: string;
@@ -23,21 +24,56 @@ interface Turn {
  * 서버에 아무것도 저장하지 않는 무상태 대화라(백엔드가 매 질문마다 그 자리에서
  * 바로 분류+검색해서 응답) 대화 이력은 이 컴포넌트의 로컬 상태로만 누적된다 —
  * 새로고침하면 사라진다(기존 인터뷰 컴포넌트들의 로컬 확인 이력과 같은
- * 트레이드오프). */
-export function JobSearchChatPage({ sessionId }: { sessionId: string }) {
+ * 트레이드오프).
+ *
+ * 사이드바 "..." 메뉴의 "취업 정보 검색으로 이관"으로 공백기 채우기 세션에서
+ * 만들어진 경우(linkedGapSessionId 있음) 그 세션의 확정된 사실을 요약한 첫
+ * 질문 초안을 컴포저에 미리 채워준다(devlog 17). */
+export function JobSearchChatPage({
+  sessionId,
+  linkedGapSessionId,
+}: {
+  sessionId: string;
+  linkedGapSessionId: string | null;
+}) {
   const { accessToken } = useAuth();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 사이드바 "취업 정보 검색으로 이관"으로 막 만들어진 세션이면(linkedGapSessionId
+  // 있음) 컴포저에 미리 채울 첫 질문 초안을 한 번 받아온다 — AI가 쓰고
+  // 사용자가 확인/수정/그대로 전송하는, 이 앱 전반의 "AI 초안" 원칙 그대로다.
+  const [prefillText, setPrefillText] = useState<string | null>(null);
+  const hasFetchedDraftRef = useRef(false);
+  // 로컬 LLM 분류 호출이 수십 초씩 걸릴 수 있는데(이 프로젝트에서 반복 확인된
+  // 제약) 그동안 화면에 아무 표시가 없으면 "사이트가 멈췄다"처럼 보인다 —
+  // 방금 보낸 질문을 즉시 오른쪽 말풍선으로 보여주고 그 아래에 로딩 표시를
+  // 붙여서, 응답이 오기 전까지도 뭔가 진행 중이라는 걸 알 수 있게 한다.
+  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [turns.length]);
+  }, [turns.length, pendingQuery]);
+
+  useEffect(() => {
+    if (!linkedGapSessionId || hasFetchedDraftRef.current || !accessToken) return;
+    hasFetchedDraftRef.current = true;
+    jobSearchApi
+      .draftQueryFromGap(sessionId, accessToken)
+      .then((res) => {
+        if (res.draft_query) setPrefillText(res.draft_query);
+      })
+      // 실패해도 조용히 넘어간다 — 어차피 사용자가 직접 질문을 타이핑하면
+      // 되는, 있으면 편한 정도의 부가 기능이라 에러를 따로 띄우지 않는다.
+      .catch(() => {});
+  }, [linkedGapSessionId, sessionId, accessToken]);
 
   async function handleSend(event: ComposerEvent) {
     if (event.kind !== "text") return;
     setError(null);
+    setPrefillText(null);
+    setPendingQuery(event.value);
     setIsSubmitting(true);
     try {
       const result = await jobSearchApi.query(sessionId, event.value, accessToken!);
@@ -49,6 +85,7 @@ export function JobSearchChatPage({ sessionId }: { sessionId: string }) {
       setError(errorMessage(err));
     } finally {
       setIsSubmitting(false);
+      setPendingQuery(null);
     }
   }
 
@@ -90,6 +127,15 @@ export function JobSearchChatPage({ sessionId }: { sessionId: string }) {
             </div>
           ))}
 
+          {pendingQuery && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <ChatBubble side="right">{pendingQuery}</ChatBubble>
+              <ChatBubble side="left">
+                <LoadingNotice label="관련 정보를 찾고 있어요..." />
+              </ChatBubble>
+            </div>
+          )}
+
           {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
 
           <div ref={bottomRef} />
@@ -98,7 +144,7 @@ export function JobSearchChatPage({ sessionId }: { sessionId: string }) {
 
       <div style={{ flexShrink: 0, borderTop: "1px solid var(--border)", background: "var(--background)", padding: "12px 16px" }}>
         <div style={{ maxWidth: 640, margin: "0 auto" }}>
-          <ChatComposer activeStep="job_preferences" onSend={handleSend} disabled={isSubmitting} />
+          <ChatComposer activeStep="job_preferences" onSend={handleSend} disabled={isSubmitting} prefillText={prefillText} />
         </div>
       </div>
     </div>

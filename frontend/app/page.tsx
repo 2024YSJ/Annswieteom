@@ -93,7 +93,7 @@ export default function Home() {
 
   // 로그인/게스트 로그인 상태고 세션 목록도 다 불러왔는데 세션이 하나도
   // 없으면 — 새 사용자든, 딱 게스트 로그인만 막 한 사람이든 — 여기서
-  // 공백기 채우기/일자리 찾기 중 뭘로 시작할지 직접 고르게 한다. 그 외
+  // 공백기 채우기/취업 정보 검색 중 뭘로 시작할지 직접 고르게 한다. 그 외
   // (아직 로딩 중이거나, 이미 세션이 있어 위 effect가 리다이렉트를
   // 처리하는 중)에는 계속 로딩 화면만 보여준다.
   if (user && !sessionsLoading && sessions && sessions.length === 0) {
@@ -109,10 +109,10 @@ export default function Home() {
             공백기 활동을 인터뷰로 정리해 근거 있는 STAR 경력기술서를 만들어요.
           </p>
           <button type="button" onClick={() => startFlow("job_search")} disabled={isCreating}>
-            {isCreating ? "시작하는 중..." : "일자리 찾기"}
+            {isCreating ? "시작하는 중..." : "취업 정보 검색"}
           </button>
           <p style={{ fontSize: 13, color: "var(--muted-text)", margin: 0 }}>
-            희망 조건을 알려주시면 채용정보를 찾아 적합도까지 판단해드려요.
+            채용행사, 공채 소식, 직업훈련과정, 강소기업 정보까지 대화로 물어보고 찾아요.
           </p>
         </div>
         {error && <p style={{ color: "crimson" }}>{error}</p>}
