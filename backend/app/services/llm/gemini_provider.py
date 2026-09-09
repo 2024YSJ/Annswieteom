@@ -27,6 +27,8 @@ from app.services.llm.base import (
     RecordExcerpt,
     SentenceWithEvidence,
     SufficiencyResult,
+    TEMPERATURE_CREATIVE,
+    TEMPERATURE_DETERMINISTIC,
 )
 
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
@@ -82,7 +84,7 @@ class GeminiProvider:
             record_excerpts=context.record_excerpts,
             question_text=question_text,
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(text)
             return data["draft_answer"]
@@ -103,7 +105,7 @@ class GeminiProvider:
             answer_text=answer_text,
             fact_type_hint=fact_type_hint,
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(text)
             return [
@@ -127,7 +129,7 @@ class GeminiProvider:
             record_excerpts=context.record_excerpts,
             asked_questions=context.asked_questions,
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(text)
             return data["question_text"]
@@ -140,7 +142,7 @@ class GeminiProvider:
             category_label=context.category_label,
             confirmed_facts_so_far=context.confirmed_facts_so_far,
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(text)
             return SufficiencyResult(sufficient=bool(data["sufficient"]), reason=data.get("reason", ""))
@@ -156,7 +158,7 @@ class GeminiProvider:
             confirmed_facts_so_far=context.confirmed_facts_so_far,
             asked_questions=context.asked_questions,
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(text)
             return DrilldownDecision(should_ask=bool(data["should_ask"]), question_text=data.get("question_text"))
@@ -165,7 +167,7 @@ class GeminiProvider:
 
     async def extract_activity_items(self, category_label: str, answer_text: str) -> list[str]:
         prompt = _render("interview_activity_breakdown.jinja", category_label=category_label, answer_text=answer_text)
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(text)
             return [str(item) for item in data["items"]]
@@ -176,7 +178,7 @@ class GeminiProvider:
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]:
         prompt = _render("extract_categories.jinja", free_text=free_text, gap_start=gap_start, gap_end=gap_end)
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(text)
             return [
@@ -191,7 +193,7 @@ class GeminiProvider:
 
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None:
         prompt = _render("extract_period.jinja", free_text=free_text, today=today)
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(text)
             if data["start_date"] is None or data["end_date"] is None:
@@ -211,7 +213,7 @@ class GeminiProvider:
             tone=tone,
             category_label=category_label,
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(text)
             paragraphs = [
@@ -227,7 +229,7 @@ class GeminiProvider:
 
     async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]:
         prompt = _render("classify_job_info_query.jinja", query=query)
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(text)
             return [JobInfoCategoryQuery(category=c) for c in data["categories"] if c in JOB_INFO_CATEGORIES]
@@ -242,7 +244,7 @@ class GeminiProvider:
         prompt = _render(
             "select_relevant_job_info_results.jinja", query=query, category_label=category_label, candidates=candidates
         )
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(text)
             valid_indices = {c.index for c in candidates}
@@ -252,7 +254,7 @@ class GeminiProvider:
 
     async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:
         prompt = _render("draft_job_info_query.jinja", confirmed_facts=confirmed_facts)
-        text = await self._call(prompt)
+        text = await self._call(prompt, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(text)
             return str(data.get("draft_query") or "")
@@ -262,14 +264,15 @@ class GeminiProvider:
     async def health_check(self) -> bool:
         return bool(settings.gemini_api_key)
 
-    async def _call(self, prompt: str) -> str:
+    async def _call(self, prompt: str, *, temperature: float) -> str:
         try:
             client = self._ensure_client()
             response = await client.aio.models.generate_content(
                 model="gemini-1.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+                    response_mime_type="application/json",
+                    temperature=temperature,
                 ),
             )
             return response.text

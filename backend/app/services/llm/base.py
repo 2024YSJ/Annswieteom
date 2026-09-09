@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol, runtime_checkable
 
+# 프로바이더 메서드는 호출 시점에 두 샘플링 모드 중 하나를 반드시 명시한다 —
+# 기본값을 두지 않는 게 핵심이고, 새 메서드를 추가할 때 "이건 판단인가 생성인가"를
+# 한 번 결정하게 만든다. 분류/추출/판단은 같은 입력에 같은 답이 나와야 하는데,
+# 지정하지 않으면 모델 기본값(~0.7)이 걸려 회차마다 답이 달라진다(devlog 19).
+TEMPERATURE_DETERMINISTIC = 0.0
+# 초안/문서 생성처럼 표현의 다양성이 바람직한 호출. 대부분 모델의 기본값과
+# 맞춰 둬서, 온도를 명시하는 이 변경이 생성 계열의 동작을 바꾸지 않게 했다.
+TEMPERATURE_CREATIVE = 0.7
+
 
 @dataclass
 class RecordExcerpt:
