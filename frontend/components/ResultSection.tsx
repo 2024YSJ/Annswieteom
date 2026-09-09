@@ -43,15 +43,17 @@ function SentenceRow({
     <div
       style={{
         padding: 12,
-        borderRadius: 8,
+        borderRadius: "var(--radius-md)",
         marginBottom: 8,
-        background: sentence.consistency_check_passed ? "var(--surface-strong)" : "var(--surface-warn)",
-        color: sentence.consistency_check_passed ? "var(--surface-strong-text)" : "var(--surface-warn-text)",
-        border: sentence.consistency_check_passed ? "1px solid var(--border)" : "1px solid #f0c36d",
+        // 일관성 검사에 걸린 문장은 앰버로 표시한다 — 에러가 아니라 "한 번 더
+        // 봐야 하는 것"이라, 실패 메시지의 빨강과 색을 다르게 쓴다.
+        background: sentence.consistency_check_passed ? "var(--surface-strong)" : "var(--caution-surface)",
+        color: sentence.consistency_check_passed ? "var(--surface-strong-text)" : "var(--caution-text)",
+        border: sentence.consistency_check_passed ? "1px solid var(--border)" : "1px solid var(--caution-border)",
       }}
     >
       {!sentence.consistency_check_passed && (
-        <div style={{ fontSize: 12, color: "#8a6d1a", marginBottom: 4 }}>⚠ 확인이 더 필요한 문장</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--caution-text)", marginBottom: 4 }}>⚠ 확인이 더 필요한 문장</div>
       )}
 
       {isEditing ? (
@@ -178,7 +180,7 @@ function ParagraphSection({
               onClick={() => {
                 if (window.confirm("이 문단을 삭제할까요? 안의 문장이 전부 사라지고 되돌릴 수 없습니다.")) onDelete();
               }}
-              style={{ fontSize: 12, color: "crimson" }}
+              style={{ fontSize: 12, color: "var(--danger)" }}
             >
               문단 삭제
             </button>
@@ -425,7 +427,7 @@ export function ResultSection({
     );
   }
   if (docError && !document) {
-    return <ChatBubble side="left" variant="card"><p style={{ color: "crimson", margin: 0 }}>{errorMessage(docError)}</p></ChatBubble>;
+    return <ChatBubble side="left" variant="card"><p style={{ color: "var(--danger)", margin: 0 }}>{errorMessage(docError)}</p></ChatBubble>;
   }
   if (!document) return null;
 
@@ -462,7 +464,7 @@ export function ResultSection({
         />
       ))}
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
 
       <div style={{ marginTop: 24, display: "flex", gap: 8, flexWrap: "wrap" }}>
         {document.status !== "FINAL" ? (

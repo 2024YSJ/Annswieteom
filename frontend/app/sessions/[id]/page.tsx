@@ -64,7 +64,7 @@ export default function SessionChatPage() {
     // which depend on a query we deliberately didn't enable yet) before we
     // know which orchestrator actually applies.
     return (
-      <main style={{ maxWidth: 640, margin: "80px auto" }}>
+      <main style={{ maxWidth: 640, margin: "64px auto" }}>
         <LoadingNotice />
       </main>
     );
@@ -78,14 +78,14 @@ export default function SessionChatPage() {
   // visitor stuck on a bare "불러오는 중" with no error shown and no escape.
   if (loadError) {
     return (
-      <main style={{ maxWidth: 640, margin: "80px auto", padding: "0 16px" }}>
-        <p style={{ color: "crimson" }}>{errorMessage(loadError)}</p>
+      <main style={{ maxWidth: 640, margin: "64px auto", padding: "0 16px" }}>
+        <p style={{ color: "var(--danger)" }}>{errorMessage(loadError)}</p>
       </main>
     );
   }
   if (isLoading || !ctx) {
     return (
-      <main style={{ maxWidth: 640, margin: "80px auto" }}>
+      <main style={{ maxWidth: 640, margin: "64px auto" }}>
         <LoadingNotice />
       </main>
     );
@@ -108,9 +108,11 @@ export default function SessionChatPage() {
           : null;
 
   return (
-    <div style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>
+    // 화면 높이에서 sticky 헤더만큼 뺀다 — 100dvh를 그대로 쓰면 헤더 높이만큼
+    // 아래로 밀려서, 바닥에 고정한 입력창이 화면 밖으로 내려간다.
+    <div style={{ height: "calc(100dvh - var(--header-height))", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        <main style={{ maxWidth: 640, margin: "80px auto 24px", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
+        <main style={{ maxWidth: 640, margin: "32px auto 24px", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
           <PeriodSection
             sessionId={sessionId}
             accessToken={accessToken!}

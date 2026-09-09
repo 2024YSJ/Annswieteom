@@ -71,7 +71,7 @@ export function PeriodSection({
           종료일
           <input type="date" required value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </label>
-        {error && <p style={{ color: "crimson" }}>{error}</p>}
+        {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
         <button type="submit" disabled={isSubmitting} style={{ alignSelf: "flex-start" }}>
           {isSubmitting ? "저장 중..." : "확인"}
         </button>

@@ -252,7 +252,7 @@ export function RecordsSection({
                 if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
               }}
             >
-              {error && <p style={{ color: "crimson" }}>{error}</p>}
+              {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
               <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative" }}>
                 <button type="button" onClick={handleAdvance} disabled={isSkipping || isSubmitting}>
                   {isSkipping ? "진행 중..." : currentRecordIds.length > 0 ? "다음 카테고리로" : "이 카테고리 자료 없이 넘어가기"}

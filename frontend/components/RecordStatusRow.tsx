@@ -60,14 +60,14 @@ export function RecordStatusRow({
       {" — "}
       {PARSE_STATUS_LABELS[data.parse_status]}
       {data.parse_status === "FAILED" && data.parse_error && (
-        <span style={{ color: "crimson" }}> ({data.parse_error})</span>
+        <span style={{ color: "var(--danger)" }}> ({data.parse_error})</span>
       )}
       {onDeleted && (
         <button type="button" onClick={handleDelete} disabled={isDeleting} style={{ marginLeft: 8, fontSize: 12 }}>
           {isDeleting ? "삭제 중..." : "삭제"}
         </button>
       )}
-      {deleteError && <span style={{ color: "crimson", marginLeft: 8, fontSize: 12 }}>{deleteError}</span>}
+      {deleteError && <span style={{ color: "var(--danger)", marginLeft: 8, fontSize: 12 }}>{deleteError}</span>}
     </li>
   );
 }

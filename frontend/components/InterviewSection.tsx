@@ -202,7 +202,7 @@ export function InterviewSection({
         isWaitingForAnswer={isSubmitting && candidates === null}
       />
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
     </div>
   );
 }

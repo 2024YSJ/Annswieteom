@@ -28,7 +28,7 @@ function groupFactsByQuestion(facts: ConfirmedFactRead[]): { questionText: strin
 function BasedOnBadge({ basedOn }: { basedOn: BasedOnRead }) {
   if (basedOn.type === "record") {
     return (
-      <span style={{ fontSize: 12, background: "#e3f0dc", color: "#4a6b2a", padding: "2px 8px", borderRadius: 999 }}>
+      <span style={{ fontSize: 12, background: "var(--cite-surface)", color: "var(--cite-text)", padding: "2px 8px", borderRadius: 999 }}>
         📎 내 기록물 근거 ({basedOn.excerpts.length}건)
       </span>
     );

@@ -7,12 +7,12 @@ function uniqueEmail(): string {
 test.describe("guest sessions", () => {
   test("guest can start exactly one session and sees it in the sidebar", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByRole("button", { name: /게스트로 시작하기/ })).toBeVisible();
-    await page.getByRole("button", { name: /게스트로 시작하기/ }).click();
 
-    // Logging in (guest or otherwise) with zero sessions lands on the
-    // 공백기 채우기/일자리 찾기 chooser instead of auto-creating a session —
-    // the actual POST /sessions only fires once one of those is picked.
+    // 랜딩의 플로우 카드 한 번 클릭이 곧 "게스트 로그인 + 세션 생성"이다 —
+    // 예전처럼 게스트 로그인 버튼을 먼저 누르는 단계는 없다. 로그인만 하고
+    // 세션 생성은 리다이렉트 effect에 맡기던 구조에서 세션이 두 개 생기는
+    // 경쟁이 있었기 때문에(2026-09-05), 두 요청을 한 클릭 안에서 순서대로
+    // 보내도록 바꾼 것이다.
     await expect(page.getByRole("button", { name: "공백기 채우기" })).toBeVisible();
     const [createResponse] = await Promise.all([
       page.waitForResponse(
@@ -45,7 +45,6 @@ test.describe("guest sessions", () => {
     const email = uniqueEmail();
 
     await page.goto("/");
-    await page.getByRole("button", { name: /게스트로 시작하기/ }).click();
     await expect(page.getByRole("button", { name: "공백기 채우기" })).toBeVisible();
     await page.getByRole("button", { name: "공백기 채우기" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
