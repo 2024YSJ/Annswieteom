@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
@@ -17,45 +18,51 @@ export function AuthHeader() {
     router.push("/");
   }
 
+  // 스타일은 전부 globals.css의 .topbar-* 클래스에 있다 — 좁은 화면에서
+  // 닉네임을 숨기고 버튼 라벨을 줄이는 등 미디어 쿼리가 필요해서, 인라인
+  // 스타일로는 표현할 수 없다.
   return (
-    <header
-      style={{
-        // sticky (not fixed) so it stays in normal document flow — every
-        // page's content naturally starts below it instead of needing its
-        // own top-padding to avoid being covered (it was `fixed` with no
-        // width/background before, so it just floated over whatever content
-        // happened to be underneath at scroll position 0, text overlapping
-        // text — reported as "메뉴바 형태로 나타나지 않아 글자가 겹침", 2026-09-06).
-        position: "sticky",
-        top: 0,
-        left: 0,
-        right: 0,
-        width: "100%",
-        padding: "12px 16px",
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        fontSize: 14,
-        background: "var(--background)",
-        borderBottom: "1px solid var(--border)",
-        zIndex: 10,
-        boxSizing: "border-box",
-      }}
-    >
-      {isLoading ? null : user ? (
-        <>
-          <span>{user.nickname}님</span>
-          {user.is_guest && <Link href="/register">회원가입하고 저장하기</Link>}
-          <button type="button" onClick={handleLogout}>
-            로그아웃
-          </button>
-        </>
-      ) : (
-        <>
-          <Link href="/login">로그인</Link>
-          <Link href="/register">회원가입</Link>
-        </>
-      )}
+    <header className="topbar">
+      <div className="topbar-inner">
+        <Link href="/" className="topbar-brand" aria-label="안 쉬었음 홈">
+          <Image src="/logo.png" alt="" width={26} height={26} priority />
+          <span className="topbar-brand-name">안 쉬었음</span>
+        </Link>
+
+        <nav className="topbar-nav">
+          {isLoading ? null : user ? (
+            <>
+              <span className="topbar-user">{user.nickname}님</span>
+              {/* 게스트에게는 숨긴다 — 문답 아카이브는 이메일 계정 전용이라
+               * 눌러봐야 "회원가입하세요" 안내밖에 나오지 않는다. */}
+              {!user.is_guest && (
+                <Link href="/archive" className="btn-ghost topbar-btn">
+                  내 문답 기록
+                </Link>
+              )}
+              {user.is_guest && (
+                <Link href="/register" className="btn-primary topbar-btn">
+                  {/* 좁은 화면에서는 "회원가입"만 남긴다 */}
+                  <span className="wide-only">회원가입하고 저장하기</span>
+                  <span className="narrow-only">회원가입</span>
+                </Link>
+              )}
+              <button type="button" className="btn-ghost topbar-btn" onClick={handleLogout}>
+                로그아웃
+              </button>
+            </>
+          ) : (
+            <>
+              <Link href="/login" className="btn-ghost topbar-btn">
+                로그인
+              </Link>
+              <Link href="/register" className="btn-primary topbar-btn">
+                시작하기
+              </Link>
+            </>
+          )}
+        </nav>
+      </div>
     </header>
   );
 }

@@ -4,16 +4,15 @@ sqlalchemy==2.0.35
 alembic==1.13.3
 asyncpg==0.29.0
 psycopg2-binary==2.9.9
-pydantic==2.13.5  # must satisfy google-genai's pydantic>=2.12.5 requirement (bumped from 2.9.2)
+pydantic==2.13.5  # was bumped from 2.9.2 for google-genai (since removed); left pinned rather than risk a downgrade
 pydantic-settings==2.15.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1  # passlib 1.7.4 crashes on bcrypt>=4.1 (reads a __about__.__version__ attr that was removed)
 email-validator==2.2.0  # required for pydantic's EmailStr
 python-jose[cryptography]==3.3.0
-httpx==0.28.1  # must satisfy google-genai's httpx>=0.28.1 requirement (bumped from 0.27.2, which pip's resolver only let through on a stale venv)
+httpx==0.28.1  # was bumped from 0.27.2 for google-genai (since removed); left pinned rather than risk a downgrade
 python-multipart==0.0.12
 Jinja2==3.1.4
-google-genai==2.21.0
 pgvector==0.3.5
 beautifulsoup4==4.12.3
 lxml==5.3.0

@@ -50,13 +50,15 @@ def test_require_interviewing_rejects_other_status():
         orch.require_interviewing("RECORD_UPLOAD")
 
 
-def test_require_record_creatable_allows_record_upload():
+def test_require_record_creatable_allows_record_upload_and_interviewing():
+    """INTERVIEWING이 다시 허용된다(2026-09-09) — 기록물이 쓸모 있어지는 시점은
+    질문을 받은 뒤이고, 질문 문구로 청크를 검색하게 된 이후로는 방금 올린
+    기록물이 바로 다음 턴의 근거가 된다."""
     orch.require_record_creatable("RECORD_UPLOAD")
+    orch.require_record_creatable("INTERVIEWING")
 
 
-def test_require_record_creatable_rejects_interviewing_and_result_statuses():
-    with pytest.raises(orch.StateMachineViolation):
-        orch.require_record_creatable("INTERVIEWING")
+def test_require_record_creatable_rejects_result_statuses():
     with pytest.raises(orch.StateMachineViolation):
         orch.require_record_creatable("RESULT_GENERATE")
     with pytest.raises(orch.StateMachineViolation):

@@ -52,8 +52,8 @@ export function EvidenceTag({ evidence }: { evidence: EvidenceRead[] }) {
             onClick={() => setOpenId(openId === e.fact_id ? null : e.fact_id)}
             style={{
               fontSize: 11,
-              background: e.source_type === "record_cited" ? "#e3f0dc" : "var(--surface)",
-              color: e.source_type === "record_cited" ? "#4a6b2a" : "var(--muted-text)",
+              background: e.source_type === "record_cited" ? "var(--cite-surface)" : "var(--surface)",
+              color: e.source_type === "record_cited" ? "var(--cite-text)" : "var(--muted-text)",
               border: "none",
               borderRadius: 999,
               padding: "2px 8px",

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from app.services.llm.fallback import get_llm_provider
+from app.services.llm import get_llm_provider
 from app.main import app
-from app.services.llm.base import AllProvidersFailedError, CategorySuggestion
+from app.services.llm.base import LLMUnavailableError, CategorySuggestion
 
 
 def _register_and_login(client, email="alice@example.com"):
@@ -70,7 +70,7 @@ def test_extract_categories_returns_503_when_all_providers_fail(session_client):
 
     class FailingLLMProvider:
         async def extract_categories(self, free_text, gap_start, gap_end):
-            raise AllProvidersFailedError()
+            raise LLMUnavailableError()
 
     app.dependency_overrides[get_llm_provider] = lambda: FailingLLMProvider()
     try:

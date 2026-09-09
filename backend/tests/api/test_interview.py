@@ -6,8 +6,8 @@ from app.main import app
 from app.services import interview_orchestrator as orchestrator
 from app.services.interview_orchestrator import MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
 from app.services.interview_question_bank import BASE_QUESTIONS
-from app.services.llm.base import AllProvidersFailedError, BasedOn, DrilldownDecision, FactCandidate, RecordExcerpt, SufficiencyResult
-from app.services.llm.fallback import get_llm_provider
+from app.services.llm.base import LLMUnavailableError, BasedOn, DrilldownDecision, FactCandidate, RecordExcerpt, SufficiencyResult
+from app.services.llm import get_llm_provider
 from app.services.record_pipeline.search import RecordChunkExcerpt, get_chunk_search
 
 
@@ -399,7 +399,7 @@ def test_child_category_falls_back_to_parents_records_when_it_has_none(session_c
 
     seen_category_ids = []
 
-    async def fake_chunk_search(session_id_arg, category_id):
+    async def fake_chunk_search(session_id_arg, category_id, query_text=None):
         seen_category_ids.append(str(category_id))
         if str(category_id) == parent_id:
             return [RecordChunkExcerpt(chunk_id=uuid.uuid4(), text="부모 카테고리에 올린 자료", published_at=None)]
@@ -654,7 +654,7 @@ def test_record_based_candidate_confirmed_unedited_is_record_cited(session_clien
     # silently mangled by SQLite's NUMERIC column-affinity conversion.
     chunk_id = str(uuid.uuid4())
 
-    async def fake_chunk_search(session_id_arg, label):
+    async def fake_chunk_search(session_id_arg, category_id, query_text=None):
         return [RecordChunkExcerpt(chunk_id=uuid.UUID(chunk_id), text="근무 기록", published_at=None)]
 
     app.dependency_overrides[get_chunk_search] = lambda: fake_chunk_search
@@ -791,7 +791,7 @@ def test_drilldown_heuristic_backup_probes_a_vague_answer_when_all_llm_providers
             return getattr(session_client.fake_llm, name)
 
         async def judge_drilldown(self, context):
-            raise AllProvidersFailedError()
+            raise LLMUnavailableError()
 
     app.dependency_overrides[get_llm_provider] = lambda: DrilldownFailingProvider()
     try:
@@ -821,7 +821,7 @@ def test_drilldown_heuristic_backup_does_not_probe_a_detailed_answer(session_cli
             return getattr(session_client.fake_llm, name)
 
         async def judge_drilldown(self, context):
-            raise AllProvidersFailedError()
+            raise LLMUnavailableError()
 
     app.dependency_overrides[get_llm_provider] = lambda: DrilldownFailingProvider()
     try:
@@ -853,3 +853,142 @@ def test_session_create_and_delete(session_client):
 
     resp = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers)
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 질문 문구 기반 기록물 검색 + 활동 기간 유추 (2026-09-09)
+# ---------------------------------------------------------------------------
+
+
+def test_record_search_is_keyed_on_the_question_being_asked(session_client):
+    """검색어 없이 카테고리 청크를 작성순으로 자르던 예전 동작에서는
+    record_chunks.embedding이 한 번도 조회되지 않았다 — 질문 문구가 실제로
+    검색어로 내려가야 벡터 검색이 의미를 갖는다."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    category_id = _advance_to_first_category(session_client, headers, session_id)
+
+    queries = []
+
+    async def recording_chunk_search(session_id_arg, category_id_arg, query_text=None):
+        queries.append(query_text)
+        return []
+
+    app.dependency_overrides[get_chunk_search] = lambda: recording_chunk_search
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.status_code == 200
+    question_text = resp.json()["question_text"]
+    assert question_text == BASE_QUESTIONS["part_time"][0].text
+
+    assert queries, "chunk_search was never called"
+    assert queries[-1] == question_text
+
+
+def test_structural_split_check_searches_without_a_query(session_client):
+    """"여러 활동 있나요?"는 라우팅 질문이라 근거로 삼을 기록물이 없다 —
+    임베딩 호출을 낭비하지 않는다."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_interviewing(session_client, headers, session_id)
+
+    queries = []
+
+    async def recording_chunk_search(session_id_arg, category_id_arg, query_text=None):
+        queries.append(query_text)
+        return []
+
+    app.dependency_overrides[get_chunk_search] = lambda: recording_chunk_search
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.json()["question_source"] == "split_check"
+    assert queries == [None]
+
+
+def test_activity_period_is_inferred_once_a_frequency_fact_is_confirmed(session_client):
+    """기간을 카테고리가 끝날 때까지 기다리지 않고 여기서 잡아야, 후속 질문
+    예산과 커버리지가 인터뷰 도중에도 의미를 갖는다."""
+    from datetime import date
+
+    from app.services.llm.base import PeriodSuggestion
+
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.fake_llm._activity_period = PeriodSuggestion(
+        start_date=date(2025, 1, 1), end_date=date(2025, 3, 31)
+    )
+    # part_time의 첫 고정 질문이 frequency다. 답변에 기간 단서("3개월")가 있어야
+    # LLM에 물어보기라도 한다 — 단서가 없으면 has_period_clue 게이트가 먼저 막는다.
+    _do_turn(session_client, headers, session_id, answer_text="3개월 동안 주 3회 일했어요")
+
+    assert session_client.fake_llm.activity_period_calls
+    coverage = session_client.get(f"/api/v1/sessions/{session_id}/coverage", headers=headers).json()
+    assert coverage["covered_days"] == 90
+    assert coverage["categories_without_period"] == []
+
+
+def test_user_set_period_is_not_overwritten_by_inference(session_client):
+    from datetime import date
+
+    from app.services.llm.base import PeriodSuggestion
+
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    category_id = _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.patch(
+        f"/api/v1/sessions/{session_id}/categories/{category_id}/period",
+        headers=headers,
+        json={"start_date": "2025-02-01", "end_date": "2025-02-28"},
+    )
+    session_client.fake_llm._activity_period = PeriodSuggestion(
+        start_date=date(2025, 1, 1), end_date=date(2025, 6, 30)
+    )
+    _do_turn(session_client, headers, session_id, answer_text="3개월 동안 주 3회 일했어요")
+
+    assert session_client.fake_llm.activity_period_calls == []
+    coverage = session_client.get(f"/api/v1/sessions/{session_id}/coverage", headers=headers).json()
+    assert coverage["covered_days"] == 28
+
+
+def test_inference_failure_leaves_the_category_without_a_period(session_client):
+    """기간은 커버리지용 메타데이터일 뿐이라, 못 구했다고 인터뷰 턴이
+    실패하면 안 된다."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    async def exploding_period(*args, **kwargs):
+        raise LLMUnavailableError()
+
+    session_client.fake_llm.extract_activity_period = exploding_period
+
+    _ask, _candidates, confirm_body = _do_turn(session_client, headers, session_id)
+    assert confirm_body["status"] == "INTERVIEWING"
+
+    coverage = session_client.get(f"/api/v1/sessions/{session_id}/coverage", headers=headers).json()
+    assert len(coverage["categories_without_period"]) == 1
+
+
+def test_long_activities_get_a_bigger_followup_budget(session_client):
+    """6개월을 통째로 쓴 활동과 2주짜리 활동을 똑같이 3턴으로 끊으면,
+    공백기를 실제로 메우고 있는 쪽에 시간을 덜 주는 셈이다."""
+    from datetime import date
+
+    class ShortCategory:
+        period_start = date(2025, 1, 1)
+        period_end = date(2025, 1, 14)
+
+    class LongCategory:
+        period_start = date(2025, 1, 1)
+        period_end = date(2025, 6, 30)
+
+    class UnknownCategory:
+        period_start = None
+        period_end = None
+
+    assert orchestrator.followup_budget(ShortCategory()) == MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+    assert orchestrator.followup_budget(UnknownCategory()) == MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+    assert orchestrator.followup_budget(LongCategory()) > MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY

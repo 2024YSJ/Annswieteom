@@ -32,7 +32,7 @@ export const recordsApi = {
       body: JSON.stringify({ text }),
     }),
 
-  // Handles images (OCR) and documents (txt/md/docx/hwp — direct text
+  // Handles documents (txt/md/docx/hwp — direct text
   // extraction) alike; the backend decides which by the file's extension.
   // Uploading several files at once means calling this once per file.
   uploadFile: (sessionId: string, file: File, accessToken: string) => {

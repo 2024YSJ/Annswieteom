@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol, runtime_checkable
 
+# 프로바이더 메서드는 호출 시점에 두 샘플링 모드 중 하나를 반드시 명시한다 —
+# 기본값을 두지 않는 게 핵심이고, 새 메서드를 추가할 때 "이건 판단인가 생성인가"를
+# 한 번 결정하게 만든다. 분류/추출/판단은 같은 입력에 같은 답이 나와야 하는데,
+# 지정하지 않으면 모델 기본값(~0.7)이 걸려 회차마다 답이 달라진다(devlog 19).
+TEMPERATURE_DETERMINISTIC = 0.0
+# 초안/문서 생성처럼 표현의 다양성이 바람직한 호출. 대부분 모델의 기본값과
+# 맞춰 둬서, 온도를 명시하는 이 변경이 생성 계열의 동작을 바꾸지 않게 했다.
+TEMPERATURE_CREATIVE = 0.7
+
 
 @dataclass
 class RecordExcerpt:
@@ -76,6 +85,40 @@ class PeriodSuggestion:
     end_date: date
 
 
+def clamp_activity_period(
+    start: date, end: date, gap_start: date, gap_end: date
+) -> PeriodSuggestion | None:
+    """활동 기간 추정치를 공백 기간 안으로 자른다.
+
+    커버리지 계산(app/services/coverage.py)은 활동 기간이 공백 기간 안에 있다고
+    가정한다 — 모델이 공백기 밖으로 삐져나간 날짜를 뱉으면 "채워진 개월 수"가
+    전체 개월 수를 넘어가는 이상한 값이 나온다. 겹치는 구간이 아예 없으면
+    (환각으로 엉뚱한 연도를 준 경우) 추정 자체를 버리고 None을 돌려준다 —
+    잘못된 기간을 넣는 것보다 "모름"으로 두는 편이 정직하다.
+
+    공백 기간과 **정확히 같은** 구간도 버린다. 실 로컬 모델 검증(2026-09-09)에서
+    qwen2.5:3b는 단서가 없는 사실을 받으면 공백 기간 전체를 그대로 베껴 돌려줬다 —
+    프롬프트로 막아지지 않았다. 이건 "이 활동이 공백기 내내 이어졌다"는 관찰이
+    아니라 모델이 입력을 되뱉은 것이고, 그대로 저장하면 커버리지가 100%가 되어
+    빈 구간이 하나도 안 남는다.
+
+    실제로 공백기 전체를 채운 활동은 이 규칙에 억울하게 걸린다. 그쪽을 택한
+    이유는 두 오류의 대가가 다르기 때문이다 — 과소 보고는 이미 설명한 구간에
+    대해 질문을 한 번 더 받는 것으로 끝나지만, 과대 보고는 빈 구간을 통째로
+    숨겨 기능을 무의미하게 만든다. 사용자는 기간을 직접 지정해 정정할 수 있다
+    (PATCH /sessions/{id}/categories/{id}/period).
+    """
+    if start > end:
+        return None
+    clamped_start = max(start, gap_start)
+    clamped_end = min(end, gap_end)
+    if clamped_start > clamped_end:
+        return None
+    if clamped_start == gap_start and clamped_end == gap_end:
+        return None
+    return PeriodSuggestion(start_date=clamped_start, end_date=clamped_end)
+
+
 @dataclass
 class ConfirmedFact:
     id: str
@@ -130,12 +173,35 @@ class JobInfoCandidate:
     meta_lines: list[str] = field(default_factory=list)
 
 
-class ProviderUnavailableError(Exception):
-    pass
+@dataclass
+class JobInfoQueryParams:
+    """사용자 질문에서 뽑아낸 조회 조건 — 워크넷 호출에 그대로 실린다.
+
+    예전에는 이런 게 아예 없어서, 카테고리(=엔드포인트)만 고르고 조회는
+    전국 첫 20건을 무조건 받아왔다. "경기 북부 백엔드"라고 물어도 후보에
+    강원/경남 과정이 들어오니 관련성 판단이 아무리 정확해도 건질 게 없었다
+    (devlog 20).
+
+    같은 차원에 값이 여러 개 올 수 있어("서울이나 경기") 전부 리스트다 —
+    API는 파라미터 하나에 값 하나만 받으므로(콤마는 0건, 반복 파라미터는 첫
+    값만 적용) 값마다 호출을 쪼개는 건 조회 계층이 담당한다.
+    """
+    regions: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
 
 
-class AllProvidersFailedError(Exception):
-    pass
+class LLMUnavailableError(Exception):
+    """로컬 Ollama에 요청을 보낼 수 없거나, 보냈는데 쓸 수 없는 응답이 온 경우.
+
+    2026-09-09까지는 프로바이더가 던지는 ProviderUnavailableError를 폴백 계층이
+    모아 AllProvidersFailedError로 바꿔 라우터에 넘겼다. Gemini를 제거하면서
+    프로바이더가 하나뿐이 됐으므로 "전부 실패했다"는 이름이 거짓이 됐고, 두 예외를
+    이 하나로 합쳤다. 타임아웃도 여기 포함된다 — 호출부 입장에서 "AI를 못 썼다"는
+    결과는 같고, 잡아야 할 예외가 둘이면 한 곳에서 빠뜨리기 때문이다.
+
+    라우터는 이걸 잡아 503 + detail="llm_unavailable"로 바꾼다(프론트가
+    "AI 서버가 수리 중이예요."로 표시).
+    """
 
 
 @runtime_checkable
@@ -153,7 +219,11 @@ class LLMProvider(Protocol):
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]: ...
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None: ...
+    async def extract_activity_period(
+        self, category_label: str, facts: list[ConfirmedFact], gap_start: date, gap_end: date
+    ) -> PeriodSuggestion | None: ...
     async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]: ...
+    async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams: ...
     async def select_relevant_job_info_results(
         self, query: str, category_label: str, candidates: list[JobInfoCandidate]
     ) -> list[int]: ...

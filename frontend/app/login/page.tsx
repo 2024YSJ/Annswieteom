@@ -33,37 +33,40 @@ export default function LoginPage() {
   }
 
   return (
-    <main style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", display: "flex", flexDirection: "column", gap: 16 }}>
-      <h1>로그인</h1>
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          이메일
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          비밀번호
-          <input
-            type="password"
-            required
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-        {error && <p style={{ color: "crimson" }}>{error}</p>}
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "로그인 중..." : "로그인"}
-        </button>
-      </form>
-      <p>
-        계정이 없으신가요? <Link href="/register">회원가입</Link>
-      </p>
+    <main className="auth-page">
+      <div className="card auth-card">
+        <h1>로그인</h1>
+        <p className="auth-lede">만들어 둔 문서를 이어서 볼 수 있어요.</p>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <label className="field">
+            이메일
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            비밀번호
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          {error && <p className="msg-error">{error}</p>}
+          <button type="submit" className="btn-primary btn-block" disabled={isSubmitting} style={{ marginTop: 2 }}>
+            {isSubmitting ? "로그인 중..." : "로그인"}
+          </button>
+        </form>
+        <p className="auth-foot">
+          계정이 없으신가요? <Link href="/register">회원가입</Link>
+        </p>
+      </div>
     </main>
   );
 }

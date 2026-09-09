@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.gap_period import GapPeriod
+from app.models.interview_answer import InterviewAnswer
 from app.models.session import Session as SessionModel
 from app.schemas.interview import (
     BasedOnRead,
@@ -34,9 +35,10 @@ from app.schemas.interview import (
     StatusRead,
 )
 from app.services import interview_orchestrator as orchestrator
+from app.services.coverage import has_period_clue
 from app.services.interview_question_bank import next_base_question
 from app.services.llm.base import (
-    AllProvidersFailedError,
+    LLMUnavailableError,
     BasedOn,
     ConfirmedFact as LLMConfirmedFact,
     FactCandidate,
@@ -44,7 +46,7 @@ from app.services.llm.base import (
     LLMProvider,
     RecordExcerpt as LLMRecordExcerpt,
 )
-from app.services.llm.fallback import get_llm_provider
+from app.services.llm import get_llm_provider
 from app.services.record_pipeline.search import get_chunk_search
 
 router = APIRouter(prefix="/sessions", tags=["interview"])
@@ -86,23 +88,93 @@ def _serialize_based_on(based_on: BasedOn) -> dict:
     }
 
 
+async def _load_confirmed_facts(db: AsyncSession, category: ActivityCategory) -> list[ConfirmedFact]:
+    return list(
+        (await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category.id))).scalars().all()
+    )
+
+
+# 이 fact_type이 확정되면 활동 기간을 유추해볼 만하다고 본다 — 카테고리 유형별
+# 고정 질문 목록에서 "얼마나 자주, 어느 정도 기간 동안" / "어떤 상황에서"에 해당하는
+# 슬롯들이다(interview_question_bank.py). 카테고리가 끝날 때까지 기다리지 않고 여기서
+# 시도하는 이유는, 기간을 알아야 후속 질문 예산(orchestrator.followup_budget)을 그
+# 카테고리에 맞게 늘려줄 수 있고 커버리지도 인터뷰 도중에 의미를 갖기 때문이다.
+_PERIOD_HINT_FACT_TYPES = frozenset({"frequency", "context"})
+
+
+async def _maybe_infer_category_period(
+    db: AsyncSession,
+    session: SessionModel,
+    category: ActivityCategory,
+    facts: list[ConfirmedFact],
+    llm: LLMProvider,
+) -> None:
+    """확정된 사실에서 이 활동의 기간을 한 번만 유추해 저장한다.
+
+    사용자가 직접 지정한 기간(period_source="user_set")은 절대 덮어쓰지 않는다.
+    실패는 조용히 넘긴다 — 기간은 커버리지 계산용 메타데이터일 뿐이라, 이걸
+    못 구했다고 인터뷰 턴 자체를 실패시킬 이유가 없다(기간 미상 카테고리는
+    coverage report의 categories_without_period로 그대로 드러난다).
+    """
+    if category.period_start is not None or category.period_source == "user_set":
+        return
+    if not _PERIOD_HINT_FACT_TYPES & {f.fact_type for f in facts}:
+        return
+    # 사실에 기간 단서가 하나도 없으면 아예 묻지 않는다 — 로컬 모델은 이 경우
+    # "모르겠다" 대신 공백 기간 전체를 되뱉는다(coverage.has_period_clue 주석 참고).
+    # LLM 호출 한 번도 아낀다.
+    if not has_period_clue(f.content for f in facts):
+        return
+
+    gap_period = (
+        await db.execute(select(GapPeriod).where(GapPeriod.session_id == session.id))
+    ).scalar_one_or_none()
+    if gap_period is None:
+        return
+
+    llm_facts = [
+        LLMConfirmedFact(id=str(f.id), content=f.content, source_type=f.source_type, fact_type=f.fact_type)
+        for f in facts
+    ]
+    try:
+        suggestion = await llm.extract_activity_period(
+            category.label, llm_facts, gap_period.start_date, gap_period.end_date
+        )
+    except Exception:
+        return
+    if suggestion is None:
+        return
+
+    category.period_start = suggestion.start_date
+    category.period_end = suggestion.end_date
+    category.period_source = "ai_inferred"
+
+
 async def _build_context(
-    db: AsyncSession, session: SessionModel, category: ActivityCategory, chunk_search
+    db: AsyncSession,
+    session: SessionModel,
+    category: ActivityCategory,
+    chunk_search,
+    query_text: str | None = None,
 ) -> tuple[InterviewContext, list]:
+    """`query_text` is the question we are about to ask (or just asked). It is
+    what makes the record search a *search*: chunk_search embeds it and ranks
+    the user's own records by cosine distance against it, instead of handing
+    back whichever five chunks happened to be parsed first. Pass None only
+    where there is no meaningful query (the structural "여러 활동 있나요?" turn).
+    """
     gap_period = (
         await db.execute(select(GapPeriod).where(GapPeriod.session_id == session.id))
     ).scalar_one()
-    confirmed_so_far = (
-        await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category.id))
-    ).scalars().all()
+    confirmed_so_far = await _load_confirmed_facts(db, category)
 
     try:
-        excerpts = await chunk_search(session.id, category.id)
+        excerpts = await chunk_search(session.id, category.id, query_text)
         # 소분류는 자체 기록물 요청 단계가 없다(부모의 기록물을 공유하기로 확정,
         # 2026-09-06) — 소분류 자신에게 붙은 기록물이 없으면 부모 카테고리의 풀로
         # 한 번 더 검색해본다.
         if not excerpts and category.parent_category_id is not None:
-            excerpts = await chunk_search(session.id, category.parent_category_id)
+            excerpts = await chunk_search(session.id, category.parent_category_id, query_text)
     except Exception:
         excerpts = []
 
@@ -156,7 +228,7 @@ async def extract_period(
     # categories/extract. The real POST /period still owns persisting.
     try:
         suggestion = await llm.extract_period(payload.text, date.today())
-    except AllProvidersFailedError as exc:
+    except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
     if suggestion is None:
@@ -219,7 +291,7 @@ async def extract_categories(
     # persist anything (honesty guardrail: an AI guess is not a confirmed fact).
     try:
         suggestions = await llm.extract_categories(payload.text, gap_period.start_date, gap_period.end_date)
-    except AllProvidersFailedError as exc:
+    except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
     return CategoryExtractRead(
@@ -276,7 +348,7 @@ async def _build_pending_turn(
     else:
         try:
             draft_answer = await llm.draft_answer(context, question_text)
-        except AllProvidersFailedError:
+        except LLMUnavailableError:
             # The composer prefill is a convenience, not a required part of
             # the flow (the user can always type from a blank box), so a
             # failure here shouldn't block the question itself from being shown.
@@ -334,8 +406,9 @@ async def interview_ask(
             draft_answer=pending.get("draft_answer", ""),
         )
 
-    context, confirmed_so_far = await _build_context(db, session, category, chunk_search)
-
+    # 질문을 먼저 정하고, 그 질문 문구로 기록물을 검색한다. 순서가 반대였을 때는
+    # (2026-09-09 이전) 검색어가 없어 카테고리에 붙은 청크를 작성순으로 자르는 게
+    # 전부였고, record_chunks.embedding은 한 번도 조회되지 않았다.
     is_structural = False
     if not category.activity_split_checked:
         question_text = ACTIVITY_BREAKDOWN_QUESTION
@@ -343,6 +416,7 @@ async def interview_ask(
         fact_type_hint = "activity_breakdown"
         is_structural = True
     else:
+        confirmed_so_far = await _load_confirmed_facts(db, category)
         answered_fact_types = {f.fact_type for f in confirmed_so_far}
         base_question = next_base_question(category.category_type, answered_fact_types)
 
@@ -351,12 +425,19 @@ async def interview_ask(
             question_source = "base"
             fact_type_hint = base_question.fact_type
         else:
+            # 후속 질문은 질문 자체를 만들기 위해 컨텍스트가 먼저 필요하다 —
+            # 아직 질문 문구가 없으므로 카테고리 이름을 검색어로 쓴다.
+            context, _ = await _build_context(db, session, category, chunk_search, query_text=category.label)
             try:
                 question_text = await llm.followup_question(context)
-            except AllProvidersFailedError as exc:
+            except LLMUnavailableError as exc:
                 raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
             question_source = "followup"
             fact_type_hint = "followup"
+
+    context, _ = await _build_context(
+        db, session, category, chunk_search, query_text=None if is_structural else question_text
+    )
 
     session.pending_turn = await _build_pending_turn(
         llm, context, category, question_text, question_source, fact_type_hint, is_structural=is_structural
@@ -387,7 +468,7 @@ async def interview_answer(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_pending_question")
 
     category = await db.get(ActivityCategory, uuid.UUID(pending["category_id"]))
-    context, _ = await _build_context(db, session, category, chunk_search)
+    context, _ = await _build_context(db, session, category, chunk_search, query_text=pending["question_text"])
 
     if pending["fact_type_hint"] == "activity_breakdown":
         # 이 답변은 서사적 사실이 아니라 "이 카테고리를 소분류로 쪼갤지" 라우팅
@@ -396,7 +477,7 @@ async def interview_answer(
         # 그대로 재사용한다(interview_confirm의 activity_breakdown 분기가 처리).
         try:
             items = await llm.extract_activity_items(category.label, payload.text)
-        except AllProvidersFailedError as exc:
+        except LLMUnavailableError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
         candidate_payload = [
@@ -416,7 +497,7 @@ async def interview_answer(
         candidates: list[FactCandidate] = await llm.extract_facts(
             context, pending["question_text"], payload.text, pending["fact_type_hint"]
         )
-    except AllProvidersFailedError as exc:
+    except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
     # 정직성 가드레일 강화: 방금 extract_facts에 실제로 넘긴 chunk_id가 아니면
@@ -444,7 +525,27 @@ async def interview_answer(
             {"content": candidate.content, "fact_type": pending["fact_type_hint"], "based_on": _serialize_based_on(based_on)}
         )
 
-    session.pending_turn = {**pending, "candidate_facts": candidate_payload}
+    # 계정 단위 문답 기록. 여기가 사용자가 실제로 타이핑한 문장을 붙잡을 수 있는
+    # 유일한 지점이다 — 이 아래로는 extract_facts가 요약한 짧은 사실 문장만 남는다.
+    # 확정 여부와 무관하게 먼저 남기고(답변만 하고 이탈한 턴도 기록으로는 남는다),
+    # 확정된 사실 스냅샷은 interview_confirm이 이 행에 채운다.
+    answer_log = InterviewAnswer(
+        user_id=session.user_id,
+        session_id=session.id,
+        category_label=category.label,
+        category_type=category.category_type,
+        question_text=pending["question_text"],
+        question_source=pending["question_source"],
+        answer_text=payload.text,
+    )
+    db.add(answer_log)
+    await db.flush()
+
+    session.pending_turn = {
+        **pending,
+        "candidate_facts": candidate_payload,
+        "answer_log_id": str(answer_log.id),
+    }
     await db.commit()
 
     return InterviewAnswerRead(
@@ -558,19 +659,33 @@ async def interview_confirm(
         db.add(fact)
         inserted.append(fact)
 
+    # 계정 단위 문답 기록에 "이 답변에서 실제로 확정된 것"을 스냅샷으로 남긴다 —
+    # 세션이 지워져도(confirmed_facts는 CASCADE로 사라진다) 이 요약은 남는다.
+    answer_log_id = pending.get("answer_log_id")
+    if answer_log_id:
+        answer_log = await db.get(InterviewAnswer, uuid.UUID(answer_log_id))
+        if answer_log is not None:
+            answer_log.confirmed_facts = [
+                {"content": f.content, "fact_type": f.fact_type, "source_type": f.source_type}
+                for f in inserted
+            ]
+
     session.pending_turn = None
     await db.flush()
 
-    answered_fact_types = {
-        f.fact_type
-        for f in (await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category_id))).scalars().all()
-    }
+    all_facts = list(
+        (await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category_id))).scalars().all()
+    )
+    answered_fact_types = {f.fact_type for f in all_facts}
+    await _maybe_infer_category_period(db, session, category, all_facts, llm)
+
     remaining_base_question = next_base_question(category.category_type, answered_fact_types)
     # AI 추가 질문(드릴다운/후속) 전용 예산 — 고정 질문 자체는 이 예산과 무관하게
     # 항상 전부 물어본다(2026-09-06, orchestrator.MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
     # 참고). 예전엔 고정+AI를 하나의 상한으로 묶어서, 예산이 바닥나면 "성과/결과"
     # 같은 마지막 고정 질문이 아직 안 나왔어도 강제로 다음 카테고리로 넘어가 버렸다.
-    followup_budget_left = category.followup_questions_asked < orchestrator.MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+    # 상한 자체는 활동 기간에 따라 달라진다(orchestrator.followup_budget).
+    followup_budget_left = category.followup_questions_asked < orchestrator.followup_budget(category)
 
     if remaining_base_question is not None:
         advance = False
@@ -585,10 +700,10 @@ async def interview_confirm(
         if followup_budget_left:
             should_ask, drilldown_question_text = False, None
             try:
-                context, _ = await _build_context(db, session, category, chunk_search)
+                context, _ = await _build_context(db, session, category, chunk_search, query_text=pending["question_text"])
                 decision = await llm.judge_drilldown(context)
                 should_ask, drilldown_question_text = decision.should_ask, decision.question_text
-            except AllProvidersFailedError:
+            except LLMUnavailableError:
                 # 모든 LLM provider가 막혀 있으면(로컬 dev 환경의 알려진 한계 — 플레이스홀더
                 # GEMINI_API_KEY라 로컬 모델이 JSON 파싱에 실패해도 폴백이 안 됨) 정교한
                 # 판단 대신 규칙 기반 백업으로 최소한의 구체화는 보장한다: 방금 확정된
@@ -602,10 +717,10 @@ async def interview_confirm(
                 )
     elif followup_budget_left:
         try:
-            context, _ = await _build_context(db, session, category, chunk_search)
+            context, _ = await _build_context(db, session, category, chunk_search, query_text=pending["question_text"])
             result = await llm.judge_sufficiency(context)
             advance = result.sufficient
-        except AllProvidersFailedError:
+        except LLMUnavailableError:
             # LLM 판단이 안 되면 안전하게 계속 진행하기보다 멈추지 않도록 다음으로 넘긴다 —
             # 무한정 붙잡아두는 것보다 사용자가 다음 카테고리로 진행할 수 있는 편이 낫다.
             advance = True
