@@ -61,14 +61,14 @@
 현재 저장소에는 이미 `main`과 `dev` 두 브랜치가 있고, GitHub 기본 브랜치는 `dev`로 설정돼 있다(`origin/HEAD -> origin/dev`). 이 구조를 그대로 살려서 "항상 배포 가능한 `main`"과 "매일 작업이 합쳐지는 `dev`"를 분리한다 — 명세서 5절의 "PR로 main에 머지"를 이 저장소에 맞게 한 단계(`dev`)를 끼워 넣은 버전이라고 보면 된다.
 
 ```
-main   ●───────────────●───────────●───────────●───── 배포 브랜치 (Railway/Vercel이 추적)
+main   ●───────────────●───────────●───────────●───── 배포 브랜치 (Render/Vercel이 추적)
         \  (마일스톤 체크포인트에서만 dev → main 병합)
 dev      ●─●─●─●─●─●─●─●─●─●─●─●─●─●─●─●─●─●─●─●───── 통합 브랜치 (기본 브랜치, PR 대상)
           \       \           \         \
            feature/auth  feature/llm-adapter  feature/records-feature ...  (실제 작업은 여기서)
 ```
 
-- [x] **`main`**: 배포 브랜치. Railway(백엔드)·Vercel(프론트엔드)이 이 브랜치를 추적해 배포하도록 설정한다([00_shared/03_deployment.md](03_deployment.md)). 평소에는 여기에 직접 커밋하거나 `feature/*`를 바로 병합하지 않는다. — 마일스톤 4에서 [PR #4](https://github.com/2024YSJ/Annswieteom/pull/4)로 처음 `dev → main` 승격 완료(2026-09-03)
+- [x] **`main`**: 배포 브랜치. Render(백엔드)·Vercel(프론트엔드)이 이 브랜치를 추적해 배포하도록 설정한다([00_shared/03_deployment.md](03_deployment.md)). 평소에는 여기에 직접 커밋하거나 `feature/*`를 바로 병합하지 않는다. — 마일스톤 4에서 [PR #4](https://github.com/2024YSJ/Annswieteom/pull/4)로 처음 `dev → main` 승격 완료(2026-09-03)
 - [x] **`dev`**: 기본 통합 브랜치. 모든 `feature/*` 브랜치는 여기서 분기하고, 작업이 끝나면 PR로 여기 병합한다. `dev`는 항상 "로컬에서 실행은 되는" 상태를 유지하되(빌드가 깨진 채로 오래 두지 않기), `main`만큼 엄격하게 배포 가능할 필요는 없다.
 - [x] **`feature/<이름>`**: 아래 표대로 체크리스트 파일 하나(또는 그 하위 작업)당 브랜치 하나. `dev`에서 분기 → 작업 → PR → `dev` 병합 → 브랜치 삭제.
 - [x] **`dev` → `main` 승격 시점**: 각 마일스톤([milestones_overview.md](../milestones_overview.md))의 "검증 기준"을 실제로 통과했을 때, A·B가 함께 확인한 뒤 `dev → main` PR을 만들어 병합한다. 즉 커밋마다 배포되는 게 아니라 "마일스톤 단위 배포"다. 마일스톤 5(배포) 직전에는 이 승격이 필수다.

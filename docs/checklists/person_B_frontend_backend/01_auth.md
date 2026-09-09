@@ -23,8 +23,8 @@
 
 - [x] `POST /auth/register`: `{email, password, nickname}` → 이메일 중복 확인 후 `users` insert, `{"user_id": UUID}` 반환. 중복 시 `409 email_already_exists`
 - [x] `POST /auth/login`: 이메일로 사용자 조회 → 비밀번호 검증 → 성공 시 Access Token을 응답 바디로, Refresh Token을 쿠키로 내려줌. 실패 시 `401 invalid_credentials`
-  - ⚠️ **쿠키 속성 관련 배포 시 주의**: 명세서 7-1절은 `httpOnly + Secure + SameSite=Lax`로 적어뒀지만, 이 프로젝트는 프론트(Vercel, `*.vercel.app`)와 백엔드(Railway, `*.up.railway.app`)가 **서로 다른 최상위 도메인**에 배포된다(15절). `SameSite=Lax` 쿠키는 이런 교차 사이트(cross-site) JS 요청(프론트에서 fetch로 `/auth/refresh` 호출)에는 브라우저가 아예 실어 보내지 않아, **로컬 개발(둘 다 localhost라 문제없음)에서는 잘 되다가 배포 후에만 로그인 유지가 깨지는** 상황이 생긴다. 배포본에서는 `SameSite=None; Secure`(HTTPS 필수, Railway/Vercel 모두 기본 제공)로 설정한다. `httpOnly`는 그대로 유지
-    - [x] 구현 완료: `settings.environment`(신규 config 값, 기본 `development`)로 로컬은 `Lax`, `production`은 `None; Secure`로 자동 전환 (`app/api/auth.py`의 `_refresh_cookie_kwargs`). Railway 배포 시 `ENVIRONMENT=production` 환경변수 설정 필요
+  - ⚠️ **쿠키 속성 관련 배포 시 주의**: 명세서 7-1절은 `httpOnly + Secure + SameSite=Lax`로 적어뒀지만, 이 프로젝트는 프론트(Vercel, `*.vercel.app`)와 백엔드(Render, `*.onrender.com`)가 **서로 다른 최상위 도메인**에 배포된다(15절). `SameSite=Lax` 쿠키는 이런 교차 사이트(cross-site) JS 요청(프론트에서 fetch로 `/auth/refresh` 호출)에는 브라우저가 아예 실어 보내지 않아, **로컬 개발(둘 다 localhost라 문제없음)에서는 잘 되다가 배포 후에만 로그인 유지가 깨지는** 상황이 생긴다. 배포본에서는 `SameSite=None; Secure`(HTTPS 필수, Render/Vercel 모두 기본 제공)로 설정한다. `httpOnly`는 그대로 유지
+    - [x] 구현 완료: `settings.environment`(신규 config 값, 기본 `development`)로 로컬은 `Lax`, `production`은 `None; Secure`로 자동 전환 (`app/api/auth.py`의 `_refresh_cookie_kwargs`). Render 배포 시 `ENVIRONMENT=production` 환경변수 설정 필요
   - 이에 맞춰 FastAPI `CORSMiddleware`에 `allow_credentials=True`를 추가하고, 프론트의 `fetch`/axios 호출에 `credentials: "include"`를 반드시 붙인다(안 그러면 브라우저가 쿠키를 아예 요청에 담지 않는다) — [00_shared/01_repo_and_env_setup.md](../00_shared/01_repo_and_env_setup.md)의 CORS 설정과 [05_frontend_routes_components.md](05_frontend_routes_components.md)의 `lib/api-client.ts`에 함께 반영 — `frontend/lib/api-client.ts`에 이미 반영됨
 - [x] `POST /auth/refresh`: 쿠키의 Refresh Token 해시를 `refresh_tokens`에서 조회(만료·revoked 확인) → 새 Access Token 발급
 - [x] `POST /auth/logout` 🔒: 현재 Refresh Token을 `revoked_at` 처리, 204 반환

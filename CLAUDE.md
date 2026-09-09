@@ -16,7 +16,7 @@ Milestone roadmap: [docs/checklists/milestones_overview.md](docs/checklists/mile
 Hybrid cloud + local GPU setup:
 
 - **Frontend**: Next.js 14+ (TypeScript) → deployed on Vercel (`frontend/`)
-- **Backend**: FastAPI (Python 3.11+) → deployed on Railway (`backend/`)
+- **Backend**: FastAPI (Python 3.11+) → deployed on Render (`backend/`)
 - **Database**: PostgreSQL + pgvector on Supabase
 - **Local LLM**: Ollama on RTX 4090 PC, exposed via Cloudflare Tunnel (primary inference)
 - **Object Storage**: Supabase Storage (images, documents)
