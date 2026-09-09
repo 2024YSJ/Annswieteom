@@ -1,7 +1,7 @@
 # 메인 화면 피드 프론트 연동 — 자동 리다이렉트를 걷어내야 기능이 보인다
 
 관련 spec: [main_page_feed.md](../../specs/main_page_feed.md)
-선행 작업: [24_main_page_feed.md](24_main_page_feed.md)(백엔드), [19_design_system_unification.md](19_design_system_unification.md)(디자인 시스템)
+선행 작업: [25_main_page_feed.md](25_main_page_feed.md)(백엔드), [21_design_system_unification.md](21_design_system_unification.md)(디자인 시스템)
 날짜: 2026-09-09
 
 ---

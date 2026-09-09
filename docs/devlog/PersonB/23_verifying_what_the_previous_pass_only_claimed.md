@@ -1,6 +1,6 @@
 # 앞 작업이 "확인 안 함"으로 남겨둔 것들을 실제로 확인하기
 
-관련 spec: 없음([20번](20_differentiation_from_a_chat_window.md)의 "남은 작업" 소진)
+관련 spec: 없음([22번](22_differentiation_from_a_chat_window.md)의 "남은 작업" 소진)
 날짜: 2026-09-09
 
 ---

@@ -2,7 +2,7 @@
 
 관련 spec: [main_page_feed.md](../../specs/main_page_feed.md)
 날짜: 2026-09-09
-선행 작업: [23_remove_gemini_no_fallback.md](23_remove_gemini_no_fallback.md)
+선행 작업: [24_remove_gemini_no_fallback.md](24_remove_gemini_no_fallback.md)
 
 ---
 
@@ -32,7 +32,7 @@
 
 **`question_text`는 프로필 텍스트에서 뺐다.** 질문 은행이 만든 시스템 문구라 사용자 간에 거의 동일하다. 넣으면 모든 프로필 벡터에 큰 공통 성분이 생겨 사용자 사이 코사인 거리가 압착되고 개인화가 노이즈로 뭉개진다.
 
-**미확정 답변도 프로필에 넣는다.** 리뷰에서 반드시 나올 지점이라 근거를 남긴다: 정직성 가드레일은 "생성 문서가 무엇을 인용할 수 있는가"를 규율한다(`document_generator`는 여전히 `confirmed_facts`만 받고, `interview_answers`는 생성 입력에서 제외돼 있다 — devlog 20). 피드는 문장을 만들지도 인용하지도 않고 공개 공고의 순서만 바꾼다.
+**미확정 답변도 프로필에 넣는다.** 리뷰에서 반드시 나올 지점이라 근거를 남긴다: 정직성 가드레일은 "생성 문서가 무엇을 인용할 수 있는가"를 규율한다(`document_generator`는 여전히 `confirmed_facts`만 받고, `interview_answers`는 생성 입력에서 제외돼 있다 — devlog 22). 피드는 문장을 만들지도 인용하지도 않고 공개 공고의 순서만 바꾼다.
 
 **`interview_answers`를 읽는 지점을 파일 하나로 가뒀다.** 그 테이블은 다른 작업의 소유고 아직 커밋도 안 됐다. `profile_adapter.py` 상단에 의존하는 컬럼 5개를 명시하고, 테이블이 없거나 바뀌면 예외 대신 빈 신호를 돌려준다 — 다른 팀의 스키마 변경이 메인 화면을 500으로 만들면 안 된다. `GET /me/answers`를 HTTP로 부르지 않은 이유도 적어뒀다(게스트 403 + 화면용 필터라 랭킹 입력과 계약이 다르다).
 

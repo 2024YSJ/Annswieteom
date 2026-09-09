@@ -1,7 +1,7 @@
 # 메인 화면 피드 (청년 지원 정책 / 공고 / 맞춤 공고)
 
-원래 마일스톤 체크리스트에 없던 항목. 대응 devlog: [PersonB/24_main_page_feed.md](../devlog/PersonB/24_main_page_feed.md).
-같이 진행한 Gemini 제거는 [PersonB/23_remove_gemini_no_fallback.md](../devlog/PersonB/23_remove_gemini_no_fallback.md).
+원래 마일스톤 체크리스트에 없던 항목. 대응 devlog: [PersonB/25_main_page_feed.md](../devlog/PersonB/25_main_page_feed.md).
+같이 진행한 Gemini 제거는 [PersonB/24_remove_gemini_no_fallback.md](../devlog/PersonB/24_remove_gemini_no_fallback.md).
 
 ## 목표
 
