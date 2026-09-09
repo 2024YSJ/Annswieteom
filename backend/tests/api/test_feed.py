@@ -230,10 +230,12 @@ def test_stale_cache_still_returns_rows_and_schedules_a_refresh(feed_client):
 
 
 def test_fresh_cache_does_not_schedule_a_refresh(feed_client):
-    states = [_fresh_state(f"worknet:{c}") for c in (
-        "job_fair", "public_recruitment", "public_recruitment_company",
-        "job_seeker_program", "promising_sme", "training_course",
-    )]
+    # 워크넷 6개를 하드코딩했더니 온통청년 인증키가 발급돼 소스가 7개가 된
+    # 순간 깨졌다(2026-09-09). 이 테스트가 확인하려는 건 "전부 신선하면 갱신을
+    # 예약하지 않는다"이지 소스가 몇 개냐가 아니므로, 실제 설정된 목록을 쓴다.
+    from app.services.feed.sources import configured_source_keys
+
+    states = [_fresh_state(key) for key in configured_source_keys()]
     _seed(feed_client, [_item("캐시된 공고")], states)
     body = feed_client.get("/api/v1/feed/jobs").json()
     assert body["is_warming"] is False

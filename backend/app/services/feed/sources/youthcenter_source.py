@@ -1,97 +1,99 @@
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, datetime
 
 import httpx
 
 from app.core.config import settings
 from app.services.feed.sources.base import FeedItemData, FeedSource
 
-_ENDPOINT = "https://www.youthcenter.go.kr/opi/youthPlcyList.do"
-_FETCH_LIMIT = 20
+#: 2026-09-09 실 인증키로 확인한 엔드포인트. 예전에 문서에서 유추해 써뒀던
+#: `/opi/youthPlcyList.do`(XML)는 **죽어 있다** — 같은 호스트인데 이 경로만
+#: 연결이 타임아웃된다(도메인 루트는 200). 실제로 살아 있는 건 이쪽이고
+#: 응답은 XML이 아니라 JSON이다.
+_ENDPOINT = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
+
+#: 한 번에 받아올 정책 수. 전체는 2751건이고 API가 이미 등록 최신순으로
+#: 돌려주므로(실측 확인) 앞쪽만 받으면 된다. pageSize=100까지는 정상 동작한다.
+_FETCH_LIMIT = 30
 
 
 class YouthCenterApiError(Exception):
     """온통청년이 정상 목록 대신 오류를 돌려준 경우.
 
-    워크넷과 같은 공공 API 계열이라 **HTTP 200 본문에 오류를 담아 보낼 수 있다고
-    가정하고** 방어한다(job_info_client.WorknetApiError와 같은 이유 —
-    resp.raise_for_status()로는 못 잡는다).
+    이 API는 HTTP 200으로 응답하면서 본문 `resultCode`로 성공/실패를 구분한다
+    (워크넷과 같은 계열의 함정 — `raise_for_status()`로는 못 잡는다).
     """
 
-    def __init__(self, message: str | None) -> None:
+    def __init__(self, code: object, message: str | None) -> None:
+        self.code = code
         self.message = message
-        super().__init__(f"youthcenter_api_error: {message}")
+        super().__init__(f"youthcenter_api_error({code}): {message}")
 
 
-def _text(item: ET.Element, *tags: str) -> str:
-    """후보 태그를 순서대로 시도해 먼저 잡히는 값을 돌려준다.
+def _text(item: dict, key: str) -> str:
+    value = item.get(key)
+    return str(value).strip() if value not in (None, "") else ""
 
-    응답 필드명이 아직 실측으로 확정되지 않아서(클래스 docstring 참고) 흔히
-    쓰이는 이름 몇 개를 후보로 둔다. 실 응답을 확인하면 후보 목록을 정답
-    하나로 줄인다.
-    """
-    for tag in tags:
-        found = item.find(tag)
-        if found is not None and found.text and found.text.strip():
-            return found.text.strip()
+
+def _parse_reg_date(raw: str) -> date | None:
+    """`frstRegDt`는 "2026-09-08 09:13:11" 형태다(YYYYMMDD가 아니다)."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S").date()
+    except ValueError:
+        try:
+            return date.fromisoformat(raw[:10])
+        except ValueError:
+            return None
+
+
+def _format_period(item: dict) -> str:
+    """신청기간. `aplyYmd`가 "20260701 ~ 20260713" 형태로 오지만 상시모집이면
+    비어 있고(그 경우 `aplyPrdSeCd`가 0057002), 그때는 사업기간으로 갈음한다."""
+    apply_period = _text(item, "aplyYmd")
+    if apply_period:
+        return apply_period.replace("~", "~")
+    start, end = _text(item, "bizPrdBgngYmd"), _text(item, "bizPrdEndYmd")
+    if start or end:
+        return f"{start} ~ {end}".strip()
     return ""
 
 
-def _check_error(root: ET.Element) -> None:
-    # ElementTree 요소는 자식이 없으면 텍스트가 있어도 falsy다 — 반드시
-    # `is not None`으로 확인한다(job_info_client._check_error가 주석으로
-    # 남겨둔 바로 그 함정).
-    for tag in ("errMsg", "resultMsg", "message", "error"):
-        el = root.find(tag)
-        if el is not None and el.text and el.text.strip():
-            text = el.text.strip()
-            if text in ("SUCCESS", "정상", "정상처리"):
-                continue
-            raise YouthCenterApiError(text)
+def _parse_policy_items(payload: dict) -> list[FeedItemData]:
+    """응답 JSON을 FeedItemData로. 필드 접근은 전부 이 함수 안에서만 일어난다.
 
-
-def _parse_date(raw: str) -> date | None:
-    raw = raw.strip()
-    if len(raw) == 8 and raw.isdigit():
-        try:
-            return date(int(raw[:4]), int(raw[4:6]), int(raw[6:8]))
-        except ValueError:
-            return None
-    try:
-        return date.fromisoformat(raw[:10])
-    except ValueError:
-        return None
-
-
-def _parse_policy_items(root: ET.Element) -> list[FeedItemData]:
-    """응답 XML을 FeedItemData로. **필드명 접근은 전부 이 함수 안에서만 일어난다.**
-
-    실 인증키로 응답을 받아본 뒤 고쳐야 할 범위를 여기 하나로 가둬 두려는
-    의도다. 모듈의 나머지(호출, 오류 감지, 미설정 시 스킵)는 필드명이 뭐든
-    그대로 맞다.
-
-    아이템 엘리먼트의 태그명도 미확정이라 태그로 특정하지 않고 "정책명에
-    해당하는 자식을 가진 엘리먼트"를 아이템으로 본다.
+    2026-09-09 실 응답(60개 필드)을 보고 확정했다. 이전 버전은 문서에서 유추한
+    이름(`polyBizSjnm`, `cnsgNmor`, `rqutPrdCn` 등)을 후보로 여러 개 시도하는
+    구조였는데, 실제 스키마와 대부분 달랐다.
     """
     items: list[FeedItemData] = []
-    for el in root.iter():
-        title = _text(el, "polyBizSjnm", "plcyNm", "policyName")
+    for raw in payload.get("result", {}).get("youthPolicyList", []) or []:
+        title = _text(raw, "plcyNm")
         if not title:
             continue
-        summary = _text(el, "polyItcnCn", "plcyExplnCn", "sporCn", "plcySprtCn")
-        org = _text(el, "cnsgNmor", "sprvsnInstCdNm", "operInstCdNm")
-        period = _text(el, "rqutPrdCn", "aplyYmd", "bizPrdCn")
+
+        org = _text(raw, "sprvsnInstCdNm")  # 주관기관(시·도, 부처 등)
+        operator = _text(raw, "operInstCdNm")  # 운영기관(대학, 센터 등)
+        large, medium = _text(raw, "lclsfNm"), _text(raw, "mclsfNm")
+        period = _format_period(raw)
+        summary = _text(raw, "plcySprtCn") or _text(raw, "plcyExplnCn")
+
+        classification = " · ".join(p for p in (large, medium) if p)
         meta = [
             m
-            for m in [
-                f"운영: {org}" if org else "",
+            for m in (
+                f"분류: {classification}" if classification else "",
                 f"신청: {period}" if period else "",
-                summary,
-            ]
+                f"운영: {operator}" if operator and operator != org else "",
+                # 지원 내용은 줄바꿈이 섞인 긴 원문이라 카드에서 잘라 보여준다.
+                " ".join(summary.split())[:180] if summary else "",
+            )
             if m
         ]
+
         items.append(
             FeedItemData(
                 source="youthcenter",
@@ -99,9 +101,12 @@ def _parse_policy_items(root: ET.Element) -> list[FeedItemData]:
                 title=title,
                 subtitle=org,
                 meta_lines=meta,
-                detail_url=_text(el, "rqutUrla", "aplyUrlAddr", "refUrlAddr1") or None,
-                source_key=_text(el, "bizId", "plcyNo", "policyId") or None,
-                source_published_at=_parse_date(_text(el, "frstRegDt", "regDt", "firstRegDt")),
+                # 신청 URL이 없는 정책도 많아 참고 URL로 갈음한다.
+                detail_url=_text(raw, "aplyUrlAddr") or _text(raw, "refUrlAddr1") or None,
+                # plcyNo는 정책 고유번호라 안정적인 중복 제거 키가 된다 —
+                # 워크넷 카테고리 대부분이 못 주는 것이다.
+                source_key=_text(raw, "plcyNo") or None,
+                source_published_at=_parse_reg_date(_text(raw, "frstRegDt")),
             )
         )
     return items
@@ -110,20 +115,15 @@ def _parse_policy_items(root: ET.Element) -> list[FeedItemData]:
 class YouthCenterFeedSource:
     """온통청년(청년정책 통합) Open API 소스.
 
-    ⚠️ **응답 스키마 미검증.** 확인된 것은 여기까지다: 엔드포인트
-    `https://www.youthcenter.go.kr/opi/youthPlcyList.do`, 파라미터
-    `openApiVlak`(인증키)/`pageIndex`/`display`, 응답은 XML, 인증키는 회원가입 후
-    [마이페이지 - OPEN API]에서 신청해 **담당자 승인**을 거쳐 발급된다(워크넷과
-    같은 사람 심사 게이트).
+    인증키는 회원가입 후 [마이페이지 - OPEN API]에서 신청해 담당자 승인을 거쳐
+    발급된다(워크넷과 같은 사람 심사 게이트). 비어 있으면 이 소스는 오류가 아니라
+    수집 대상에서 조용히 빠진다(services/feed/sources/__init__.py).
 
-    확인 안 된 것: 응답 엘리먼트/필드 이름 전부, 안정적인 정책 id의 존재 여부,
-    오류 응답의 형태, 등록일 필드의 이름과 존재 여부. 그래서 `_parse_policy_items`가
-    후보 태그를 여러 개 시도하는 형태이고, 파서 테스트는 인증키가 나오기 전까지
-    xfail이다.
-
-    **실 키가 나오면 첫 작업은 curl로 진짜 응답을 받아 테스트에 상수로 붙여넣고
-    후보 목록을 정답 하나로 줄이는 것이다** — devlog 15에서 코드값을 짐작했다가
-    겪은 실패를 반복하지 않는다.
+    **분류로 걸러내지 않는다.** 대분류는 일자리/교육･직업훈련/금융･복지･문화/
+    참여･기반/주거 다섯 가지이고, 취업 관련(일자리+교육･직업훈련)은 절반쯤이다.
+    그래도 전부 받는 이유는 섹션 이름이 "취업 정책"이 아니라 "청년 지원 정책"이고,
+    공백기 청년에게 월세·금융 지원도 실제로 쓸모가 있기 때문이다. 대신 분류를
+    meta_lines 첫 줄에 실어 카드에서 바로 구분되게 했다.
     """
 
     name = "youthcenter"
@@ -137,16 +137,22 @@ class YouthCenterFeedSource:
 
     async def fetch(self, category: str) -> list[FeedItemData]:
         params = {
-            "openApiVlak": settings.youthcenter_api_key,
-            "pageIndex": "1",
-            "display": str(_FETCH_LIMIT),
+            "apiKeyNm": settings.youthcenter_api_key,
+            "pageNum": "1",
+            "pageSize": str(_FETCH_LIMIT),
+            "rtnType": "json",
         }
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.get(_ENDPOINT, params=params)
             resp.raise_for_status()
-            root = ET.fromstring(resp.text)
-        _check_error(root)
-        return _parse_policy_items(root)
+            payload = resp.json()
+
+        # HTTP 200이어도 본문 resultCode로 실패가 온다.
+        code = payload.get("resultCode")
+        if code != 200:
+            raise YouthCenterApiError(code, payload.get("resultMessage"))
+
+        return _parse_policy_items(payload)
 
 
 _typecheck: FeedSource = YouthCenterFeedSource()
