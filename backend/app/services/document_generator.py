@@ -10,7 +10,7 @@ from app.models.confirmed_fact import ConfirmedFact
 from app.models.generated_document import GeneratedDocument
 from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
-from app.services.consistency_check import check_sentence_consistency
+from app.services.consistency_check import evaluate_sentence_consistency
 from app.services.embedding.base import EmbeddingProvider
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact, LLMProvider
 
@@ -76,7 +76,7 @@ async def generate_full_document(
 
             for sentence in paragraph_draft.sentences:
                 cited_facts = [facts[i] for i in sentence.fact_indices if 0 <= i < len(facts)]
-                passed = await check_sentence_consistency(sentence.text, cited_facts, embedding_provider)
+                consistency = await evaluate_sentence_consistency(sentence.text, cited_facts, embedding_provider)
 
                 db.add(GeneratedSentence(
                     document_id=document.id,
@@ -85,7 +85,8 @@ async def generate_full_document(
                     order_index=order_index,
                     text=sentence.text,
                     evidence_fact_ids=[str(f.id) for f in cited_facts],
-                    consistency_check_passed=passed,
+                    consistency_check_passed=consistency.passed,
+                    consistency_score=consistency.score,
                 ))
                 order_index += 1
 
@@ -124,8 +125,13 @@ async def regenerate_sentence(
     cited_facts = [facts[i] for i in new_sentence.fact_indices if 0 <= i < len(facts)] or facts
 
     sentence.text = new_sentence.text
+    consistency = await evaluate_sentence_consistency(sentence.text, cited_facts, embedding_provider)
     sentence.evidence_fact_ids = [str(f.id) for f in cited_facts]
-    sentence.consistency_check_passed = await check_sentence_consistency(sentence.text, cited_facts, embedding_provider)
+    sentence.consistency_check_passed = consistency.passed
+    sentence.consistency_score = consistency.score
+    # 재생성된 문장은 다시 AI가 쓴 것이다 — 이전에 사용자가 손댔더라도 그 편집은
+    # 사라졌으므로 "직접 작성" 표시를 남겨두면 거짓이 된다.
+    sentence.edited_by_user = False
 
     await db.commit()
     await db.refresh(sentence)

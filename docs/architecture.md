@@ -7,7 +7,7 @@
 - **프론트엔드**: Next.js 14+ (TypeScript, App Router) — `frontend/`
 - **백엔드**: FastAPI (Python 3.11+) — `backend/`
 - **DB**: PostgreSQL + pgvector (Supabase)
-- **LLM**: 로컬 Ollama(우선) → Gemini API(폴백), `LLM_PROVIDER_ORDER` 환경변수로 순서 제어
+- **LLM**: 로컬 Ollama 전용 — **폴백 없음**(2026-09-09 Gemini 제거). 추론도 임베딩도 이 서버 하나에 달려 있고, 닿지 않으면 AI 경로는 전부 503 `llm_unavailable`로 끝난다
 - **핵심 제약(정직성 가드레일)**: 생성된 모든 문장은 `confirmed_facts` 테이블의 행을 최소 1개 이상 인용해야 한다. 이 제약은 특정 함수 하나가 아니라 여러 계층에 걸쳐 강제된다 — 자세한 내용은 6절.
 
 백엔드는 `api/ → schemas/ + services/ → models/ → db` 방향으로 의존한다:
@@ -136,7 +136,11 @@ classDiagram
 
 ## 3. 백엔드 파일별 상세
 
-### `api/` — 라우터. 전부 `Depends(get_owned_session)`으로 소유권 검증(`core/deps.py`)을 공유한다.
+### `api/` — 라우터. 소유권/인증 방식이 세 갈래다(`core/deps.py`).
+
+- **세션 스코프**(`sessions`/`interview`/`records`/`document`/`job_search`/`coverage`): `Depends(get_owned_session)`으로 소유권 검증을 공유한다.
+- **계정 스코프**(`auth`의 일부, `profile`): `Depends(get_current_user)`.
+- **익명 허용**(`feed`): `Depends(get_current_user_optional)` — 메인 화면 피드는 로그아웃 방문자에게도 떠야 한다. 단 `feed/jobs/recommended`만 `get_current_user`.
 
 | 파일 | 책임 | 주요 엔드포인트 |
 |---|---|---|
@@ -144,6 +148,7 @@ classDiagram
 | `sessions.py` | 세션 CRUD (생성/목록/상세/이름변경/삭제) | `POST /sessions`, `GET /sessions`, `GET /sessions/{id}`, `PATCH /sessions/{id}`, `DELETE /sessions/{id}` |
 | `interview.py` | 상태머신 진행: 기간→카테고리→기록물스킵→인터뷰(초안/확인) | `POST .../period`, `.../period/extract`, `.../categories`, `.../categories/extract`, `.../records/skip`, `GET .../interview/next`, `POST .../interview/confirm` |
 | `records.py` | 기록물(블로그 URL/텍스트/이미지) 업로드·조회·삭제, 백그라운드 파싱 트리거 | `POST .../records`, `.../records/text`, `.../records/upload`, `GET/.DELETE .../records/{id}` |
+| `feed.py` | 메인 화면 피드 — 청년 지원 정책(최신 등록순)/공고(최신순)/맞춤 공고(코사인) | `GET /feed/policies`, `GET /feed/jobs`, `GET /feed/jobs/recommended` |
 | `document.py` | 문서 생성/재생성/문장 수정·재생성/확정/내보내기 | `POST .../generate`, `GET .../document`, `POST .../document/regenerate`, `PATCH .../document/sentences/{id}`, `POST .../document/sentences/{id}/regenerate`, `.../document/finalize`, `GET .../export` |
 
 ### `schemas/` — Pydantic 요청/응답 모델. `api/X.py` ↔ `schemas/X.py` 1:1 대응.
@@ -154,6 +159,7 @@ classDiagram
 | `session.py` | `sessions.py` | `SessionCreate`, `SessionRead`(`title` 포함), `SessionRename`, `SessionContextRead`, `ActivityCategoryRead`, `ConfirmedFactRead`, `RecordChunkExcerptRead` |
 | `interview.py` | `interview.py` | `GapPeriodSet/Read`, `PeriodExtractRequest/Read`, `CategoryInput`, `CategorySelect`, `CategoryExtractRequest/Read`, `StatusRead`, `RecordsSkipRead`, `BasedOnRead`, `InterviewNextRead`, `InterviewConfirm`, `InterviewConfirmRead` |
 | `record.py` | `records.py` | `BlogRecordCreate`, `TextRecordCreate`, `RecordRead` |
+| `feed.py` | `feed.py` | `FeedItemRead`, `FeedRead` |
 | `document.py` | `document.py` | `GenerateRequest`, `CitationRead`, `EvidenceRead`, `SentenceRead`, `SentenceUpdate`, `DocumentRead` |
 
 ### `models/` — SQLAlchemy ORM (2절 다이어그램 참고)
@@ -169,6 +175,10 @@ classDiagram
 | `record.py` | `records` | `RECORD_TYPES`, `PLATFORMS`, `PARSE_STATUSES` |
 | `record_chunk.py` | `record_chunks` | `embedding: Vector(1024)` (pgvector, bge-m3 차원) |
 | `generated_document.py` | `generated_documents` | `TONES`, `DOC_STATUSES` |
+| `feed_item.py` | `feed_items` | 외부 API 캐시(전 사용자 공용). `FEED_SOURCES`/`FEED_KINDS`/`FEED_KIND_BY_CATEGORY` |
+| `feed_item_embedding.py` | `feed_item_embeddings` | 항목 벡터(1:1 곁테이블). **본체와 분리한 이유는 6절 참고** |
+| `user_profile_embedding.py` | `user_profile_embeddings` | 사용자 프로필 벡터(우리 소유의 파생 캐시) |
+| `feed_refresh_state.py` | `feed_refresh_states` | 소스별 갱신 상태 + 시간 기반 동시 갱신 락 |
 | `generated_sentence.py` | `generated_sentences` | `evidence_fact_ids`(JSON 배열), `consistency_check_passed` |
 
 ### `services/` — 비즈니스 로직
@@ -178,19 +188,23 @@ classDiagram
 | `interview_orchestrator.py` | 상태머신 전이 규칙(순수 함수, DB 접근 없음) | `require_simple_transition`, `require_status`, `require_draft_step`, `require_confirm_step`, `resolve_after_achievement_confirm`, `next_category` |
 | `document_generator.py` | 카테고리별 LLM 호출 → 문장 생성 → 일관성 검사 → 저장 | `generate_full_document()`, `regenerate_sentence()` |
 | `consistency_check.py` | 생성 문장과 인용 근거 간 코사인 유사도로 사후 검증(정직성 가드레일 마지막 방어선) | `check_sentence_consistency()`, `max_cosine_similarity()` |
+| `feed/sources/{base,worknet_source,youthcenter_source}.py` | 피드 소스 어댑터. 워크넷은 `job_info_client`를 재사용만 한다 | `FeedItemData`, `WorknetFeedSource`, `YouthCenterFeedSource` |
+| `feed/sources/__init__.py` | 소스 레지스트리 — 키 없는 소스는 조용히 스킵 | `configured_sources()`, `source_keys_for()` |
+| `feed/dedup.py` | 안정 id 우선, 없으면 내용 해시 | `compute_dedup_key()`, `build_embed_text()` |
+| `feed/ingest.py` | 백그라운드 수집(락/upsert/임베딩 backfill/정리) | `refresh_feed()`, `stale_source_keys()`, `get_feed_refresher()` |
+| `feed/profile_adapter.py` | `interview_answers`를 읽는 **유일한 지점**(계약은 파일 상단) | `read_profile_signal()`, `refresh_profile_embedding()`, `get_profile_embedder()` |
+| `feed/ranking.py` | 코사인 정렬, 실패 시 최신순 | `rank_feed_items()`, `get_feed_ranker()` |
 | `storage.py` | Supabase Storage(비공개 버킷) 래퍼 | `SupabaseStorage`(upload/download/delete/create_signed_url), `get_storage()` |
 | `llm/base.py` | LLM 프로바이더 계약 | `LLMProvider`(Protocol), `InterviewContext`, `Suggestion`, `DraftDocument` 등 dataclass |
 | `llm/local_ollama.py` | 로컬 Ollama 어댑터 | `LocalOllamaProvider` |
-| `llm/gemini_provider.py` | Gemini 폴백 어댑터 | `GeminiProvider` |
-| `llm/fallback.py` | 순서대로 시도, 실패 시 다음으로 폴백 | `FallbackProvider`, `get_llm_provider()`(DI 훅) |
+| `llm/__init__.py` | DI 훅 | `get_llm_provider()` |
 | `embedding/base.py` | 임베딩 프로바이더 계약 | `EmbeddingProvider`(Protocol) |
-| `embedding/local_ollama_embedding.py`, `gemini_embedding.py` | bge-m3 / Gemini 임베딩 어댑터 | `LocalOllamaEmbedding`, `GeminiEmbedding` |
-| `embedding/fallback.py`, `__init__.py` | 임베딩 폴백 + DI 훅 | `FallbackEmbedding`, `get_embedding_provider()` |
+| `embedding/local_ollama_embedding.py` | bge-m3 임베딩 어댑터 | `LocalOllamaEmbedding` |
+| `embedding/__init__.py` | DI 훅 | `get_embedding_provider()` |
 | `record_pipeline/pipeline.py` | 기록물 파싱→청킹→임베딩 파이프라인(백그라운드 태스크) | `process_record()`, `process_image_record()` |
 | `record_pipeline/parsers/{naver_blog,tistory,generic}.py` | 플랫폼별 본문 추출 | 각 `parse(url)` |
 | `record_pipeline/platform_detector.py` | URL로 플랫폼 판별 | `detect_platform()` |
 | `record_pipeline/chunker.py` | 텍스트 청크 분할 | `chunk_text()` |
-| `record_pipeline/ocr.py` | 이미지 OCR | `extract_text_from_image()` |
 | `record_pipeline/citation.py` | 근거 인용 정보(출처 URL/발행일) 조회 | `resolve_fact_citation()`, `get_fact_citation()`(DI 훅) |
 | `record_pipeline/search.py` | 카테고리 라벨로 의미 검색 | `search_relevant_chunks()`, `get_chunk_search()`(DI 훅) |
 
@@ -255,7 +269,7 @@ graph LR
   API["api/interview.py<br/>interview_next()"]
   ORCH["interview_orchestrator<br/>require_draft_step()"]
   SEARCH["record_pipeline/search.py<br/>search_relevant_chunks()"]
-  LLM["llm/fallback.py<br/>FallbackProvider.draft_suggestion()"]
+  LLM["llm/local_ollama.py<br/>LocalOllamaProvider.draft_suggestion()"]
   DB[(sessions / confirmed_facts / record_chunks)]
 
   UI --> API --> ORCH
@@ -267,7 +281,11 @@ graph LR
 ## 6. 설계 원칙 (다음에 코드 추가할 때 참고)
 
 - **정직성 가드레일**: 생성 문서의 모든 문장은 `confirmed_facts`를 인용해야 한다. 이건 한 함수의 책임이 아니라 세 겹으로 강제된다 — (1) `document_generator.generate_full_document`가 LLM에 ORM 객체가 아니라 `confirmed_facts`의 내용만 넘김, (2) `interview.py`의 `interview_confirm`이 `source_type`을 클라이언트가 지정 못하게 서버가 캐시해둔 `pending_draft`에서만 도출, (3) `consistency_check.check_sentence_consistency`가 생성된 문장과 인용된 근거의 의미적 유사도를 사후 검증. 새 생성 경로를 추가한다면 이 세 겹을 다 거쳐야 한다.
-- **DI 훅은 자기 서비스 파일에 둔다**: FastAPI 라우터가 교체 가능한 의존성이 필요하면(테스트에서 가짜로 바꿔치기하기 위해), `get_X()` 함수를 그 X를 구현하는 서비스 모듈 안에 정의한다 — `get_storage()`(`services/storage.py`), `get_chunk_search()`(`services/record_pipeline/search.py`), `get_embedding_provider()`(`services/embedding/__init__.py`), `get_llm_provider()`(`services/llm/fallback.py`)가 전부 이 규칙을 따른다. 라우터 파일에 두면 다른 라우터가 그걸 가져다 쓰려 할 때 라우터끼리 직접 의존하게 된다 (7절 참고).
+- **DI 훅은 자기 서비스 파일에 둔다**: FastAPI 라우터가 교체 가능한 의존성이 필요하면(테스트에서 가짜로 바꿔치기하기 위해), `get_X()` 함수를 그 X를 구현하는 서비스 모듈 안에 정의한다 — `get_storage()`(`services/storage.py`), `get_chunk_search()`(`services/record_pipeline/search.py`), `get_embedding_provider()`(`services/embedding/__init__.py`), `get_llm_provider()`(`services/llm/__init__.py`)가 전부 이 규칙을 따른다. 라우터 파일에 두면 다른 라우터가 그걸 가져다 쓰려 할 때 라우터끼리 직접 의존하게 된다 (7절 참고).
+- **외부 소스는 등록제이고, 인증키가 없으면 조용히 빠진다**: 워크넷/온통청년 키는 담당자 심사를 거쳐 카테고리마다 따로 발급된다. 미발급은 오류가 아니라 설정 상태다 — 예외로 다루면 승인될 때까지 메인 화면에 배너가 계속 뜬다(`services/feed/sources/__init__.py`).
+- **임베딩 실패는 데이터 손실이 아니라 정렬 품질 저하로만 나타나야 한다**: Gemini를 제거한 뒤 임베딩 경로는 로컬 bge-m3 하나뿐이라 터널이 끊기면 100% 실패한다. 그래서 벡터 컬럼은 nullable이고, 항목은 임베딩 전에 커밋되며, 다음 수집이 빈 벡터를 backfill한다. 조회는 벡터가 없으면 최신순으로 내려간다.
+- **`Vector` 컬럼은 1:1 곁테이블에 둔다**: pgvector는 SQLite 컴파일러가 없어서, 벡터를 본체 테이블에 얹으면 그 테이블을 쓰는 API를 `tests/api/conftest.py`에서 아예 생성할 수 없다. `feed_items`/`feed_item_embeddings`가 이 규칙을 따르고, `record_chunks`가 테스트하기 까다로운 이유도 같다. 대가는 조인 하나와 코사인 정렬 자체가 CI 미검증으로 남는 것이다.
+- **목록 페이지네이션은 `limit`/`offset` + `Query(ge=, le=)`**: `api/profile.py`가 세운 선례를 `api/feed.py`가 따른다. 커서 방식을 새로 만들지 않는다. 정렬에는 항상 결정적 2차 키(`id`)를 붙인다 — 한 수집 배치는 타임스탬프가 같아서 없으면 페이지가 겹치고 새어나간다.
 - **`api/X.py` ↔ `schemas/X.py` 1:1**: 새 라우터를 추가하면 그 스키마도 같은 이름의 새 파일에 둔다. 기존 파일에 끼워 넣지 않는다.
 - **라우터 간 직접 import 금지**: 두 라우터가 같은 헬퍼가 필요하면 그 헬퍼는 `models/`나 `services/`로 옮긴다(모델에 대한 순수 함수라면 그 모델의 property/method로).
 

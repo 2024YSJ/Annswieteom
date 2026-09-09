@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -34,10 +35,44 @@ class SentenceRead(BaseModel):
     text: str
     evidence: list[EvidenceRead]
     consistency_check_passed: bool
+    # 판정에 쓰인 실제 코사인 유사도. 근거가 없어 검사를 못 했거나, 이 컬럼이
+    # 생기기 전(2026-09-09) 문장이면 None.
+    consistency_score: float | None = None
+    # 사용자가 직접 고쳐 쓴 문장인지. consistency_check_passed=True를 "임베딩
+    # 검증 통과"로 읽으면 안 되는 경우가 바로 이 플래그가 켜진 문장이다.
+    edited_by_user: bool = False
+    #: record_backed | self_reported | unsupported — app/services/evidence.py
+    evidence_grade: str = "unsupported"
 
 
 class SentenceUpdate(BaseModel):
     text: str
+
+
+class UnverifiedSentenceRead(BaseModel):
+    """확정(finalize)을 막아선 문장 하나 — 어떤 문장을 손봐야 하는지 바로
+    가리킬 수 있도록 409 응답 본문에 담긴다."""
+
+    id: uuid.UUID
+    order_index: int
+    text: str
+    consistency_score: float | None
+
+
+class FinalizeRequest(BaseModel):
+    # 정합성 검사에 걸린 문장이 남아 있어도 그대로 확정하겠다는 명시적 동의.
+    # 기본값이 False라 "모르고 지나치는" 경로가 없다.
+    acknowledge_unverified: bool = False
+
+
+class DocumentVersionRead(BaseModel):
+    id: uuid.UUID
+    version: int
+    tone: str
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class MoveSentenceRequest(BaseModel):

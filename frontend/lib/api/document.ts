@@ -15,12 +15,27 @@ export interface EvidenceRead {
   citation: CitationRead | null;
 }
 
+export type EvidenceGrade = "record_backed" | "self_reported" | "unsupported";
+
 export interface SentenceRead {
   id: string;
   order_index: number;
   text: string;
   evidence: EvidenceRead[];
   consistency_check_passed: boolean;
+  /** 판정에 쓰인 코사인 유사도. 근거가 없어 검사를 못 했거나 사용자가 직접 고쳐 쓴 문장이면 null. */
+  consistency_score: number | null;
+  /** 사용자가 직접 고쳐 쓴 문장인지 — consistency_check_passed=true를 "검증 통과"로 읽으면 안 되는 경우. */
+  edited_by_user: boolean;
+  evidence_grade: EvidenceGrade;
+}
+
+/** finalize가 409로 막았을 때 함께 내려오는, 정합성 검사에 걸린 문장들. */
+export interface UnverifiedSentence {
+  id: string;
+  order_index: number;
+  text: string;
+  consistency_score: number | null;
 }
 
 export interface ParagraphRead {
@@ -103,12 +118,19 @@ export const documentApi = {
       headers: authHeaders(accessToken),
     }),
 
-  finalize: (sessionId: string, accessToken: string) =>
+  /** 정합성 검사에 걸린 문장이 남아 있으면 서버가 409로 막는다 —
+   * acknowledgeUnverified=true로 다시 호출해야 확정된다. */
+  finalize: (sessionId: string, accessToken: string, acknowledgeUnverified = false) =>
     request<DocumentRead>(`/api/v1/sessions/${sessionId}/document/finalize`, {
       method: "POST",
       headers: authHeaders(accessToken),
+      body: JSON.stringify({ acknowledge_unverified: acknowledgeUnverified }),
     }),
 
-  exportText: (sessionId: string, accessToken: string) =>
-    requestText(`/api/v1/sessions/${sessionId}/export?format=txt`, {}, accessToken),
+  exportText: (sessionId: string, accessToken: string, withCitations = false) =>
+    requestText(
+      `/api/v1/sessions/${sessionId}/export?format=txt&citations=${withCitations}`,
+      {},
+      accessToken,
+    ),
 };

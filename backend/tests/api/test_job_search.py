@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.main import app
 from app.services.job_pipeline.job_info_client import JobInfoResult, WorknetApiError, get_job_info_client
 from app.services.llm.base import JobInfoCategoryQuery
-from app.services.llm.fallback import get_llm_provider
+from app.services.llm import get_llm_provider
 from tests.api.conftest import FakeLLMProvider
 
 
@@ -191,7 +191,7 @@ def test_query_only_shows_results_the_llm_judged_relevant(session_client):
 
 
 def test_query_drops_category_when_relevance_judgment_is_unavailable(session_client):
-    from app.services.llm.base import AllProvidersFailedError
+    from app.services.llm.base import LLMUnavailableError
 
     token = _register_and_login(session_client)
     session_id = _create_job_search_session(session_client, token)
@@ -201,7 +201,7 @@ def test_query_drops_category_when_relevance_judgment_is_unavailable(session_cli
 
     class BrokenRelevanceLLM(FakeLLMProvider):
         async def select_relevant_job_info_results(self, query, category_label, candidates):
-            raise AllProvidersFailedError()
+            raise LLMUnavailableError()
 
     app.dependency_overrides[get_llm_provider] = lambda: BrokenRelevanceLLM(
         job_info_categories=[JobInfoCategoryQuery(category="job_fair")]

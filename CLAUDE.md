@@ -19,10 +19,9 @@ Hybrid cloud + local GPU setup:
 - **Backend**: FastAPI (Python 3.11+) → deployed on Railway (`backend/`)
 - **Database**: PostgreSQL + pgvector on Supabase
 - **Local LLM**: Ollama on RTX 4090 PC, exposed via Cloudflare Tunnel (primary inference)
-- **LLM Fallback**: Google Gemini API (auto-activated when local server is unreachable)
 - **Object Storage**: Supabase Storage (images, documents)
 
-The backend selects the LLM provider based on `LLM_PROVIDER_ORDER` env var (e.g., `"local,gemini"`). No manual switching needed.
+Inference and embeddings both run on the local Ollama server only. **There is no fallback provider** — Gemini was removed on 2026-09-09. If the local server is unreachable, every AI path returns `503 llm_unavailable` and the UI shows "AI 서버가 수리 중이예요." Image OCR went away with it (it was Gemini Vision and had no local substitute), so record uploads now accept documents only.
 
 ## Commands
 
@@ -100,16 +99,14 @@ JWT: Access tokens expire in 30 minutes; refresh tokens in 14 days.
 DATABASE_URL              # Supabase PostgreSQL connection string
 LOCAL_LLM_BASE_URL        # Cloudflare Tunnel URL to Ollama
 LOCAL_LLM_MODEL_NAME      # e.g., exaone3.5:7.8b
-GEMINI_API_KEY
 JWT_SECRET                # 256-bit hex string
-LLM_PROVIDER_ORDER        # e.g., local,gemini
 ```
 
 ## ⚠️ Local Dev Environment Is Intentionally Isolated From Production
 
 `backend/.env` on this laptop points at a **separate `annswieteom-dev` Supabase project** and a **local Ollama instance (`http://localhost:11434`, model `qwen2.5:3b-instruct`)** instead of the production Supabase project and the RTX 4090 tunnel (`https://llm.annswieteom.com`, `qwen2.5:14b`). This is deliberate — full rationale and setup steps are in [docs/checklists/00_shared/04_local_dev_environment.md](docs/checklists/00_shared/04_local_dev_environment.md).
 
-`backend/.env` is gitignored, so this never reaches `main` through git. The one thing to actively avoid: **never "sync" these local-only values into `backend/.env.example` or the defaults in `backend/app/core/config.py`** — those files are committed and shared, and changing them to match this laptop's local setup would affect production. If `.env`'s local LLM/DB values ever look wrong for a task (e.g. you need to judge real LLM output quality, not just check that a request flow works), that's expected — the small local model is deliberately weaker than production's; point `.env` at the real tunnel/Gemini temporarily and switch back after.
+`backend/.env` is gitignored, so this never reaches `main` through git. The one thing to actively avoid: **never "sync" these local-only values into `backend/.env.example` or the defaults in `backend/app/core/config.py`** — those files are committed and shared, and changing them to match this laptop's local setup would affect production. If `.env`'s local LLM/DB values ever look wrong for a task (e.g. you need to judge real LLM output quality, not just check that a request flow works), that's expected — the small local model is deliberately weaker than production's; point `.env` at the real tunnel temporarily and switch back after.
 
 ## Windows-Specific Notes
 

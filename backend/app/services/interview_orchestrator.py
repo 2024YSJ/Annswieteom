@@ -20,11 +20,36 @@ class StateMachineViolation(Exception):
 # 이 상한과 맞대어 실제 카운트를 추적한다.
 MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY = 3
 
-# 기록물(블로그/사진/텍스트) 생성 엔드포인트가 허용되는 세션 상태. 카테고리별 기록물
-# 요청 단계에서만 첨부 가능하다 — INTERVIEWING 중에는 이미 그 카테고리의 기록물 요청이
-# 끝난 뒤이므로 새 기록물을 더 받지 않는다(2026-09-06: 기록물 첨부를 그 단계 전용
-# UI로 옮기며 인터뷰 중 첨부도 함께 막기로 함).
-RECORD_CREATABLE_STATUSES = ("RECORD_UPLOAD",)
+# 활동 기간이 이만큼 이상이면 후속 질문 예산을 늘려준다. 6개월을 통째로 쓴 활동과
+# 2주짜리 활동을 똑같이 3턴으로 끊는 건, 공백기를 실제로 메우고 있는 쪽에 시간을
+# 덜 주는 셈이다 — 경력기술서에서 설명 부담이 큰 쪽도 긴 활동이다.
+LONG_ACTIVITY_DAYS = 180
+LONG_ACTIVITY_FOLLOWUP_BONUS = 2
+
+
+def followup_budget(category: ActivityCategory) -> int:
+    """이 카테고리에 허용되는 AI 추가 질문(드릴다운/후속) 총 개수.
+
+    기간은 frequency 계열 답변이 확정되는 즉시 유추해두므로(app/api/interview.py의
+    _maybe_infer_category_period) 보통 첫 한두 턴 뒤부터 이 보너스가 적용된다.
+    기간을 끝내 못 알아낸 카테고리는 기본 예산 그대로다.
+    """
+    if category.period_start is not None and category.period_end is not None:
+        days = (category.period_end - category.period_start).days + 1
+        if days >= LONG_ACTIVITY_DAYS:
+            return MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY + LONG_ACTIVITY_FOLLOWUP_BONUS
+    return MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+
+# 기록물(블로그/사진/텍스트) 생성 엔드포인트가 허용되는 세션 상태.
+#
+# 2026-09-06에는 RECORD_UPLOAD 전용이었다 — 첨부 UI를 그 단계에만 두기로 하면서
+# 인터뷰 중 첨부도 같이 막았다. 2026-09-09에 INTERVIEWING을 다시 허용한다: 기록물이
+# 실제로 쓸모 있어지는 시점은 질문을 받은 뒤("아, 이건 블로그에 써뒀는데")이지 그
+# 전이 아니고, 질문 문구로 청크를 벡터 검색하게 된 이후로는(record_pipeline/search.py)
+# 방금 올린 기록물이 바로 다음 턴의 근거로 잡힌다. 첨부 대상 카테고리는 두 상태
+# 모두 session.current_category_id에서 온다 — INTERVIEWING에서는 그게 지금
+# 인터뷰 중인 카테고리라 의미가 그대로 맞는다.
+RECORD_CREATABLE_STATUSES = ("RECORD_UPLOAD", "INTERVIEWING")
 
 # action -> (요구되는 현재 상태, 전이 후 상태) — 목적지가 하나뿐인 단순 전이만 여기 있다.
 # "records_skip"은 여기 없다 — 목적지가 남은 카테고리 유무에 따라 갈리므로

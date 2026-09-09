@@ -20,7 +20,7 @@ def extract_text_from_document(content: bytes, filename: str) -> str:
     """Extract plain text from an uploaded document, dispatching on extension.
 
     Takes raw bytes rather than a filesystem path — same storage-agnostic
-    convention as ocr.py::extract_text_from_image.
+    convention the removed ocr.py::extract_text_from_image used.
     """
     ext = Path(filename).suffix.lower()
     if ext in (".txt", ".md"):

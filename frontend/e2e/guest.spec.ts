@@ -25,10 +25,17 @@ test.describe("guest sessions", () => {
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
     await expect(page.getByText("공백기 채우기", { exact: true })).toBeVisible();
 
-    // A guest is already logged in now (with one session) - going back to "/"
-    // silently resumes that same session (no chooser to click through) rather
-    // than offering to start a new one.
+    // "/" no longer auto-redirects into the newest session — the main page is
+    // a real home now (feed + 이어서 하기), so a returning visitor gets a card
+    // back into the same session instead of being teleported there. See the
+    // comment at the top of app/page.tsx for why the redirect had to go.
     await page.goto("/");
+    await expect(page).toHaveURL(/\/$/);
+    // 홈은 인증 확인(refresh + /auth/me) 뒤에야 세션 목록을 부르므로, 이 카드는
+    // 왕복 두 번 뒤에 나타난다 — 기본 5초로는 부하가 걸린 실행에서 부족하다.
+    const resumeCard = page.getByRole("link", { name: /공백기 채우기/ });
+    await expect(resumeCard).toBeVisible({ timeout: 15000 });
+    await resumeCard.click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
     // The sidebar's own "+ 공백기 채우기" button is the only remaining path
@@ -59,11 +66,14 @@ test.describe("guest sessions", () => {
     await page.getByRole("button", { name: "가입하기" }).click();
 
     // A guest upgrade stays logged in on the same token - no /login bounce -
-    // and lands back on the very same session (the home page auto-resumes
-    // whatever session already exists rather than offering a fresh one).
-    await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
-    expect(page.url()).toBe(sessionUrl);
-    await expect(page.getByText("Upgraded Guest님")).toBeVisible();
+    // and lands on the home page, where the session the guest already started
+    // is still theirs and still reachable from "이어서 하기".
+    await expect(page).toHaveURL(/\/$/, { timeout: 15000 });
+    // exact: true로 헤더의 <span>만 잡는다 — 홈 히어로가 "{닉네임}님, 이어서
+    // 해볼까요?"로 바뀌면서 같은 문자열을 품은 요소가 셋이 됐다.
+    await expect(page.getByText("Upgraded Guest님", { exact: true })).toBeVisible();
+    const sessionId = sessionUrl.split("/").pop()!;
+    await expect(page.locator(`a[href="/sessions/${sessionId}"]`)).toBeVisible();
     await expect(page.getByRole("link", { name: "회원가입하고 저장하기" })).not.toBeVisible();
   });
 });

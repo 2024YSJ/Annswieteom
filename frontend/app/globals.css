@@ -737,6 +737,184 @@ button.flow:active:not(:disabled) {
   font-weight: 700;
 }
 
+/* ── 메인 화면 피드 (docs/specs/main_page_feed.md) ───────────────────────── */
+.hero-compact {
+  padding: 44px 24px 4px;
+}
+
+.hero-compact h1 {
+  font-size: clamp(24px, 3.6vw, 32px);
+}
+
+.resume-section {
+  padding-top: 44px;
+}
+
+.resume-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.resume-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px;
+  background: var(--surface-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.resume-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+}
+
+.resume-kind {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted-text);
+}
+
+.resume-title {
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resume-status {
+  font-size: 12.5px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.feed-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.feed-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  background: var(--surface-strong);
+  color: var(--surface-strong-text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 상세 URL이 없는 카테고리가 실제로 있어서, 링크인 카드에만 호버 반응을 준다 —
+   눌리는 것처럼 보이는데 아무 일도 없으면 안 된다. */
+.feed-card-link {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.feed-card-link:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+}
+
+.feed-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.feed-tag {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-soft-border);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.feed-tag-muted {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--muted-text);
+}
+
+.feed-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.feed-card-subtitle {
+  font-size: 13.5px;
+  color: var(--body-text);
+  line-height: 1.5;
+}
+
+.feed-card-meta {
+  font-size: 12.5px;
+  color: var(--muted-text);
+  line-height: 1.5;
+}
+
+.feed-card-go {
+  margin-top: auto;
+  padding-top: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* 개인화가 실제로 걸렸을 때만 붙는 배지 — 최신순으로 내려온 응답에는 안 붙는다. */
+.feed-badge {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.feed-notice {
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted-text);
+  line-height: 1.55;
+}
+
+/* 맞춤 공고가 아직 개인화되지 않았을 때 목록 대신 놓는 안내 패널. */
+.feed-callout {
+  padding: 18px 20px;
+  border: 1px dashed var(--accent-soft-border);
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+  color: var(--body-text);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.feed-empty {
+  padding: 18px 0;
+  font-size: 14px;
+  color: var(--muted-text);
+}
+
+.feed-empty a {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 @media (max-width: 720px) {
   body {
     font-size: 16px; /* iOS는 16px 미만 입력창에서 자동 확대(zoom)를 트리거한다 */
@@ -760,6 +938,8 @@ button.flow:active:not(:disabled) {
     50%      { transform: translateY(-4px); }
   }
   .landing-section { padding: 52px 16px 0; }
+  .hero-compact { padding: 32px 16px 4px; }
+  .resume-grid, .feed-grid { grid-template-columns: 1fr; }
   /* 좁은 화면에서는 제목이 두 줄로 접히면서 오른쪽 보조 문구와 부딪힌다. */
   .section-head { flex-direction: column; align-items: flex-start; gap: 4px; }
   .doc-bar { flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px 16px; }

@@ -8,22 +8,27 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.services.llm.fallback import get_llm_provider
-from app.api.records import get_process_document_record, get_process_image_record, get_process_record
+from app.services.llm import get_llm_provider
+from app.api.records import get_process_document_record, get_process_record
 from app.db.session import Base, get_db
 from app.main import app
 from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
+from app.models.feed_item import FeedItem
+from app.models.feed_refresh_state import FeedRefreshState
 from app.models.gap_period import GapPeriod
 from app.models.generated_document import GeneratedDocument
 from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
+from app.models.interview_answer import InterviewAnswer
 from app.models.record import Record
 from app.models.record_chunk import RecordChunk
 from app.models.refresh_token import RefreshToken
 from app.models.session import Session as SessionModel
 from app.models.user import User
 from app.services.embedding import get_embedding_provider
+from app.services.feed.ingest import get_feed_refresher
+from app.services.feed.profile_adapter import get_profile_embedder
 from app.services.llm.base import (
     BasedOn,
     CategorySuggestion,
@@ -79,8 +84,8 @@ def client():
 
 
 class FakeLLMProvider:
-    """Deterministic stand-in for FallbackProvider — the interview loop must be
-    verifiable with stub text before real Gemini/Ollama calls are involved.
+    """Deterministic stand-in for LocalOllamaProvider — the interview loop must be
+    verifiable with stub text before real Ollama calls are involved.
     Each extract_facts call returns a fixed single generic-pattern candidate
     (fact_type mirrors the question's fact_type_hint isn't known to the fake,
     so tests that care about a specific fact_type queue an explicit candidate
@@ -101,6 +106,7 @@ class FakeLLMProvider:
         job_info_categories: list["JobInfoCategoryQuery"] | None = None,
         job_info_relevant_indices: list[int] | None = None,
         draft_job_info_query: str | None = None,
+        activity_period=None,
     ):
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
@@ -114,6 +120,9 @@ class FakeLLMProvider:
         self._job_info_categories = job_info_categories
         self._job_info_relevant_indices = job_info_relevant_indices
         self._draft_job_info_query = draft_job_info_query
+        # 기본 None = "기간을 알 수 없다" — 커버리지를 다루는 테스트만 명시적으로 준다.
+        self._activity_period = activity_period
+        self.activity_period_calls: list[str] = []
         self.job_info_query_calls: list[str] = []
         self.select_relevant_calls: list[tuple] = []
         self.draft_job_info_query_calls: list[list] = []
@@ -190,6 +199,10 @@ class FakeLLMProvider:
             return self._category_suggestions
         return [CategorySuggestion(category_type="part_time", custom_label="편의점 아르바이트")]
 
+    async def extract_activity_period(self, category_label, facts, gap_start, gap_end):
+        self.activity_period_calls.append(category_label)
+        return self._activity_period
+
     async def extract_period(self, free_text, today):
         self.period_calls.append(free_text)
         if self._period_suggestion is _DEFAULT_PERIOD_SUGGESTION:
@@ -222,7 +235,7 @@ class FakeLLMProvider:
 
 
 class FakeEmbeddingProvider:
-    """Deterministic stand-in for FallbackEmbedding used by consistency_check —
+    """Deterministic stand-in for LocalOllamaEmbedding used by consistency_check —
     every text maps to the same default vector unless overridden, so cosine
     similarity is 1.0 (passes) by default. Tests that need a
     consistency_check_passed=False case register a distinct vector for that
@@ -242,11 +255,87 @@ class FakeEmbeddingProvider:
         return True
 
 
+class FakeFeedRefresher:
+    """수집 워커 대역. 호출만 기록하고 네트워크는 건드리지 않는다.
+
+    실제 refresh_feed_if_stale은 자기 DB 세션을 열기 때문에 get_db 오버라이드
+    만으로는 못 막는다 — get_feed_refresher 훅이 존재하는 이유다.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    async def __call__(self):
+        self.calls += 1
+
+
+class FakeProfileEmbedder:
+    def __init__(self):
+        self.calls: list = []
+
+    async def __call__(self, user_id):
+        self.calls.append(user_id)
+
+
+@pytest.fixture
+def feed_client():
+    """피드 API용. 벡터 테이블 두 개(feed_item_embeddings /
+    user_profile_embeddings)는 **일부러 만들지 않는다** — pgvector의 Vector는
+    SQLite 컴파일러가 없다. 덕분에 이 픽스처는 프로덕션의 폴백 경로(벡터 질의
+    실패 -> 최신순)를 자연스럽게 그대로 태운다.
+
+    get_feed_ranker는 오버라이드하지 않는다 — 진짜 최신순 SQL(`.id`
+    타이브레이커 포함)이 SQLite에서 실제로 돌아야 페이지네이션 회귀를 잡는다.
+    """
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    tables = [
+        User.__table__,
+        RefreshToken.__table__,
+        SessionModel.__table__,
+        InterviewAnswer.__table__,
+        FeedItem.__table__,
+        FeedRefreshState.__table__,
+    ]
+
+    async def _create_tables():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all, tables=tables)
+
+    asyncio.run(_create_tables())
+
+    test_session_local = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def override_get_db():
+        async with test_session_local() as session:
+            yield session
+
+    fake_refresher = FakeFeedRefresher()
+    fake_embedder = FakeProfileEmbedder()
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_feed_refresher] = lambda: fake_refresher
+    app.dependency_overrides[get_profile_embedder] = lambda: fake_embedder
+    try:
+        with TestClient(app) as test_client:
+            test_client.session_local = test_session_local
+            test_client.fake_refresher = fake_refresher
+            test_client.fake_embedder = fake_embedder
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+        asyncio.run(engine.dispose())
+
+
 @pytest.fixture
 def session_client():
     """Like `client`, but with the session/interview model graph created and
     the LLM + embedding-search dependencies stubbed out (no real Ollama/
-    Gemini/pgvector required to exercise the state machine).
+    pgvector required to exercise the state machine).
     """
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
@@ -261,11 +350,16 @@ def session_client():
         GapPeriod.__table__,
         ActivityCategory.__table__,
         ConfirmedFact.__table__,
+        InterviewAnswer.__table__,
         # Empty but must exist: deleting a Session lazy-loads these
         # cascade="all, delete-orphan" relationships even with zero rows.
         Record.__table__,
         GeneratedDocument.__table__,
         GeneratedParagraph.__table__,
+        # 카테고리를 지울 때 ActivityCategory.generated_sentences(cascade
+        # all, delete-orphan)를 lazy-load하므로 행이 없어도 테이블은 있어야 한다 —
+        # 세션 삭제가 이 경로를 탄다.
+        GeneratedSentence.__table__,
     ]
 
     async def _create_tables():
@@ -282,7 +376,7 @@ def session_client():
 
     fake_llm = FakeLLMProvider()
 
-    async def override_chunk_search(session_id, label):
+    async def override_chunk_search(session_id, category_id, query_text=None):
         return []
 
     app.dependency_overrides[get_db] = override_get_db
@@ -338,6 +432,7 @@ def records_client():
         GapPeriod.__table__,
         ActivityCategory.__table__,
         ConfirmedFact.__table__,
+        InterviewAnswer.__table__,
         Record.__table__,
         # Empty but must exist: deleting a Record lazy-loads this
         # cascade="all, delete-orphan" relationship even with zero rows.
@@ -359,7 +454,6 @@ def records_client():
             yield session
 
     process_record_calls: list = []
-    process_image_record_calls: list = []
     process_document_record_calls: list = []
 
     async def fake_process_record(record_id):
@@ -369,15 +463,6 @@ def records_client():
             if record is not None:
                 record.parse_status = "DONE"
                 record.raw_text = record.raw_text or "parsed text"
-                await session.commit()
-
-    async def fake_process_image_record(record_id):
-        process_image_record_calls.append(record_id)
-        async with test_session_local() as session:
-            record = await session.get(Record, record_id)
-            if record is not None:
-                record.parse_status = "DONE"
-                record.raw_text = "ocr text"
                 await session.commit()
 
     async def fake_process_document_record(record_id):
@@ -393,14 +478,12 @@ def records_client():
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_process_record] = lambda: fake_process_record
-    app.dependency_overrides[get_process_image_record] = lambda: fake_process_image_record
     app.dependency_overrides[get_process_document_record] = lambda: fake_process_document_record
     app.dependency_overrides[get_storage] = lambda: fake_storage
     try:
         with TestClient(app) as test_client:
             test_client.fake_storage = fake_storage
             test_client.process_record_calls = process_record_calls
-            test_client.process_image_record_calls = process_image_record_calls
             test_client.process_document_record_calls = process_document_record_calls
             yield test_client
     finally:
@@ -413,7 +496,7 @@ def document_client():
     """Like `session_client`, but with generated_documents/generated_sentences
     tables and fake LLM + embedding providers so document generation (B-4) can
     be driven end to end (generate -> regenerate -> patch -> finalize ->
-    export) without real Ollama/Gemini/pgvector.
+    export) without real Ollama/pgvector.
     """
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
@@ -428,6 +511,7 @@ def document_client():
         GapPeriod.__table__,
         ActivityCategory.__table__,
         ConfirmedFact.__table__,
+        InterviewAnswer.__table__,
         Record.__table__,
         RecordChunk.__table__,
         GeneratedDocument.__table__,
@@ -450,7 +534,7 @@ def document_client():
     fake_llm = FakeLLMProvider()
     fake_embedding = FakeEmbeddingProvider()
 
-    async def override_chunk_search(session_id, label):
+    async def override_chunk_search(session_id, category_id, query_text=None):
         return []
 
     async def override_fact_citations(fact_ids, db):

@@ -74,3 +74,8 @@ class Session(Base):
     categories: Mapped[list["ActivityCategory"]] = relationship("ActivityCategory", back_populates="session", cascade="all, delete-orphan", foreign_keys="ActivityCategory.session_id")
     records: Mapped[list["Record"]] = relationship("Record", back_populates="session", cascade="all, delete-orphan")
     documents: Mapped[list["GeneratedDocument"]] = relationship("GeneratedDocument", back_populates="session", cascade="all, delete-orphan")
+    # 위 넷과 달리 delete cascade가 없다 — 문답 기록은 계정에 쌓이는 것이라
+    # 세션이 지워져도 살아남아야 한다. cascade를 생략하면 SQLAlchemy가 부모 삭제
+    # 시 session_id를 NULL로 UPDATE하므로, DB의 ON DELETE SET NULL과 같은 결과를
+    # ORM 레벨에서도 보장한다(SQLite는 기본적으로 FK 동작을 강제하지 않는다).
+    interview_answers: Mapped[list["InterviewAnswer"]] = relationship("InterviewAnswer", back_populates="session")

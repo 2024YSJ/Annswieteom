@@ -10,9 +10,9 @@ from jinja2 import Environment, FileSystemLoader
 from app.core.config import settings
 from app.models.activity_category import CATEGORY_TYPES
 from app.services.llm.base import (
-    AllProvidersFailedError,
     BasedOn,
     CategorySuggestion,
+    clamp_activity_period,
     ConfirmedFact,
     DraftDocument,
     DrilldownDecision,
@@ -23,7 +23,7 @@ from app.services.llm.base import (
     JobInfoCategoryQuery,
     ParagraphDraft,
     PeriodSuggestion,
-    ProviderUnavailableError,
+    LLMUnavailableError,
     RecordExcerpt,
     SentenceWithEvidence,
     SufficiencyResult,
@@ -79,7 +79,7 @@ class LocalOllamaProvider:
             data = json.loads(response_text)
             return data["draft_answer"]
         except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def extract_facts(
         self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
@@ -108,9 +108,9 @@ class LocalOllamaProvider:
             ]
         except (json.JSONDecodeError, KeyError) as exc:
             # The model didn't follow the requested JSON schema — treat this
-            # like any other provider failure so FallbackProvider moves on
+            # like any other provider failure so the caller can surface it
             # to the next provider instead of a raw 500.
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def followup_question(self, context: InterviewContext) -> str:
         prompt = _render(
@@ -127,7 +127,7 @@ class LocalOllamaProvider:
             data = json.loads(response_text)
             return data["question_text"]
         except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def judge_sufficiency(self, context: InterviewContext) -> SufficiencyResult:
         prompt = _render(
@@ -140,7 +140,7 @@ class LocalOllamaProvider:
             data = json.loads(response_text)
             return SufficiencyResult(sufficient=bool(data["sufficient"]), reason=data.get("reason", ""))
         except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def judge_drilldown(self, context: InterviewContext) -> DrilldownDecision:
         prompt = _render(
@@ -156,7 +156,7 @@ class LocalOllamaProvider:
             data = json.loads(response_text)
             return DrilldownDecision(should_ask=bool(data["should_ask"]), question_text=data.get("question_text"))
         except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def extract_activity_items(self, category_label: str, answer_text: str) -> list[str]:
         prompt = _render("interview_activity_breakdown.jinja", category_label=category_label, answer_text=answer_text)
@@ -165,7 +165,7 @@ class LocalOllamaProvider:
             data = json.loads(response_text)
             return [str(item) for item in data["items"]]
         except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def extract_categories(
         self, free_text: str, gap_start: date, gap_end: date
@@ -182,7 +182,7 @@ class LocalOllamaProvider:
                 for c in data["categories"]
             ]
         except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None:
         prompt = _render("extract_period.jinja", free_text=free_text, today=today)
@@ -197,7 +197,28 @@ class LocalOllamaProvider:
                 return None
             return PeriodSuggestion(start_date=start, end_date=end)
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def extract_activity_period(
+        self, category_label: str, facts: list[ConfirmedFact], gap_start: date, gap_end: date
+    ) -> PeriodSuggestion | None:
+        prompt = _render(
+            "activity_period.jinja",
+            category_label=category_label,
+            confirmed_facts=facts,
+            gap_start=gap_start,
+            gap_end=gap_end,
+        )
+        response_text = await self._generate(prompt, timeout=45.0)
+        try:
+            data = json.loads(response_text)
+            if data["start_date"] is None or data["end_date"] is None:
+                return None
+            start = date.fromisoformat(data["start_date"])
+            end = date.fromisoformat(data["end_date"])
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+        return clamp_activity_period(start, end, gap_start, gap_end)
 
     async def generate_document(self, facts: list[ConfirmedFact], tone: str, category_label: str) -> DraftDocument:
         prompt = _render(
@@ -218,7 +239,7 @@ class LocalOllamaProvider:
             ]
             return DraftDocument(paragraphs=paragraphs)
         except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]:
         prompt = _render("classify_job_info_query.jinja", query=query)
@@ -231,7 +252,7 @@ class LocalOllamaProvider:
                 if c in JOB_INFO_CATEGORIES  # hallucinated category name -> drop, don't guess
             ]
         except (json.JSONDecodeError, KeyError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def select_relevant_job_info_results(
         self, query: str, category_label: str, candidates: list[JobInfoCandidate]
@@ -247,7 +268,7 @@ class LocalOllamaProvider:
             valid_indices = {c.index for c in candidates}
             return [i for i in data["relevant_indices"] if i in valid_indices]
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:
         prompt = _render("draft_job_info_query.jinja", confirmed_facts=confirmed_facts)
@@ -256,7 +277,7 @@ class LocalOllamaProvider:
             data = json.loads(response_text)
             return str(data.get("draft_query") or "")
         except json.JSONDecodeError as exc:
-            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def health_check(self) -> bool:
         try:
@@ -289,7 +310,7 @@ class LocalOllamaProvider:
                 resp.raise_for_status()
                 return resp.json()["message"]["content"]
         except httpx.TimeoutException as exc:
-            raise TimeoutError("Ollama request timed out") from exc
+            raise LLMUnavailableError("Ollama request timed out") from exc
         except httpx.HTTPStatusError as exc:
             # The bare status code alone doesn't say who returned it — a
             # Cloudflare edge block (bot/WAF) and Ollama's own rejection both
@@ -300,9 +321,9 @@ class LocalOllamaProvider:
             # missing piece while chasing the 2026-09-04 403 on production.
             body_preview = exc.response.text[:300] if exc.response is not None else ""
             cf_ray = exc.response.headers.get("cf-ray") if exc.response is not None else None
-            raise ProviderUnavailableError(
+            raise LLMUnavailableError(
                 f"Ollama unavailable: {exc} | content-type={exc.response.headers.get('content-type') if exc.response is not None else None} "
                 f"cf-ray={cf_ray} body={body_preview!r}"
             ) from exc
         except Exception as exc:
-            raise ProviderUnavailableError(f"Ollama unavailable: {exc}") from exc
+            raise LLMUnavailableError(f"Ollama unavailable: {exc}") from exc

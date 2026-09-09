@@ -1,46 +1,41 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { sessionApi, type SessionKind } from "@/lib/api-client";
+import { sessionApi, type SessionKind, type SessionRead } from "@/lib/api-client";
 import { errorMessage } from "@/lib/error-messages";
+import { sessionStatusLabel } from "@/lib/session-routes";
 import { useSessionsList } from "@/lib/use-sessions-list";
+import { FeedSection } from "@/components/FeedSection";
 import { LoadingNotice } from "@/components/LoadingNotice";
 
+/** 메인 화면.
+ *
+ * 2026-09-09까지 이 페이지는 세션이 하나라도 있는 로그인 사용자를 곧바로 가장
+ * 최근 세션으로 리다이렉트했다. 피드(docs/specs/main_page_feed.md)를 붙이면서
+ * 그 리다이렉트를 걷어냈다 — 맞춤 공고는 문답이 쌓인 사용자에게만 의미가 있는데,
+ * 리다이렉트가 살아 있으면 **정확히 그 사용자만 메인 화면을 못 본다.** 로고를
+ * 눌러도 세션으로 되돌아와서 홈이라는 화면 자체가 도달 불가능하기도 했다.
+ *
+ * 대신 아래 "이어서 하기"가 최근 세션으로 가는 한 번의 클릭을 보장한다.
+ */
 export default function Home() {
   const router = useRouter();
   const { user, accessToken, isLoading, guestLogin } = useAuth();
   const { data: sessions, isLoading: sessionsLoading, error: sessionsError, refetch: refetchSessions } = useSessionsList();
   const [error, setError] = useState<string | null>(null);
   const [pendingKind, setPendingKind] = useState<SessionKind | null>(null);
-  // Guards against firing the redirect twice (React 19 dev-mode double-invoked
-  // effects).
-  const hasRedirectedRef = useRef(false);
-
-  useEffect(() => {
-    // Only resumes an existing session — creating a brand-new one now always
-    // goes through the explicit 공백기 채우기/취업 정보 검색 cards below instead
-    // of silently defaulting to gap-fill, so a user with zero sessions falls
-    // through to the landing render below rather than being redirected here.
-    if (isLoading || !user || sessionsLoading || !sessions || sessions.length === 0 || hasRedirectedRef.current) return;
-    hasRedirectedRef.current = true;
-    // Sessions come back newest-first (backend orders by created_at desc) —
-    // landing here should resume the most recent one, matching the sidebar's
-    // own ordering.
-    router.replace(`/sessions/${sessions[0].id}`);
-  }, [isLoading, user, sessionsLoading, sessions, router]);
 
   // 첫 화면에서 곧바로 서비스로 들어가는 경로. 로그인 여부와 무관하게 카드 한
   // 번 누르면 (필요하면 게스트 로그인까지 해서) 세션을 만들고 대화 화면으로
   // 넘어간다.
   //
   // 게스트 로그인과 세션 생성이 한 클릭 안에서 순차로 일어나는 게 핵심이다.
-  // 예전에는 "게스트로 시작" 버튼이 로그인만 하고, 세션 생성은 위 effect가
-  // 따로 했는데 — 갓 만들어진 같은 게스트를 두고 둘이 경쟁해 세션이 두 개
-  // 생기는 일이 있었다(2026-09-05 프로덕션 버그). 지금은 effect가 세션을
-  // 만들지 않으므로 경쟁할 상대 자체가 없다.
+  // 예전에는 "게스트로 시작" 버튼이 로그인만 하고, 세션 생성은 리다이렉트
+  // effect가 따로 했는데 — 갓 만들어진 같은 게스트를 두고 둘이 경쟁해 세션이
+  // 두 개 생기는 일이 있었다(2026-09-05 프로덕션 버그).
   async function startFlow(kind: SessionKind) {
     if (pendingKind) return;
     setError(null);
@@ -50,34 +45,17 @@ export default function Home() {
       const session = await sessionApi.create(token, { kind });
       // 성공 시엔 pendingKind를 일부러 안 푼다 — 화면이 넘어가는 동안 카드가
       // 계속 비활성으로 남아 중복 클릭을 막는다.
-      router.replace(`/sessions/${session.id}`);
+      router.push(`/sessions/${session.id}`);
     } catch (err) {
       setError(errorMessage(err));
       setPendingKind(null);
     }
   }
 
-  // A logged-in visitor whose session list failed to load (not just still
-  // loading) used to fall through to the loading branch below forever — the
-  // redirect effect above only ever checks `!sessions`, never the query's
-  // error state, so nothing there could break the wait. Handle it explicitly
-  // with a retry instead of leaving a dead end with no escape.
-  if (user && sessionsError) {
-    return (
-      <main style={NOTICE_MAIN_STYLE}>
-        <p className="msg-error">{errorMessage(sessionsError)}</p>
-        <button type="button" onClick={() => refetchSessions()} style={{ alignSelf: "center" }}>
-          다시 시도
-        </button>
-      </main>
-    );
-  }
-
-  // 아직 로그인 상태를 확인 중이거나, 이미 세션이 있어 위 effect가 리다이렉트를
-  // 처리하는 중이면 로딩 화면만 보여준다. 랜딩은 (1) 로그아웃 방문자와
-  // (2) 로그인했지만 세션이 하나도 없는 사용자 — 두 경우에만 그린다.
-  const showLanding = !isLoading && (!user || (!sessionsLoading && sessions?.length === 0));
-  if (!showLanding) {
+  // 로그인 상태를 아직 확인 중일 때만 화면 전체를 로딩으로 덮는다. 세션 목록은
+  // 늦게 와도 되고 실패해도 되는 정보라(피드와 히어로는 그것 없이 그릴 수 있다)
+  // 여기서 기다리지 않는다.
+  if (isLoading) {
     return (
       <main style={NOTICE_MAIN_STYLE}>
         <LoadingNotice />
@@ -85,15 +63,26 @@ export default function Home() {
     );
   }
 
+  const hasSessions = !!sessions && sessions.length > 0;
+
   return (
     <main className="landing">
-      <section className="hero">
-        <span className="hero-eyebrow">공백기 정리 · 취업 정보</span>
-        <h1>우리는 쉬지 않았습니다</h1>
-        <p className="hero-sub">
-          공백기라 불린 시간을, <b>근거 있는 커리어 문서</b>로.
-        </p>
-      </section>
+      {hasSessions ? (
+        <section className="hero hero-compact">
+          <h1>{user?.nickname}님, 이어서 해볼까요?</h1>
+          <p className="hero-sub">공백기라 불린 시간을, 근거 있는 커리어 문서로.</p>
+        </section>
+      ) : (
+        <section className="hero">
+          <span className="hero-eyebrow">공백기 정리 · 취업 정보</span>
+          <h1>우리는 쉬지 않았습니다</h1>
+          <p className="hero-sub">
+            공백기라 불린 시간을, <b>근거 있는 커리어 문서</b>로.
+          </p>
+        </section>
+      )}
+
+      {hasSessions && <ResumeSection sessions={sessions} />}
 
       <section className="flows">
         <div className="flow-grid">
@@ -106,7 +95,8 @@ export default function Home() {
               <span className="flow-title">공백기 채우기</span>
               <span className="flow-desc">그동안 한 일을 대화로 짚어보고, 이력서에 그대로 쓸 수 있는 STAR 문장으로 정리해요.</span>
               <span className="flow-go">
-                {pendingKind === "gap_fill" ? "시작하는 중..." : "시작하기"} <span aria-hidden>→</span>
+                {pendingKind === "gap_fill" ? "시작하는 중..." : hasSessions ? "새로 시작하기" : "시작하기"}{" "}
+                <span aria-hidden>→</span>
               </span>
             </button>
           </div>
@@ -142,8 +132,76 @@ export default function Home() {
         ) : null}
       </section>
 
-      <ExampleDocument />
+      {/* 맞춤 공고는 로그인 사용자에게만. 프로필이 없어도 오류가 아니라 최신순 +
+       * 안내로 내려오므로(FeedSection 참고) 세션 유무로는 가리지 않는다. */}
+      {user && (
+        <FeedSection
+          scope="recommended"
+          icon="🎯"
+          title="맞춤 공고"
+          aside="문답 기록에 맞춰 정렬해요"
+          accessToken={accessToken}
+        />
+      )}
+
+      <FeedSection scope="jobs" icon="🧭" title="최신 공고" aside="워크넷에서 모아왔어요" accessToken={accessToken} />
+
+      <FeedSection
+        scope="policies"
+        icon="🏛️"
+        title="청년 지원 정책"
+        aside="최신 등록순"
+        accessToken={accessToken}
+      />
+
+      {sessionsError && (
+        <section className="landing-section">
+          <div className="landing-wrap" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <p className="msg-error" style={{ flex: 1, minWidth: 240 }}>
+              내 세션 목록을 불러오지 못했어요. {errorMessage(sessionsError)}
+            </p>
+            <button type="button" onClick={() => refetchSessions()}>
+              다시 시도
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* 결과물이 뭔지 아직 모르는 사람에게만 보여준다. 이미 세션이 있는
+       * 사용자에게는 자기 문서가 있으므로 예시가 자리만 차지한다. */}
+      {!hasSessions && !sessionsLoading && <ExampleDocument />}
     </main>
+  );
+}
+
+/** 최근 세션으로 돌아가는 한 번의 클릭. 예전 자동 리다이렉트를 대체한다. */
+function ResumeSection({ sessions }: { sessions: SessionRead[] }) {
+  // 백엔드가 created_at 내림차순으로 주므로 앞에서 3개가 곧 최근 3개다.
+  const recent = sessions.slice(0, 3);
+  return (
+    <section className="landing-section resume-section">
+      <div className="landing-wrap">
+        <div className="section-head">
+          <h2>
+            <span aria-hidden>↩️</span> 이어서 하기
+          </h2>
+          {sessions.length > recent.length && (
+            <span className="section-aside">전체 {sessions.length}개 · 대화 화면 사이드바에서 볼 수 있어요</span>
+          )}
+        </div>
+        <div className="resume-grid">
+          {recent.map((session) => (
+            <Link key={session.id} className="resume-card" href={`/sessions/${session.id}`}>
+              <span className="resume-kind">{session.kind === "job_search" ? "🔎 취업 정보 검색" : "✍️ 공백기 채우기"}</span>
+              <span className="resume-title">
+                {session.title ?? new Date(session.created_at).toLocaleDateString("ko-KR")}
+              </span>
+              <span className="resume-status">{sessionStatusLabel(session)}</span>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 

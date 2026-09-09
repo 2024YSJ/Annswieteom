@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,12 +22,20 @@ CATEGORY_TYPES = (
 
 CATEGORY_STATUSES = ("PENDING", "IN_PROGRESS", "DONE")
 
+# period_start/period_end를 누가 채웠는지. "ai_inferred"는 확정 사실에서 LLM이
+# 유추한 값이라 커버리지 계산과 UI 표시에만 쓰이고, "user_set"은 사용자가 직접
+# 고친 값이다. 둘 다 confirmed_facts로는 절대 들어가지 않으므로 생성 문서에
+# 인용될 일이 없다 — 정직성 가드레일 바깥의 메타데이터다.
+PERIOD_SOURCES = ("ai_inferred", "user_set")
+
 
 class ActivityCategory(Base):
     __tablename__ = "activity_categories"
     __table_args__ = (
         CheckConstraint(f"category_type IN {CATEGORY_TYPES}", name="ck_activity_categories_type"),
         CheckConstraint(f"status IN {CATEGORY_STATUSES}", name="ck_activity_categories_status"),
+        # NULL은 CHECK를 통과한다(SQL 3값 논리) — "아직 기간을 모른다"가 정상 상태다.
+        CheckConstraint(f"period_source IN {PERIOD_SOURCES}", name="ck_activity_categories_period_source"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -58,6 +66,13 @@ class ActivityCategory(Base):
     # 트리를 인식하도록 interview_orchestrator._walk_order()가 부모 자리에 자식들을 끼워
     # 넣는다. 부모(컨테이너)는 이 필드가 채워진 자식이 하나라도 있으면 직접 인터뷰되지 않는다.
     parent_category_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("activity_categories.id", ondelete="CASCADE"), nullable=True)
+    # 이 활동이 실제로 걸쳐 있던 기간. "공백기 채우기"라는 이름을 걸어놓고도
+    # 2026-09-09까지 서비스는 공백기가 얼마나 채워졌는지 계산할 수 없었다 —
+    # gap_periods에 전체 시작/끝만 있고 활동 쪽에는 날짜가 전혀 없었기 때문이다.
+    # 이 두 컬럼이 app/services/coverage.py의 유일한 입력이다.
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped["Session"] = relationship("Session", back_populates="categories", foreign_keys=[session_id])

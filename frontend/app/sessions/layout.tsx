@@ -9,13 +9,8 @@ import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
 import { useAuth } from "@/lib/auth-context";
 import { useSessionsList } from "@/lib/use-sessions-list";
-import { GAP_FILL_STATUS_LABELS, JOB_SEARCH_STATUS_LABELS } from "@/lib/session-routes";
+import { sessionStatusLabel } from "@/lib/session-routes";
 import { IconAttribution } from "@/components/SiteFooter";
-
-function statusLabel(session: SessionRead): string {
-  const labels = session.kind === "job_search" ? JOB_SEARCH_STATUS_LABELS : GAP_FILL_STATUS_LABELS;
-  return labels[session.status] ?? session.status;
-}
 
 function SessionRow({ session, isActive, accessToken }: { session: SessionRead; isActive: boolean; accessToken: string }) {
   const router = useRouter();
@@ -112,7 +107,7 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
             {/* 상태 라벨이 한글이라 .mono(IBM Plex Mono)를 쓰면 한글 글리프가
              * 없어 대체 폰트로 떨어지면서 자간이 벌어진다 — 본문 서체 그대로 둔다. */}
             <div style={{ color: "var(--muted-text)", fontSize: 11 }}>
-              {isMigrating ? "이관하는 중..." : statusLabel(session)}
+              {isMigrating ? "이관하는 중..." : sessionStatusLabel(session)}
             </div>
           </Link>
         )}

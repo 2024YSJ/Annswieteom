@@ -58,4 +58,4 @@
 | A | [person_A_infra_ai/07_server_ops_checklist.md](person_A_infra_ai/07_server_ops_checklist.md) (데모 당일 대비 항목) | 없음 |
 | B | [person_B_frontend_backend/05_frontend_routes_components.md](person_B_frontend_backend/05_frontend_routes_components.md) (전체 라우트 완주 확인) | `feature/frontend-shell` |
 
-**검증 기준**: 배포된 URL만으로 전체 흐름이 완주되고, 로컬 서버 장애 시에도 Gemini 폴백으로 서비스가 유지된다. 9/16 이후 신규 기능 동결, 이후는 버그 수정과 발표 준비만 진행 — 이후 발견되는 버그는 `fix/*` 브랜치로 `dev`를 거쳐 `main`에 반영한다.
+**검증 기준**: 배포된 URL만으로 전체 흐름이 완주된다. ~~로컬 서버 장애 시에도 Gemini 폴백으로 서비스가 유지된다~~ — **2026-09-09 Gemini를 제거하면서 이 기준은 폐기했다.** 폴백이 더 이상 없으므로 로컬 서버가 죽으면 AI 기능은 503으로 멈추고 화면에 "AI 서버가 수리 중이예요."가 뜬다. 그 대신 **데모 당일 로컬 추론 서버와 터널의 상태 점검이 필수 항목**이 된다([person_A_infra_ai/07_server_ops_checklist.md](person_A_infra_ai/07_server_ops_checklist.md)). 9/16 이후 신규 기능 동결, 이후는 버그 수정과 발표 준비만 진행 — 이후 발견되는 버그는 `fix/*` 브랜치로 `dev`를 거쳐 `main`에 반영한다.

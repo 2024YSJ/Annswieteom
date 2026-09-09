@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.models.record_chunk import EMBEDDING_DIM
 from app.services.embedding.base import (
     EmbeddingDimensionMismatchError,
-    EmbeddingProviderUnavailableError,
+    EmbeddingUnavailableError,
 )
 
 _MODEL = "bge-m3"
@@ -30,9 +30,9 @@ class LocalOllamaEmbedding:
                 resp.raise_for_status()
                 vectors: list[list[float]] = resp.json()["embeddings"]
         except httpx.TimeoutException as exc:
-            raise TimeoutError("Ollama embedding timed out") from exc
+            raise EmbeddingUnavailableError("Ollama embedding timed out") from exc
         except Exception as exc:
-            raise EmbeddingProviderUnavailableError(f"Ollama unavailable: {exc}") from exc
+            raise EmbeddingUnavailableError(f"Ollama unavailable: {exc}") from exc
 
         if vectors and len(vectors[0]) != EMBEDDING_DIM:
             raise EmbeddingDimensionMismatchError(EMBEDDING_DIM, len(vectors[0]), _MODEL)

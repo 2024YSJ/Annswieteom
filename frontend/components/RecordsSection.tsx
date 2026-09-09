@@ -44,7 +44,7 @@ export function RecordsSection({
   const [isSkipping, setIsSkipping] = useState(false);
   const highestNonceRef = useRef(0);
 
-  // The record-attach (📎 blog URL / image) control — only relevant here,
+  // The record-attach (📎 blog URL / document) control — only relevant here,
   // since records are only attachable during this step (2026-09-06), unlike
   // the shared ChatComposer's free-text box which every step uses.
   const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
@@ -222,7 +222,7 @@ export function RecordsSection({
             </div>
             <ChatBubble side="left">
               <span aria-live="polite">
-                {categoryLabel(category)}에 대한 자료(블로그 글, 이미지, 문서 파일(txt/md/docx/hwp), 메모)가 있으면 알려주세요. 없어도 괜찮아요.
+                {categoryLabel(category)}에 대한 자료(블로그 글, 문서 파일(txt/md/docx/hwp), 메모)가 있으면 알려주세요. 없어도 괜찮아요.
               </span>
             </ChatBubble>
 
@@ -308,7 +308,7 @@ export function RecordsSection({
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept="image/jpeg,image/png,image/webp,.md,.txt,.docx,.hwp"
+                  accept=".md,.txt,.docx,.hwp"
                   onChange={handleFileChange}
                   disabled={isSubmitting}
                   style={{ display: "none" }}
