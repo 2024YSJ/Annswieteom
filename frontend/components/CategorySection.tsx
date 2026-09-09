@@ -32,6 +32,12 @@ export function CategorySection({
 }) {
   const queryClient = useQueryClient();
   const [suggestions, setSuggestions] = useState<SuggestionRow[]>([]);
+  // 사용자가 방금 보낸 문장. 즉시 말풍선으로 되돌려주기 위한 것 — 이게 없으면
+  // 보낸 직후 화면이 입력 전과 완전히 같아서 "먹통"으로 보인다(2026-09-09 실사용).
+  const [sentText, setSentText] = useState<string | null>(null);
+  // 추출을 한 번이라도 끝냈는지. suggestions가 빈 것만으로는 "아직 안 보냈다"와
+  // "보냈는데 못 찾았다"를 구분할 수 없다.
+  const [hasExtracted, setHasExtracted] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -45,6 +51,9 @@ export function CategorySection({
 
     async function run() {
       setError(null);
+      // await 전에 먼저 그린다 — 요청이 접수됐다는 신호가 즉시 있어야 한다.
+      setSentText(text);
+      setHasExtracted(false);
       setIsExtracting(true);
       try {
         const { suggestions: found } = await sessionApi.extractCategories(sessionId, text, accessToken);
@@ -52,6 +61,7 @@ export function CategorySection({
         // Replaces the previous list rather than accumulating — sending a
         // new message re-extracts from scratch.
         setSuggestions(found.map((s) => ({ ...s, localId: `${nextLocalId++}` })));
+        setHasExtracted(true);
       } catch (err) {
         if (highestNonceRef.current !== nonce) return;
         setError(errorMessage(err));
@@ -118,7 +128,31 @@ export function CategorySection({
         <span aria-live="polite">{QUESTION_TEXT}</span>
       </ChatBubble>
 
+      {sentText && <ChatBubble side="right">{sentText}</ChatBubble>}
+
       {isExtracting && <ChatBubble side="left">찾는 중...</ChatBubble>}
+
+      {/* "잘 모르겠어" 같은 답변에는 백엔드가 정상 200으로 빈 배열을 준다
+          (프롬프트가 "못 찾겠으면 빈 배열"이라고 지시한다 — LLM은 설계대로
+          동작한 것이다). 이 분기가 없으면 화면에 아무것도 안 그려져서 사이트가
+          멈춘 것처럼 보였다. 재질문과 직접 입력을 같이 주는 이유는, 예시를
+          줘도 계속 모르겠다는 사용자가 영영 다음 단계로 못 넘어가기 때문이다. */}
+      {hasExtracted && suggestions.length === 0 && !isExtracting && (
+        <ChatBubble side="left">
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <span aria-live="polite">
+              구체적인 활동이 잘 안 잡혔어요. 예를 들어 <b>편의점 알바</b>, <b>자격증 공부</b>, <b>운동</b>,
+              <b> 가족 돌봄</b>처럼 적어주시면 카테고리를 찾아드릴게요.
+            </span>
+            <span style={{ fontSize: 13, color: "var(--muted-text)" }}>
+              푹 쉬었거나 특별한 활동이 없었어도 괜찮아요 — 그것도 하나의 활동으로 적을 수 있어요.
+            </span>
+            <button type="button" onClick={addManualSuggestion} style={{ alignSelf: "flex-start" }}>
+              직접 입력할게요
+            </button>
+          </div>
+        </ChatBubble>
+      )}
 
       {suggestions.length > 0 && !isExtracting && (
         <ChatBubble side="left">
