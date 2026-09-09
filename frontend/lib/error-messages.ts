@@ -37,5 +37,11 @@ export function errorMessage(err: unknown, fallback = "오류가 발생했어요
   if (err instanceof ApiError) {
     return KNOWN_DETAILS[err.detail] ?? BY_STATUS[err.status] ?? fallback;
   }
+  // AbortSignal.timeout()은 ApiError가 아니라 name이 "TimeoutError"인
+  // DOMException으로 거부되므로 여기서 따로 잡아야 한다 — 안 잡으면 시간
+  // 초과가 일반 오류 문구로 뭉개져서 재시도해도 될 상황인지 알 수 없다.
+  if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+    return "응답이 너무 오래 걸려서 중단했어요. 조건을 조금 더 구체적으로 적어서 다시 시도해주세요.";
+  }
   return fallback;
 }

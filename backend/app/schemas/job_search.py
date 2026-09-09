@@ -28,6 +28,10 @@ class JobInfoQueryRead(BaseModel):
 
     categories: list[JobInfoCategoryResultRead]
     clarification_question: str | None = None
+    #: 조회나 관련성 판단이 실패/시간초과해서 이번 응답에서 빠진 카테고리 라벨.
+    #: 예전에는 그냥 버려서 사용자에게 "AI가 아무 말도 안 하는" 빈 응답으로
+    #: 보였다 — 무엇이 빠졌는지 알려주려면 응답에 실려야 한다(devlog 20).
+    skipped_category_labels: list[str] = []
 
 
 class JobInfoDraftQueryRead(BaseModel):
