@@ -75,6 +75,9 @@ export interface CategorySuggestion {
 
 export interface CategoryExtractRead {
   suggestions: CategorySuggestion[];
+  /** suggestions가 비었을 때만 채워진다 — AI가 구체적인 갈래를 짚어 되묻는 문장.
+   *  LLM을 못 쓰면 null이고, 그때는 정적 예시 안내로 돌아간다. */
+  followup_question?: string | null;
 }
 
 export interface RecordChunkExcerptRead {

@@ -190,6 +190,22 @@ class JobInfoQueryParams:
     keywords: list[str] = field(default_factory=list)
 
 
+#: 활동을 못 떠올리는 사용자에게 짚어줄 갈래. 어느 것을 물을지는 서버가 고른다 —
+#: 모델에게 "다양하게 물어라"라고 시켰더니 프롬프트를 고칠 때마다 쏠리는 갈래만
+#: 바뀌었다(아르바이트 -> 운동/건강, 14b 실측 2026-09-09). 선택을 코드로 가져오면
+#: 다양성이 보장되고, LLM은 잘하는 일(자연스러운 문장 만들기)만 하면 된다.
+#: 같은 사용자가 계속 "모르겠다"고 해도 매번 다른 각도로 물어보게 된다.
+PROBE_FOCUSES = (
+    "아르바이트나 단기 근로",
+    "공부, 자격증 준비, 인터넷 강의",
+    "운동이나 건강 관리",
+    "취미나 관심사",
+    "가족 돌봄이나 집안일",
+    "구직 활동(지원서 쓰기, 면접 등)",
+    "특별한 일 없이 보낸 시간",
+)
+
+
 class LLMUnavailableError(Exception):
     """로컬 Ollama에 요청을 보낼 수 없거나, 보냈는데 쓸 수 없는 응답이 온 경우.
 
@@ -219,6 +235,13 @@ class LLMProvider(Protocol):
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]: ...
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None: ...
+    #: 카테고리 추출이 빈 결과였을 때만 부른다 — "잘 모르겠어" 같은 답에
+    #: 같은 질문을 되풀이하는 대신 구체적인 갈래를 콕 집어 되묻기 위한 것.
+    #: 어느 갈래를 물을지(`focus`)는 서버가 고르고 LLM은 문장만 만든다 —
+    #: 모델에게 맡겼더니 매번 한 갈래로 쏠렸다(14b 실측, PROBE_FOCUSES 참고).
+    async def probe_activity_question(
+        self, free_text: str, gap_start: date, gap_end: date, focus: str
+    ) -> str: ...
     async def extract_activity_period(
         self, category_label: str, facts: list[ConfirmedFact], gap_start: date, gap_end: date
     ) -> PeriodSuggestion | None: ...

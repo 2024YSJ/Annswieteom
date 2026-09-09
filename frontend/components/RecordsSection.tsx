@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
 import { CATEGORY_LABELS } from "@/lib/session-routes";
 import { ChatBubble } from "@/components/ChatBubble";
+import { TypingDots } from "@/components/TypingDots";
 import { RecordStatusRow } from "@/components/RecordStatusRow";
 import type { ComposerEvent } from "@/components/ChatComposer";
 
@@ -225,6 +226,15 @@ export function RecordsSection({
                 {categoryLabel(category)}에 대한 자료(블로그 글, 문서 파일(txt/md/docx/hwp), 메모)가 있으면 알려주세요. 없어도 괜찮아요.
               </span>
             </ChatBubble>
+
+            {/* 기록물 등록은 지금까지 진행 표시가 전혀 없었다 — 텍스트/URL/파일을
+                보내면 버튼만 비활성화되고 화면은 그대로라, 카테고리 단계에서
+                겪었던 "먹통처럼 보이는" 문제와 같은 상태였다. */}
+            {isSubmitting && (
+              <ChatBubble side="left">
+                <TypingDots label="자료를 등록하고 있어요" />
+              </ChatBubble>
+            )}
 
             {currentRecordIds.length > 0 && (
               <ChatBubble side="left">

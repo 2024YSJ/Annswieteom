@@ -616,6 +616,36 @@ button.flow:active:not(:disabled) {
   50%      { transform: translateX(-50%) translateY(-4px); }
 }
 
+/* ── 입력 중 말줄임표 ──────────────────────────────────────────────
+   AI 응답을 기다리는 채팅 구간 공용(components/TypingDots.tsx). 예전에는
+   "찾는 중..." 같은 정적 텍스트 버블이 툭 생겼다 툭 사라져서 화면이 끊겨
+   보였다. 점 세 개를 시차를 두고 띄워 "멈춘 게 아니라 기다리는 중"이라는 걸
+   눈으로 읽히게 한다.
+   인라인 스타일로는 @keyframes를 쓸 수 없어서 여기 둔다 — .bubble-tip과 같은
+   이유다. 점 크기 5px은 .chip::before의 점과 맞췄다. */
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.typing-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+  animation: typing-bob 1.2s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typing-bob {
+  0%, 60%, 100% { transform: translateY(0);    opacity: 0.35; }
+  30%           { transform: translateY(-4px); opacity: 1; }
+}
+
 .cta-note {
   text-align: center;
   margin-top: 18px;

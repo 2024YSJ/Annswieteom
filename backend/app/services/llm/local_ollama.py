@@ -193,6 +193,24 @@ class LocalOllamaProvider:
         except (json.JSONDecodeError, KeyError) as exc:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
+    async def probe_activity_question(
+        self, free_text: str, gap_start: date, gap_end: date, focus: str
+    ) -> str:
+        prompt = _render(
+            "probe_activity_question.jinja",
+            free_text=free_text,
+            gap_start=gap_start,
+            gap_end=gap_end,
+            focus=focus,
+        )
+        # 되묻는 문장이라 매번 똑같으면 기계적으로 읽힌다 — 생성 계열이므로 CREATIVE.
+        response_text = await self._generate(prompt, timeout=45.0, temperature=TEMPERATURE_CREATIVE)
+        try:
+            data = json.loads(response_text)
+            return data["question_text"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None:
         prompt = _render("extract_period.jinja", free_text=free_text, today=today)
         response_text = await self._generate(prompt, timeout=45.0, temperature=TEMPERATURE_DETERMINISTIC)

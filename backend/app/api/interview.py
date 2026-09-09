@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import uuid
 from datetime import date
 
@@ -38,6 +39,7 @@ from app.services import interview_orchestrator as orchestrator
 from app.services.coverage import has_period_clue
 from app.services.interview_question_bank import next_base_question
 from app.services.llm.base import (
+    PROBE_FOCUSES,
     LLMUnavailableError,
     BasedOn,
     ConfirmedFact as LLMConfirmedFact,
@@ -294,10 +296,31 @@ async def extract_categories(
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
+    # 활동을 하나도 못 찾았을 때만 AI에게 되묻는 질문을 만들게 한다. "잘 모르겠어"
+    # 같은 답에 같은 질문을 되풀이하면 사용자는 똑같이 막히기 때문이다(2026-09-09
+    # 요청). 정상 경로에는 LLM 호출이 늘지 않는다.
+    #
+    # 실패해도 질문 전체를 실패시키지 않는다 — Gemini 폴백을 제거한 뒤 로컬
+    # Ollama가 유일한 경로라 터널이 끊기면 여기도 같이 죽는데, 그때는 None으로
+    # 두고 프론트가 정적 예시 안내로 돌아가게 한다.
+    followup_question = None
+    if not suggestions:
+        try:
+            followup_question = await llm.probe_activity_question(
+                payload.text,
+                gap_period.start_date,
+                gap_period.end_date,
+                # 갈래는 여기서 고른다 — 매번 다른 각도로 물어보게 된다.
+                random.choice(PROBE_FOCUSES),
+            )
+        except LLMUnavailableError:
+            followup_question = None
+
     return CategoryExtractRead(
         suggestions=[
             CategorySuggestionRead(category_type=s.category_type, custom_label=s.custom_label) for s in suggestions
-        ]
+        ],
+        followup_question=followup_question,
     )
 
 
