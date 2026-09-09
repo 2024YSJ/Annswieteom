@@ -179,7 +179,10 @@ def test_create_text_record(records_client):
     assert len(records_client.process_record_calls) == 1
 
 
-def test_upload_image_record_stores_bytes_under_isolated_path(records_client):
+def test_upload_image_is_rejected_since_ocr_was_removed(records_client):
+    """Gemini Vision OCR을 제거하면서 이미지 업로드도 같이 없앴다(2026-09-09).
+    텍스트를 못 뽑는 이미지는 청크도 임베딩도 만들지 못해 근거가 될 수 없는데,
+    받아만 두면 사용자는 근거가 쌓인 줄 안다 — 조용히 저장하느니 거절한다."""
     headers = _register_and_login(records_client)
     session_id = _create_session_at_record_upload(records_client, headers)
 
@@ -188,20 +191,10 @@ def test_upload_image_record_stores_bytes_under_isolated_path(records_client):
         headers=headers,
         files={"file": ("cert.png", b"fake-png-bytes", "image/png")},
     )
-    assert resp.status_code == 201
-    body = resp.json()
-    assert body["record_type"] == "image"
-    assert len(records_client.process_image_record_calls) == 1
-
-    # The uploaded bytes ended up under exactly one path, scoped by user/session/record.
-    stored_paths = list(records_client.fake_storage.uploaded.keys())
-    assert len(stored_paths) == 1
-    assert stored_paths[0].startswith(f"records/")
-    assert session_id in stored_paths[0]
-    assert records_client.fake_storage.uploaded[stored_paths[0]] == b"fake-png-bytes"
-
-    resp = records_client.get(f"/api/v1/sessions/{session_id}/records/{body['id']}", headers=headers)
-    assert resp.json()["parse_status"] == "DONE"
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "unsupported_file_type"
+    # 거절된 업로드는 스토리지에도 아무것도 남기지 않는다.
+    assert records_client.fake_storage.uploaded == {}
 
 
 def test_upload_txt_record_is_a_document_with_original_filename(records_client):
@@ -218,7 +211,6 @@ def test_upload_txt_record_is_a_document_with_original_filename(records_client):
     assert body["record_type"] == "document"
     assert body["original_filename"] == "이력서 메모.txt"
     assert len(records_client.process_document_record_calls) == 1
-    assert len(records_client.process_image_record_calls) == 0
 
     resp = records_client.get(f"/api/v1/sessions/{session_id}/records/{body['id']}", headers=headers)
     assert resp.json()["parse_status"] == "DONE"
@@ -264,24 +256,27 @@ def test_records_endpoints_require_record_upload_status(records_client):
     assert resp.status_code == 409
 
 
-def test_records_can_no_longer_be_attached_once_interviewing(records_client):
-    """Records are only attachable during the per-category record-request walk
-    (RECORD_UPLOAD) — once a session has moved into INTERVIEWING, the attach
-    UI has moved to sit next to the record-request step's own skip/advance
-    button, so the API must reject further record creation too."""
+def test_records_can_still_be_attached_during_interviewing(records_client):
+    """인터뷰 도중 첨부를 다시 허용한다(2026-09-09). 질문을 받기 전에는
+    무엇을 올려야 하는지 알 수 없고("아, 이건 블로그에 써둔데"는 질문 뒤에
+    나온다), 질문 문구로 청크를 볋터 검색하게 된 이후로는 방금 올린 기록물이
+    바로 다음 턴의 근거로 잡힐 수 있다. 첨부 대상 카테고리는 그대로
+    session.current_category_id다 — INTERVIEWING에서는 지금 인터뷰 중인 카테고리."""
     headers = _register_and_login(records_client)
     session_id = _create_session_at_record_upload(records_client, headers)
 
     resp = records_client.post(f"/api/v1/sessions/{session_id}/records/skip", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["status"] == "INTERVIEWING"
+    current_category_id = resp.json()["current_category_id"]
 
     resp = records_client.post(
         f"/api/v1/sessions/{session_id}/records/text",
         headers=headers,
         json={"text": "인터뷰 도중에 추가한 기록물"},
     )
-    assert resp.status_code == 409
+    assert resp.status_code == 201
+    assert resp.json()["category_id"] == current_category_id
 
 
 def test_delete_record_removes_it_and_its_storage_object(records_client):
@@ -291,7 +286,7 @@ def test_delete_record_removes_it_and_its_storage_object(records_client):
     resp = records_client.post(
         f"/api/v1/sessions/{session_id}/records/upload",
         headers=headers,
-        files={"file": ("cert.png", b"fake-png-bytes", "image/png")},
+        files={"file": ("증빙.txt", "자격증 사본 메모".encode("utf-8"), "text/plain")},
     )
     record_id = resp.json()["id"]
     stored_path = next(iter(records_client.fake_storage.uploaded.keys()))
@@ -331,3 +326,23 @@ def test_other_users_session_returns_403_and_wrong_session_record_returns_404(re
     session_b_id = _create_session_at_record_upload(records_client, headers_b)
     resp = records_client.get(f"/api/v1/sessions/{session_b_id}/records/{record_id}", headers=headers_b)
     assert resp.status_code == 404
+
+
+def test_uncited_endpoint_is_not_shadowed_by_the_record_id_route(records_client):
+    """`/records/uncited`는 `/records/{record_id}`보다 먼저 선언돼야 한다 —
+    아니면 "uncited"가 UUID로 파싱되려다 422로 떨어진다."""
+    headers = _register_and_login(records_client)
+    session_id = _create_session_at_record_upload(records_client, headers)
+
+    resp = records_client.get(f"/api/v1/sessions/{session_id}/records/uncited", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_uncited_endpoint_rejects_another_users_session(records_client):
+    owner_headers = _register_and_login(records_client, email="owner2@example.com")
+    session_id = _create_session_at_record_upload(records_client, owner_headers)
+
+    other_headers = _register_and_login(records_client, email="other2@example.com")
+    resp = records_client.get(f"/api/v1/sessions/{session_id}/records/uncited", headers=other_headers)
+    assert resp.status_code == 403

@@ -30,7 +30,14 @@ export function ChatBubble({
     return (
       <div style={{ alignSelf: "flex-end", maxWidth: "80%" }}>
         {label && <div style={{ fontSize: 12, color: "var(--muted-text)", textAlign: "right" }}>{label}</div>}
-        <div style={{ background: "var(--accent-surface)", color: "var(--accent-surface-text)", padding: "8px 12px", borderRadius: 12 }}>
+        <div
+          style={{
+            background: "var(--accent-surface)",
+            color: "var(--accent-surface-text)",
+            padding: "8px 13px",
+            borderRadius: "var(--radius-lg)",
+          }}
+        >
           {children}
         </div>
       </div>
@@ -46,8 +53,9 @@ export function ChatBubble({
             background: "var(--surface-strong)",
             color: "var(--surface-strong-text)",
             border: "1px solid var(--border)",
-            borderRadius: 12,
-            padding: 16,
+            borderRadius: "var(--radius-xl)",
+            boxShadow: "var(--shadow-sm)",
+            padding: 18,
           }}
         >
           {children}
@@ -59,7 +67,17 @@ export function ChatBubble({
   return (
     <div style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
       {label && <div style={{ fontSize: 12, color: "var(--muted-text)", marginBottom: 4 }}>{label}</div>}
-      <div style={{ background: "var(--surface)", color: "var(--surface-text)", padding: "12px", borderRadius: 12 }}>
+      {/* 흰 배경 위에서는 --surface(거의 흰색)만으로 면이 구분되지 않아서,
+       * 시스템 원칙대로 얇은 보더를 함께 준다. */}
+      <div
+        style={{
+          background: "var(--surface)",
+          color: "var(--surface-text)",
+          border: "1px solid var(--border)",
+          padding: "10px 14px",
+          borderRadius: "var(--radius-lg)",
+        }}
+      >
         {children}
       </div>
     </div>

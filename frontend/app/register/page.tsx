@@ -46,48 +46,55 @@ export default function RegisterPage() {
   }
 
   return (
-    <main style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", display: "flex", flexDirection: "column", gap: 16 }}>
-      <h1>회원가입</h1>
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          이메일
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          닉네임
-          <input
-            type="text"
-            required
-            autoComplete="nickname"
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          비밀번호 (8자 이상)
-          <input
-            type="password"
-            required
-            minLength={8}
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-        {error && <p style={{ color: "crimson" }}>{error}</p>}
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "가입 중..." : "가입하기"}
-        </button>
-      </form>
-      <p>
-        이미 계정이 있으신가요? <Link href="/login">로그인</Link>
-      </p>
+    <main className="auth-page">
+      <div className="card auth-card">
+        <h1>회원가입</h1>
+        <p className="auth-lede">
+          {user?.is_guest
+            ? "체험하며 만든 문서를 그대로 가져갑니다."
+            : "만든 문서를 저장하고 언제든 다시 열어볼 수 있어요."}
+        </p>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <label className="field">
+            이메일
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            닉네임
+            <input
+              type="text"
+              required
+              autoComplete="nickname"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            비밀번호 (8자 이상)
+            <input
+              type="password"
+              required
+              minLength={8}
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          {error && <p className="msg-error">{error}</p>}
+          <button type="submit" className="btn-primary btn-block" disabled={isSubmitting} style={{ marginTop: 2 }}>
+            {isSubmitting ? "가입 중..." : "가입하기"}
+          </button>
+        </form>
+        <p className="auth-foot">
+          이미 계정이 있으신가요? <Link href="/login">로그인</Link>
+        </p>
+      </div>
     </main>
   );
 }

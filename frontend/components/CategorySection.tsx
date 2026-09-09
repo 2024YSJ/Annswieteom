@@ -147,7 +147,7 @@ export function CategorySection({
         </ChatBubble>
       )}
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
     </>
   );
 }

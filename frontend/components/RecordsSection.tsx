@@ -44,7 +44,7 @@ export function RecordsSection({
   const [isSkipping, setIsSkipping] = useState(false);
   const highestNonceRef = useRef(0);
 
-  // The record-attach (📎 blog URL / image) control — only relevant here,
+  // The record-attach (📎 blog URL / document) control — only relevant here,
   // since records are only attachable during this step (2026-09-06), unlike
   // the shared ChatComposer's free-text box which every step uses.
   const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
@@ -222,7 +222,7 @@ export function RecordsSection({
             </div>
             <ChatBubble side="left">
               <span aria-live="polite">
-                {categoryLabel(category)}에 대한 자료(블로그 글, 이미지, 문서 파일(txt/md/docx/hwp), 메모)가 있으면 알려주세요. 없어도 괜찮아요.
+                {categoryLabel(category)}에 대한 자료(블로그 글, 문서 파일(txt/md/docx/hwp), 메모)가 있으면 알려주세요. 없어도 괜찮아요.
               </span>
             </ChatBubble>
 
@@ -252,7 +252,7 @@ export function RecordsSection({
                 if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
               }}
             >
-              {error && <p style={{ color: "crimson" }}>{error}</p>}
+              {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
               <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative" }}>
                 <button type="button" onClick={handleAdvance} disabled={isSkipping || isSubmitting}>
                   {isSkipping ? "진행 중..." : currentRecordIds.length > 0 ? "다음 카테고리로" : "이 카테고리 자료 없이 넘어가기"}
@@ -308,7 +308,7 @@ export function RecordsSection({
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept="image/jpeg,image/png,image/webp,.md,.txt,.docx,.hwp"
+                  accept=".md,.txt,.docx,.hwp"
                   onChange={handleFileChange}
                   disabled={isSubmitting}
                   style={{ display: "none" }}

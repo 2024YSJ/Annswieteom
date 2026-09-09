@@ -9,12 +9,8 @@ import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
 import { useAuth } from "@/lib/auth-context";
 import { useSessionsList } from "@/lib/use-sessions-list";
-import { GAP_FILL_STATUS_LABELS, JOB_SEARCH_STATUS_LABELS } from "@/lib/session-routes";
-
-function statusLabel(session: SessionRead): string {
-  const labels = session.kind === "job_search" ? JOB_SEARCH_STATUS_LABELS : GAP_FILL_STATUS_LABELS;
-  return labels[session.status] ?? session.status;
-}
+import { sessionStatusLabel } from "@/lib/session-routes";
+import { IconAttribution } from "@/components/SiteFooter";
 
 function SessionRow({ session, isActive, accessToken }: { session: SessionRead; isActive: boolean; accessToken: string }) {
   const router = useRouter();
@@ -93,18 +89,26 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
               flex: 1,
               minWidth: 0,
               display: "block",
-              padding: "8px 10px",
-              borderRadius: 6,
+              padding: "7px 10px",
+              borderRadius: "var(--radius-md)",
               fontSize: 13,
               textDecoration: "none",
-              background: isActive ? "var(--hover-surface)" : "transparent",
-              color: isActive ? "var(--hover-surface-text)" : "inherit",
+              // 활성 세션은 회색 면이 아니라 브랜드 레드 틴트 + 왼쪽 레드 바로
+              // 표시한다 — 흰 배경 위에서 회색 면보다 훨씬 빨리 눈에 띈다.
+              background: isActive ? "var(--accent-soft)" : "transparent",
+              color: isActive ? "var(--foreground)" : "inherit",
+              borderLeft: isActive ? "3px solid var(--accent)" : "3px solid transparent",
+              fontWeight: isActive ? 600 : 400,
             }}
           >
             <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {session.title ?? new Date(session.created_at).toLocaleDateString("ko-KR")}
             </div>
-            <div style={{ color: "var(--muted-text)" }}>{isMigrating ? "이관하는 중..." : statusLabel(session)}</div>
+            {/* 상태 라벨이 한글이라 .mono(IBM Plex Mono)를 쓰면 한글 글리프가
+             * 없어 대체 폰트로 떨어지면서 자간이 벌어진다 — 본문 서체 그대로 둔다. */}
+            <div style={{ color: "var(--muted-text)", fontSize: 11 }}>
+              {isMigrating ? "이관하는 중..." : sessionStatusLabel(session)}
+            </div>
           </Link>
         )}
         {!isEditing && (
@@ -139,11 +143,11 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
               top: "100%",
               zIndex: 11,
               minWidth: 160,
-              background: "var(--surface)",
-              color: "var(--surface-text)",
+              background: "var(--surface-strong)",
+              color: "var(--surface-strong-text)",
               border: "1px solid var(--border)",
-              borderRadius: 8,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              borderRadius: "var(--radius-lg)",
+              boxShadow: "var(--shadow-lg)",
               display: "flex",
               flexDirection: "column",
               padding: 4,
@@ -154,7 +158,8 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
                 type="button"
                 role="menuitem"
                 onClick={handleMigrateToJobSearch}
-                style={{ textAlign: "left", fontSize: 13, padding: "8px 10px", background: "transparent", border: "none" }}
+                className="btn-ghost"
+                style={MENU_ITEM_STYLE}
               >
                 취업 정보 검색으로 이관
               </button>
@@ -166,7 +171,8 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
                 setIsMenuOpen(false);
                 setIsEditing(true);
               }}
-              style={{ textAlign: "left", fontSize: 13, padding: "8px 10px", background: "transparent", border: "none" }}
+              className="btn-ghost"
+              style={MENU_ITEM_STYLE}
             >
               이름 변경
             </button>
@@ -174,7 +180,8 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
               type="button"
               role="menuitem"
               onClick={handleDelete}
-              style={{ textAlign: "left", fontSize: 13, padding: "8px 10px", background: "transparent", border: "none", color: "crimson" }}
+              className="btn-ghost"
+              style={{ ...MENU_ITEM_STYLE, color: "var(--danger)" }}
             >
               삭제
             </button>
@@ -182,7 +189,7 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
         </>
       )}
 
-      {error && <p style={{ color: "crimson", fontSize: 11, margin: "2px 0 0" }}>{error}</p>}
+      {error && <p style={{ color: "var(--danger)", fontSize: 11, margin: "2px 0 0", fontWeight: 600 }}>{error}</p>}
     </li>
   );
 }
@@ -248,7 +255,7 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
       <div className={`sidebar-backdrop ${isSidebarOpen ? "is-open" : ""}`} onClick={() => setIsSidebarOpen(false)} />
 
       <aside className={`app-sidebar ${isSidebarOpen ? "is-open" : ""}`}>
-        {createError && <p style={{ color: "crimson", fontSize: 11, marginBottom: 8 }}>{createError}</p>}
+        {createError && <p className="msg-error" style={{ fontSize: 12, marginBottom: 12 }}>{createError}</p>}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <SessionGroup
@@ -270,6 +277,21 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
             accessToken={accessToken}
           />
         </div>
+
+        {/* 세션 화면에는 푸터가 없어서(SiteFooter 참고) 아이콘 라이선스 표기를
+         * 여기에 둔다. */}
+        <p
+          style={{
+            marginTop: 28,
+            paddingTop: 16,
+            borderTop: "1px solid var(--border)",
+            fontSize: 11,
+            lineHeight: 1.5,
+            color: "var(--muted-text)",
+          }}
+        >
+          <IconAttribution />
+        </p>
       </aside>
     </div>
   );
@@ -295,8 +317,10 @@ function SessionGroup({
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <h2 style={{ fontSize: 14, color: "var(--muted-text)", margin: 0 }}>{title}</h2>
-        <button type="button" onClick={onNew} disabled={isCreating} title={newLabel} style={{ fontSize: 12 }}>
+        <h2 style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted-text)", margin: 0 }}>
+          {title}
+        </h2>
+        <button type="button" onClick={onNew} disabled={isCreating} title={newLabel} style={{ fontSize: 11.5, padding: "5px 9px" }}>
           {isCreating ? "..." : newLabel}
         </button>
       </div>
@@ -314,3 +338,12 @@ function SessionGroup({
     </div>
   );
 }
+
+// 드롭다운 메뉴 항목의 형태. 색(투명 배경·호버)은 .btn-ghost가 맡는다.
+const MENU_ITEM_STYLE = {
+  textAlign: "left" as const,
+  fontSize: 13,
+  fontWeight: 500,
+  padding: "8px 10px",
+  borderRadius: "var(--radius-sm)",
+};

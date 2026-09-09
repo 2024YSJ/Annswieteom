@@ -9,10 +9,9 @@ from app.db.session import AsyncSessionLocal
 from app.models.record import Record
 from app.models.record_chunk import RecordChunk
 from app.models.gap_period import GapPeriod
-from app.services.embedding import FallbackEmbedding
+from app.services.embedding import LocalOllamaEmbedding
 from app.services.record_pipeline.chunker import chunk_text
 from app.services.record_pipeline.document_parser import UnsupportedDocumentError, extract_text_from_document
-from app.services.record_pipeline.ocr import MIME_TYPES_BY_EXTENSION, extract_text_from_image
 from app.services.record_pipeline.parsers import generic, naver_blog, tistory, velog
 from app.services.record_pipeline.platform_detector import detect_platform
 from app.services.storage import get_storage
@@ -42,41 +41,6 @@ async def process_record(record_id: uuid.UUID) -> None:
                 await db.commit()
                 return
 
-            chunks = chunk_text(text, pub_date)
-            await _embed_and_store(db, record, chunks)
-
-            record.raw_text = text
-            record.parse_status = "DONE"
-            await db.commit()
-
-        except Exception as exc:
-            record.parse_status = "FAILED"
-            record.parse_error = _user_message(exc)
-            await db.commit()
-
-
-async def process_image_record(record_id: uuid.UUID) -> None:
-    """OCR an image record, chunk the extracted text, and embed each chunk.
-
-    Sets parse_status to DONE or FAILED on completion.
-    """
-    async with AsyncSessionLocal() as db:
-        record = await db.get(Record, record_id)
-        if record is None:
-            return
-
-        record.parse_status = "PROCESSING"
-        await db.commit()
-
-        try:
-            if not record.storage_path:
-                raise ValueError("No storage_path for image record")
-
-            storage = get_storage()
-            image_bytes = await storage.download(record.storage_path)
-            mime_type = _guess_mime_type(record.storage_path)
-
-            text, pub_date = await extract_text_from_image(image_bytes, mime_type)
             chunks = chunk_text(text, pub_date)
             await _embed_and_store(db, record, chunks)
 
@@ -162,7 +126,7 @@ async def _embed_and_store(db, record: Record, chunks) -> None:
     if not chunks:
         return
 
-    provider = FallbackEmbedding()
+    provider = LocalOllamaEmbedding()
     texts = [c.text for c in chunks]
     vectors = await provider.embed(texts)
 
@@ -175,13 +139,6 @@ async def _embed_and_store(db, record: Record, chunks) -> None:
             embedding=vector,
             embedding_model=provider.model_name,
         ))
-
-
-def _guess_mime_type(storage_path: str) -> str:
-    for ext, mime in MIME_TYPES_BY_EXTENSION.items():
-        if storage_path.lower().endswith(ext):
-            return mime
-    return "image/jpeg"
 
 
 def _user_message(exc: Exception) -> str:

@@ -19,9 +19,9 @@ from app.schemas.job_search import (
     JobInfoResultRead,
 )
 from app.services.job_pipeline.job_info_client import CATEGORY_LABELS, JobInfoClient, WorknetApiError, get_job_info_client
-from app.services.llm.base import AllProvidersFailedError, JobInfoCandidate, LLMProvider
+from app.services.llm.base import LLMUnavailableError, JobInfoCandidate, LLMProvider
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
-from app.services.llm.fallback import get_llm_provider
+from app.services.llm import get_llm_provider
 
 router = APIRouter(prefix="/sessions", tags=["job_search"])
 
@@ -62,7 +62,7 @@ async def query_job_info(
 
     try:
         category_queries = await llm.classify_job_info_query(payload.query)
-    except AllProvidersFailedError as exc:
+    except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
     if not category_queries:
@@ -86,7 +86,7 @@ async def query_job_info(
         ]
         try:
             relevant_indices = await llm.select_relevant_job_info_results(payload.query, label, candidates)
-        except AllProvidersFailedError:
+        except LLMUnavailableError:
             # 원본 목록은 받아왔지만 관련성 판단이 안 되면, 걸러지지 않은
             # 목록을 그대로 보여주느니 이 카테고리를 빼는 쪽이 낫다 — 그게
             # 바로 이번에 고치려는 문제(무관한 결과 노출)이기 때문이다.
@@ -139,7 +139,7 @@ async def draft_query_from_gap(
                 for f in facts
             ]
         )
-    except AllProvidersFailedError as exc:
+    except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
     return JobInfoDraftQueryRead(draft_query=draft_query)

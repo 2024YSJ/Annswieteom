@@ -3,26 +3,35 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8
 export class ApiError extends Error {
   status: number;
   detail: string;
+  /** 서버가 detail을 문자열이 아닌 객체로 내려준 경우의 원본. 에러 코드 하나로는
+   * 부족하고 "무엇이" 문제인지까지 화면에 보여줘야 하는 경우에 쓴다 — 지금은
+   * finalize의 unverified_sentences 하나뿐이다(어떤 문장이 걸렸는지 나열해야 함). */
+  payload: unknown;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, payload: unknown = null) {
     super(detail);
     this.status = status;
     this.detail = detail;
+    this.payload = payload;
   }
 }
 
 async function throwIfError(res: Response): Promise<void> {
   if (res.ok) return;
   let detail = res.statusText;
+  let payload: unknown = null;
   try {
     const body = await res.json();
     if (typeof body?.detail === "string") {
       detail = body.detail;
+    } else if (body?.detail && typeof body.detail === "object") {
+      payload = body.detail;
+      if (typeof body.detail.error === "string") detail = body.detail.error;
     }
   } catch {
     // no JSON body to read the detail from
   }
-  throw new ApiError(res.status, detail);
+  throw new ApiError(res.status, detail, payload);
 }
 
 export interface TokenPair {

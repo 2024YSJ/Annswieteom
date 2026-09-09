@@ -1,4 +1,4 @@
-import type { CategoryType, SessionStatus } from "./api-client";
+import type { CategoryType, SessionRead, SessionStatus } from "./api-client";
 
 /** Phase 2: every status now renders inline on the same `/sessions/{id}`
  * page, so these just gate which section is "active" instead of picking a
@@ -37,3 +37,11 @@ export const CATEGORY_LABELS: Record<CategoryType, string> = {
   travel: "여행",
   other: "기타",
 };
+
+/** 사이드바와 메인 화면의 "이어서 하기" 카드가 같은 라벨을 써야 해서 여기로
+ * 올렸다 — kind에 따라 라벨 표를 고르는 규칙이 두 군데로 갈라지면 한쪽만
+ * 고치는 일이 생긴다. */
+export function sessionStatusLabel(session: SessionRead): string {
+  const labels = session.kind === "job_search" ? JOB_SEARCH_STATUS_LABELS : GAP_FILL_STATUS_LABELS;
+  return labels[session.status] ?? session.status;
+}

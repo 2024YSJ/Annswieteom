@@ -17,20 +17,24 @@ from app.models.session import Session as SessionModel
 from app.schemas.document import (
     CitationRead,
     DocumentRead,
+    DocumentVersionRead,
     EvidenceRead,
+    FinalizeRequest,
     GenerateRequest,
     MoveSentenceRequest,
     ParagraphRead,
     ParagraphUpdate,
     SentenceRead,
     SentenceUpdate,
+    UnverifiedSentenceRead,
 )
 from app.services import document_generator
 from app.services import interview_orchestrator as orchestrator
 from app.services.embedding import get_embedding_provider
 from app.services.embedding.base import EmbeddingProvider
+from app.services.evidence import grade_for
 from app.services.llm.base import LLMProvider
-from app.services.llm.fallback import get_llm_provider
+from app.services.llm import get_llm_provider
 from app.services.record_pipeline.citation import get_fact_citations
 
 router = APIRouter(prefix="/sessions", tags=["document"])
@@ -96,6 +100,9 @@ async def _sentence_read(sentence: GeneratedSentence, db: AsyncSession, fact_cit
         text=sentence.text,
         evidence=evidence,
         consistency_check_passed=sentence.consistency_check_passed,
+        consistency_score=sentence.consistency_score,
+        edited_by_user=sentence.edited_by_user,
+        evidence_grade=grade_for(e.source_type for e in evidence),
     )
 
 
@@ -220,8 +227,16 @@ async def update_sentence(
 
     # 재검증 불필요 — 사용자가 직접 쓴 문장은 그 자체로 이미 "확인됨" 상태다
     # (04_document_generation.md 2절). evidence_fact_ids는 그대로 유지한다.
+    #
+    # 다만 그 True를 "임베딩 정합성 검사를 통과했다"와 같은 배지로 보여주면
+    # 거짓말이 된다 — 예전에는 두 경우가 같은 값으로 뭉개져서, 사용자가 근거와
+    # 무관한 문장으로 고쳐 써도 화면에는 검증 통과 표시가 그대로 남았다.
+    # edited_by_user로 출처를 구분하고, 참고용 점수는 무효화한다(이 문장에 대해
+    # 계산된 적 없는 값이므로 이전 점수를 남겨두면 오해를 부른다).
     sentence.text = payload.text
     sentence.consistency_check_passed = True
+    sentence.edited_by_user = True
+    sentence.consistency_score = None
     await db.commit()
     await db.refresh(sentence)
 
@@ -385,15 +400,76 @@ async def regenerate_sentence(
     return await _sentence_read(sentence, db, fact_citations)
 
 
+@router.get("/{session_id}/documents", response_model=list[DocumentVersionRead])
+async def list_document_versions(
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+) -> list[GeneratedDocument]:
+    """이 세션에서 생성된 문서 버전 목록.
+
+    regenerate는 예전 버전을 지우지 않고 version+1로 새로 쌓아왔는데(9-5절),
+    정작 최신 1건 말고는 꺼내볼 방법이 없어서 사실상 쌓기만 하는 상태였다.
+    톤을 바꿔 재생성해본 뒤 "아까 게 나았다"로 돌아가려면 이 목록이 있어야 한다.
+    """
+    stmt = (
+        select(GeneratedDocument)
+        .where(GeneratedDocument.session_id == session.id)
+        .order_by(GeneratedDocument.version.desc())
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def _unverified_sentences(document: GeneratedDocument, db: AsyncSession) -> list[GeneratedSentence]:
+    stmt = (
+        select(GeneratedSentence)
+        .where(
+            GeneratedSentence.document_id == document.id,
+            GeneratedSentence.consistency_check_passed.is_(False),
+        )
+        .order_by(GeneratedSentence.order_index)
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
 @router.post("/{session_id}/document/finalize", response_model=DocumentRead)
 async def finalize_document(
+    payload: FinalizeRequest = FinalizeRequest(),
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
     fact_citations=Depends(get_fact_citations),
 ) -> DocumentRead:
+    """문서를 FINAL로 확정한다.
+
+    정합성 검사에 걸린 문장이 남아 있으면 기본적으로 막는다(409). 예전에는
+    검사 결과가 화면에 노란 배지로 표시될 뿐 확정도 export도 그대로 통과해서,
+    가드레일이 사실상 아무것도 집행하지 않았다 — "근거와 맞지 않는 문장"이
+    그대로 이력서에 복사돼 나갈 수 있었다.
+
+    사용자가 검토한 뒤에도 그대로 두고 싶다면 acknowledge_unverified=true로
+    다시 호출한다. 판단 자체는 사용자 몫이지만, 모르고 지나칠 수는 없게 한다.
+    """
     document = await _get_latest_document(session.id, db)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document_not_found")
+
+    if not payload.acknowledge_unverified:
+        unverified = await _unverified_sentences(document, db)
+        if unverified:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "unverified_sentences",
+                    "sentences": [
+                        UnverifiedSentenceRead(
+                            id=s.id,
+                            order_index=s.order_index,
+                            text=s.text,
+                            consistency_score=s.consistency_score,
+                        ).model_dump(mode="json")
+                        for s in unverified
+                    ],
+                },
+            )
 
     document.status = "FINAL"
     await db.commit()
@@ -402,13 +478,50 @@ async def finalize_document(
     return await _document_read(document, db, fact_citations)
 
 
+_EXPORT_FORMATS = ("txt", "md")
+
+
+async def _citation_lines(
+    sentences: list[GeneratedSentence], db: AsyncSession, fact_citations
+) -> list[str]:
+    """근거 부록 — 문서에 인용된 기록물의 출처를 URL/게시일과 함께 나열한다.
+
+    export가 문장 텍스트만 뱉던 동안에는, 인터뷰 내내 모은 출처가 복사-붙여넣기
+    한 번에 전부 증발했다. 근거가 결과물까지 살아남지 않으면 근거를 모은 의미가
+    없다. 본문에는 손대지 않고 문서 끝에만 덧붙인다 — 경력기술서 본문에 각주
+    기호가 섞여 들어가면 그대로 갖다 쓸 수 없기 때문이다.
+    """
+    fact_ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    for s in sentences:
+        for fid_str in s.evidence_fact_ids:
+            fid = uuid.UUID(fid_str)
+            if fid not in seen:
+                seen.add(fid)
+                fact_ids.append(fid)
+
+    citations = await fact_citations(fact_ids, db)
+    lines: list[str] = []
+    for fid in fact_ids:
+        citation = citations.get(fid)
+        if citation is None or not citation.source_url:
+            continue
+        fact = await db.get(ConfirmedFact, fid)
+        content = fact.content if fact is not None else ""
+        dated = f" ({citation.published_at})" if citation.published_at else ""
+        lines.append(f"- {content}{dated} — {citation.source_url}")
+    return lines
+
+
 @router.get("/{session_id}/export")
 async def export_document(
     format: str = "txt",
+    citations: bool = False,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
+    fact_citations=Depends(get_fact_citations),
 ) -> PlainTextResponse:
-    if format != "txt":
+    if format not in _EXPORT_FORMATS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported_format")
 
     document = await _get_latest_document(session.id, db)
@@ -449,4 +562,11 @@ async def export_document(
 
     text = "\n\n".join(block_text for _, block_text in blocks)
 
-    return PlainTextResponse(content=text)
+    if citations:
+        lines = await _citation_lines(list(sentences), db, fact_citations)
+        if lines:
+            heading = "## 근거 자료" if format == "md" else "[근거 자료]"
+            text = f"{text}\n\n{heading}\n" + "\n".join(lines)
+
+    media_type = "text/markdown; charset=utf-8" if format == "md" else "text/plain; charset=utf-8"
+    return PlainTextResponse(content=text, media_type=media_type)

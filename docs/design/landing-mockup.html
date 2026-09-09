@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>안 쉬었음 — 랜딩 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<style>
+  /* ── 디자인 토큰 ─────────────────────────────────────────────
+     배경은 순백 고정(다크모드 없음). 면 구분은 색이 아니라 얇은 보더로만
+     하고, 색은 브랜드 레드 하나만 포인트로 쓴다. */
+  :root {
+    --bg:            #ffffff;
+    --ink:           #1a1a18;   /* 제목 */
+    --body:          #4d4842;   /* 본문 */
+    --muted:         #837d74;   /* 보조 라벨 */
+    --line:          #e7e4de;
+    --line-strong:   #d5d1c8;
+    --brand:         #b0202f;
+    --brand-hover:   #8f1826;
+    --brand-soft:    #fdf5f5;   /* 레드 아주 옅은 틴트 — 칩/호버 배경 */
+
+    /* 근거 태그 중 "기록물 인용"에만 쓰는 세이지 그린 — 사용자가 확인한
+       사실과 외부 기록에서 인용한 사실을 색으로 구분한다. */
+    --cite-surface:  #eef4ea;
+    --cite-text:     #3f6027;
+    --cite-border:   #dbe7d3;
+
+    --shadow-sm: 0 1px 3px rgba(26,26,24,.05);
+    --shadow-md: 0 4px 12px rgba(26,26,24,.07);
+    --shadow-lg: 0 10px 28px rgba(26,26,24,.09);
+
+    --r-md: 8px; --r-xl: 16px;
+
+    --font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+            system-ui, "Malgun Gothic", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { color-scheme: light; -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── 상단 바 ───────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 100;
+    height: 64px;
+    background: rgba(255,255,255,.92);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar .wrap { height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+  .brand { display: flex; align-items: center; gap: 8px; transition: opacity .2s; }
+  .brand:hover { opacity: .75; }
+  .brand img { width: 26px; height: 26px; display: block; }
+  .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+  .nav { display: flex; align-items: center; gap: 6px; }
+  .nav-link {
+    padding: 8px 12px; font-size: 14px; font-weight: 600; color: var(--body);
+    border-radius: var(--r-md); transition: color .2s, background .2s;
+  }
+  .nav-link:hover { color: var(--ink); background: #f7f6f4; }
+  .btn-primary {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--brand); color: #fff;
+    border: none; border-radius: var(--r-md);
+    padding: 9px 18px; font-size: 14px; font-weight: 700; font-family: var(--font);
+    cursor: pointer; transition: background .2s, transform .2s, box-shadow .2s;
+    box-shadow: 0 2px 4px rgba(176,32,47,.20);
+  }
+  .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(176,32,47,.26); }
+
+  /* ── 히어로 ────────────────────────────────────────────────── */
+  .hero { text-align: center; padding: 76px 24px 8px; }
+  .eyebrow {
+    display: inline-block; margin-bottom: 18px;
+    padding: 5px 12px; border-radius: 999px;
+    background: var(--brand-soft); border: 1px solid #f0d9db;
+    color: var(--brand); font-size: 12.5px; font-weight: 700; letter-spacing: -.01em;
+  }
+  .hero h1 {
+    font-size: clamp(30px, 5.2vw, 44px); font-weight: 800; line-height: 1.28;
+    letter-spacing: -.03em; text-wrap: balance; margin-bottom: 14px;
+  }
+  .hero p.sub { font-size: 17px; color: var(--body); text-wrap: balance; }
+  .hero p.sub b { color: var(--ink); font-weight: 700; }
+
+  /* ── 두 플로우 카드 (= 히어로의 실제 CTA) ─────────────────────── */
+  .flows { padding: 48px 24px 0; }
+  .flow-grid {
+    max-width: 760px; margin: 0 auto;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  }
+  .flow-wrap { position: relative; }
+  .flow {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+    height: 100%; text-align: left;
+    padding: 24px 22px 20px;
+    background: #fff; border: 1px solid var(--line-strong); border-radius: var(--r-xl);
+    box-shadow: var(--shadow-sm);
+    transition: transform .2s, box-shadow .2s, border-color .2s;
+  }
+  .flow:hover { transform: translateY(-3px); border-color: var(--brand); box-shadow: var(--shadow-lg); }
+  .flow:active { transform: translateY(0); }
+  .flow .icon { font-size: 30px; line-height: 1; margin-bottom: 6px; }
+  .flow .title { font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+  .flow .desc { font-size: 14px; color: var(--body); line-height: 1.55; }
+  .flow .go {
+    margin-top: auto; padding-top: 14px;
+    font-size: 13.5px; font-weight: 700; color: var(--brand);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .flow .go span { transition: transform .2s; }
+  .flow:hover .go span { transform: translateX(3px); }
+
+  /* 레퍼런스의 통통 튀는 말풍선 — 주 진입 카드 하나에만 */
+  .bubble {
+    position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    margin-bottom: 9px; padding: 7px 13px;
+    background: var(--brand); color: #fff; border-radius: 10px;
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(176,32,47,.28);
+    animation: bob 2s ease-in-out infinite;
+  }
+  .bubble::after {
+    content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    border: 6px solid transparent; border-top-color: var(--brand);
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50%      { transform: translateX(-50%) translateY(-4px); }
+  }
+
+  .cta-note { text-align: center; margin-top: 18px; font-size: 13.5px; color: var(--muted); }
+  .cta-note a { color: var(--body); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+
+  /* ── 섹션 공통 ─────────────────────────────────────────────── */
+  .section { padding: 72px 24px 0; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+  .section-head h2 { font-size: 21px; font-weight: 800; letter-spacing: -.02em; display: flex; align-items: center; gap: 8px; }
+  .section-head .aside { font-size: 13px; color: var(--muted); }
+
+  /* ── 예시 결과물 미리보기 ──────────────────────────────────── */
+  .doc {
+    border: 1px solid var(--line-strong); border-radius: var(--r-xl);
+    box-shadow: var(--shadow-md); overflow: hidden; background: #fff;
+  }
+  .doc-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: #fcfbfa;
+  }
+  .doc-title { font-size: 14.5px; font-weight: 700; }
+  .doc-meta { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); letter-spacing: .02em; white-space: nowrap; }
+  .doc-body { padding: 8px 20px 20px; }
+  .star { padding: 18px 0; border-bottom: 1px dashed var(--line); }
+  .star:last-child { border-bottom: none; }
+  .star-label {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    color: var(--brand); letter-spacing: .08em; text-transform: uppercase;
+    display: block; margin-bottom: 7px;
+  }
+  .star p { font-size: 15px; color: var(--ink); line-height: 1.75; }
+  .evidence { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 999px;
+    background: var(--brand-soft); border: 1px solid #f0d9db;
+    font-size: 11.5px; font-weight: 600; color: var(--brand);
+  }
+  .chip::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  .chip-cite { background: var(--cite-surface); border-color: var(--cite-border); color: var(--cite-text); }
+  .doc-foot {
+    padding: 14px 20px; border-top: 1px solid var(--line); background: #fcfbfa;
+    font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 7px;
+  }
+  .doc-foot b { color: var(--body); font-weight: 700; }
+
+  /* ── 푸터 ──────────────────────────────────────────────────── */
+  footer { margin-top: 88px; border-top: 1px solid var(--line); padding: 28px 24px 44px; }
+  footer .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .foot-links { display: flex; gap: 16px; font-size: 13px; color: var(--muted); }
+  .foot-links a:hover { color: var(--body); text-decoration: underline; text-underline-offset: 3px; }
+  .copyright { font-size: 12.5px; color: var(--muted); }
+
+  /* ── 모바일 ────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    body { font-size: 16px; }
+    .wrap { padding: 0 16px; }
+    .hero { padding: 48px 16px 4px; }
+    .hero p.sub { font-size: 15.5px; }
+    .flows { padding: 40px 16px 0; }
+    .flow-grid { grid-template-columns: 1fr; gap: 12px; }
+    .flow { padding: 20px 18px 18px; }
+    .bubble { left: auto; right: 10px; transform: none; animation: bob-m 2s ease-in-out infinite; }
+    .bubble::after { left: auto; right: 18px; transform: none; }
+    @keyframes bob-m { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+    .section { padding: 52px 16px 0; }
+    .section-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .doc-bar, .doc-foot { padding: 12px 16px; }
+    .doc-bar { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .doc-body { padding: 6px 16px 16px; }
+  }
+</style>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="#">
+        <img src="../../frontend/logo/free-icon-no-bed-13322151.png" alt="" />
+        <span class="brand-name">안 쉬었음</span>
+      </a>
+      <nav class="nav">
+        <a class="nav-link" href="#">로그인</a>
+        <button class="btn-primary" type="button">시작하기</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <span class="eyebrow">공백기 정리 · 취업 정보</span>
+      <h1>우리는 쉬지 않았습니다</h1>
+      <p class="sub">공백기라 불린 시간을, <b>근거 있는 커리어 문서</b>로.</p>
+    </section>
+
+    <section class="flows">
+      <div class="flow-grid">
+        <div class="flow-wrap">
+          <div class="bubble">가입 없이 바로 체험</div>
+          <a class="flow" href="#">
+            <span class="icon">✍️</span>
+            <span class="title">공백기 채우기</span>
+            <span class="desc">그동안 한 일을 대화로 짚어보고, 이력서에 그대로 쓸 수 있는 STAR 문장으로 정리해요.</span>
+            <span class="go">시작하기 <span>→</span></span>
+          </a>
+        </div>
+        <div class="flow-wrap">
+          <a class="flow" href="#">
+            <span class="icon">🔎</span>
+            <span class="title">취업 정보 검색</span>
+            <span class="desc">채용행사, 공채 소식, 직업훈련과정, 강소기업까지 대화로 물어보고 한 번에 찾아요.</span>
+            <span class="go">찾아보기 <span>→</span></span>
+          </a>
+        </div>
+      </div>
+      <p class="cta-note">가입 전에 먼저 써보세요 · 만든 문서는 <a href="#">회원가입</a> 후 저장할 수 있어요</p>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>📄 이렇게 만들어집니다</h2>
+          <span class="aside">모든 문장에 근거가 붙습니다</span>
+        </div>
+
+        <article class="doc">
+          <div class="doc-bar">
+            <span class="doc-title">데이터 분석 직무 경력기술서 — 2025.03 ~ 2025.09</span>
+            <span class="doc-meta">TONE: 담백 · v2</span>
+          </div>
+
+          <div class="doc-body">
+            <div class="star">
+              <span class="star-label">Situation</span>
+              <p>퇴사 후 6개월간 데이터 분석 직무로의 전환을 준비하며, 통계와 SQL 기초를 처음부터 다시 쌓아야 하는 상황이었습니다.</p>
+              <div class="evidence">
+                <span class="chip">사용자 확인 · 공백기 6개월</span>
+                <span class="chip">사용자 확인 · 직무 전환 목표</span>
+              </div>
+            </div>
+
+            <div class="star">
+              <span class="star-label">Task</span>
+              <p>실무에서 바로 쓸 수 있는 수준까지 SQL·Python 분석 역량을 끌어올리고, 결과물을 외부에 공개해 검증받는 것을 목표로 삼았습니다.</p>
+              <div class="evidence">
+                <span class="chip">사용자 확인 · 학습 목표</span>
+              </div>
+            </div>
+
+            <div class="star">
+              <span class="star-label">Action</span>
+              <p>매주 공공데이터를 하나씩 골라 분석 노트를 작성해 블로그에 21편을 연재했고, SQLD 자격증을 취득했으며, 스터디 5인의 코드 리뷰를 진행했습니다.</p>
+              <div class="evidence">
+                <span class="chip chip-cite">기록물 인용 · 블로그 21편</span>
+                <span class="chip chip-cite">기록물 인용 · SQLD 합격증</span>
+                <span class="chip">사용자 확인 · 스터디 운영</span>
+              </div>
+            </div>
+
+            <div class="star">
+              <span class="star-label">Result</span>
+              <p>연재 글의 누적 조회수는 1만 2천 회를 넘었고, 마지막 프로젝트는 실제 지원 포트폴리오로 제출해 서류 전형을 통과했습니다.</p>
+              <div class="evidence">
+                <span class="chip chip-cite">기록물 인용 · 블로그 통계</span>
+                <span class="chip">사용자 수정 · 서류 통과</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="doc-foot">
+            🔒 <span><b>없는 경력은 만들지 않습니다.</b> 회원님이 직접 “맞다”고 확인한 사실에만 문장이 붙습니다.</span>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <div class="foot-links">
+        <a href="#">서비스 소개</a>
+        <a href="#">이용약관</a>
+        <a href="#">개인정보처리방침</a>
+        <a href="#">문의하기</a>
+      </div>
+      <span class="copyright">© 2026 안 쉬었음</span>
+    </div>
+  </footer>
+
+</body>
+</html>

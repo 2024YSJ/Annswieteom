@@ -90,9 +90,10 @@ export function JobSearchChatPage({
   }
 
   return (
-    <div style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>
+    // 헤더 높이만큼 뺀 높이 — 세션 대화 화면(app/sessions/[id]/page.tsx)과 동일.
+    <div style={{ height: "calc(100dvh - var(--header-height))", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        <main style={{ maxWidth: 640, margin: "80px auto 24px", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
+        <main style={{ maxWidth: 640, margin: "32px auto 24px", padding: "0 16px", display: "flex", flexDirection: "column", gap: 24 }}>
           {turns.length === 0 && (
             <ChatBubble side="left">
               어떤 취업 정보를 찾아드릴까요? 채용행사, 최근 공채 소식, 채용 기업 정보, 직업훈련과정, 취업 지원 프로그램,
@@ -136,7 +137,7 @@ export function JobSearchChatPage({
             </div>
           )}
 
-          {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
+          {error && <p style={{ color: "var(--danger)", fontSize: 13 }}>{error}</p>}
 
           <div ref={bottomRef} />
         </main>

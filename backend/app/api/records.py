@@ -12,31 +12,30 @@ from app.db.session import get_db
 from app.models.gap_period import GapPeriod
 from app.models.record import Record
 from app.models.session import Session as SessionModel
-from app.schemas.record import BlogRecordCreate, RecordRead, TextRecordCreate
+from app.schemas.record import BlogRecordCreate, RecordRead, TextRecordCreate, UncitedChunkRead
 from app.services import interview_orchestrator as orchestrator
 from app.services.record_pipeline.document_parser import DOCUMENT_EXTENSIONS
 from app.services.record_pipeline.parsers import velog
-from app.services.record_pipeline.pipeline import process_document_record, process_image_record, process_record
+from app.services.record_pipeline.pipeline import process_document_record, process_record
+from app.services.record_pipeline.search import find_uncited_chunks
 from app.services.storage import SupabaseStorage, get_storage
 
 router = APIRouter(prefix="/sessions", tags=["records"])
 
 # 확장자로 판별한다(브라우저가 넘기는 content_type은 .md/.hwp 등에서 신뢰도가 낮음 —
 # 비어있거나 "application/octet-stream"으로 오는 경우가 흔함).
-_ALLOWED_IMAGE_EXTENSIONS = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-}
+#
+# 2026-09-09까지는 이미지(.jpg/.png/.webp)도 받아 Gemini Vision으로 OCR을 돌렸다.
+# Gemini를 제거하면서 대체할 비전 모델이 없어(로컬 Ollama에는 텍스트 모델과 bge-m3만
+# 있다) 이미지 업로드 자체를 없앴다 — 텍스트를 못 뽑으면 청크도 임베딩도 안 생겨서
+# 기록물로서 아무 근거도 되지 못하는데, 받아만 두면 사용자는 근거가 쌓인 줄 안다.
+# 이제 이미지 확장자는 다른 미지원 형식과 똑같이 unsupported_file_type으로 거절된다.
+# models/record.py의 RECORD_TYPES에는 "image"를 남겨뒀다 — 이미 저장된 과거 행들이
+# CHECK 제약에 걸리면 안 되기 때문이고, 새로 만들어지는 경로는 없다.
 
 
 def get_process_record():
     return process_record
-
-
-def get_process_image_record():
-    return process_image_record
 
 
 def get_process_document_record():
@@ -147,10 +146,9 @@ async def upload_file_record(
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
     storage: SupabaseStorage = Depends(get_storage),
-    process_image_record_fn=Depends(get_process_image_record),
     process_document_record_fn=Depends(get_process_document_record),
 ) -> Record:
-    """이미지(OCR) 또는 문서(txt/md/docx/hwp — 텍스트 직접 추출) 하나를 업로드한다.
+    """문서(txt/md/docx/hwp) 하나를 업로드한다 — 텍스트를 직접 추출한다.
     여러 파일을 한 번에 올리는 건 프론트가 파일마다 이 엔드포인트를 반복 호출하는
     방식으로 처리한다(create_blog_record의 velog 목록 가져오기와 같은 패턴 — 파일
     하나가 실패해도 나머지에 영향이 없다).
@@ -159,14 +157,12 @@ async def upload_file_record(
 
     filename = file.filename or ""
     extension = Path(filename).suffix.lower()
-    is_image = extension in _ALLOWED_IMAGE_EXTENSIONS
-    is_document = extension in DOCUMENT_EXTENSIONS
-    if not is_image and not is_document:
+    if extension not in DOCUMENT_EXTENSIONS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported_file_type")
 
     content = await file.read()
-    record_type = "image" if is_image else "document"
-    content_type = _ALLOWED_IMAGE_EXTENSIONS[extension] if is_image else "application/octet-stream"
+    record_type = "document"
+    content_type = "application/octet-stream"
 
     record = Record(
         id=uuid.uuid4(),
@@ -184,8 +180,31 @@ async def upload_file_record(
     await db.commit()
     await db.refresh(record)
 
-    background_tasks.add_task(process_image_record_fn if is_image else process_document_record_fn, record.id)
+    background_tasks.add_task(process_document_record_fn, record.id)
     return record
+
+
+@router.get("/{session_id}/records/uncited", response_model=list[UncitedChunkRead])
+async def list_uncited_chunks(
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+) -> list[UncitedChunkRead]:
+    """올렸지만 한 번도 근거로 쓰이지 않은 기록물 조각.
+
+    채팅창이 구조적으로 던질 수 없는 질문이 여기서 나온다 — "이 글을 올리셨는데
+    아직 아무 이야기에도 안 쓰였어요, 여기 넣을 만한 내용이 있을까요?" 대화형
+    LLM은 사용자가 붙여넣은 것 중 무엇을 아직 안 썼는지 추적하지 못한다.
+    인용은 confirmed_facts.source_record_chunk_id에, 조각은 record_chunks에
+    각각 남아 있으므로 뺄셈으로 정확히 구할 수 있다.
+
+    라우트 순서 주의: `/{record_id}`보다 먼저 선언해야 "uncited"가 UUID로
+    파싱되려다 422로 떨어지지 않는다.
+    """
+    excerpts = await find_uncited_chunks(session.id, db)
+    return [
+        UncitedChunkRead(chunk_id=e.chunk_id, text=e.text, published_at=e.published_at)
+        for e in excerpts
+    ]
 
 
 @router.get("/{session_id}/records/{record_id}", response_model=RecordRead)
