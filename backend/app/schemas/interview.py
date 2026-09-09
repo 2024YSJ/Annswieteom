@@ -55,6 +55,10 @@ class CategorySuggestionRead(BaseModel):
 
 class CategoryExtractRead(BaseModel):
     suggestions: list[CategorySuggestionRead]
+    #: suggestions가 비었을 때만 채워진다. "잘 모르겠어" 같은 답에 같은 질문을
+    #: 되풀이하는 대신 AI가 구체적인 갈래를 짚어 되묻는 문장이다. LLM을 못 쓰면
+    #: None이고, 그때 프론트는 정적 예시 안내로 돌아간다.
+    followup_question: str | None = None
 
 
 class StatusRead(BaseModel):

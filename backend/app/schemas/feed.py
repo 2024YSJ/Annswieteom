@@ -58,3 +58,29 @@ class FeedRead(BaseModel):
     #: 돌기 때문에 최초 1회는 구조적으로 items가 빈 채로 나간다.
     is_warming: bool
     refreshed_at: datetime | None
+
+
+class FeedSourceStatusRead(BaseModel):
+    """`GET /feed/sources` 한 줄 — 소스별 설정/수집 상태.
+
+    2026-09-09에 "피드에 정보가 안 나온다"는 제보를 받고 원인을 찾는 데
+    프로덕션 API를 직접 호출해야 했다. 키가 없는 소스는 의도적으로 조용히
+    빠지는데(승인 대기 중인 키 때문에 배너가 뜨면 안 되므로), 그 대가로 밖에서
+    "설정 안 됨"과 "호출 실패"를 구분할 방법이 없었다. 이 엔드포인트가 그
+    구분을 URL 하나로 만든다.
+
+    **`configured=false`인 소스도 목록에 포함한다.** 빠진 소스가 아예 안 보이면
+    "설정 안 됨"과 "그런 소스가 없음"이 또 구분되지 않는다.
+    """
+
+    source: str
+    source_label: str
+    category: str
+    category_label: str
+    source_key: str
+    configured: bool
+    last_succeeded_at: datetime | None
+    last_failed_at: datetime | None
+    last_error: str | None
+    item_count: int
+    active_item_count: int

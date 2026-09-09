@@ -110,6 +110,7 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 | `GET /api/v1/feed/policies` | 익명 허용 | `coalesce(source_published_at, first_seen_at)` desc |
 | `GET /api/v1/feed/jobs` | 익명 허용 | `first_seen_at` desc |
 | `GET /api/v1/feed/jobs/recommended` | 인증 필요(게스트 포함) | 코사인, 불가 시 최신순 |
+| `GET /api/v1/feed/sources` | 인증 필요 | 정렬 없음 — 소스별 설정/수집 상태(진단용) |
 
 - 파라미터: `limit`(1~50, 기본 20), `offset`(≥0), `category`. `api/profile.py`가 세운 선례를 따른다.
 - 정렬에는 항상 `FeedItem.id` 타이브레이커를 붙인다 — 한 수집 배치는 `first_seen_at`이 마이크로초까지 같아서, 없으면 페이지가 조용히 겹치고 새어나간다.
@@ -130,6 +131,7 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 ## 범위 밖 / 후속
 
 - `JobInfoResult.source_key`(`eventNo`/`empSeqno`) — 병합 후 1순위.
+- ~~`GET /feed/sources`~~ — 2026-09-09 추가했다. 처음엔 "자를 순서 1번"으로 잘랐는데, 실제로 피드가 비었을 때 원인을 못 찾아 프로덕션 API를 손으로 쳐야 했다.
 - ivfflat 인덱스 — 수백 행 규모에서는 seq scan이 더 빠르다. 데이터가 쌓이면 init 마이그레이션과 같은 raw SQL 형태로 추가.
 - 프론트 연동 전체(`lib/api/feed.ts`, 메인 화면 섹션). ⚠️ `app/page.tsx`가 **세션이 1개 이상인 로그인 사용자를 곧바로 최근 세션으로 리다이렉트**한다 — 즉 프로필이 쌓인 바로 그 사용자가 랜딩을 못 본다. 피드를 어디에 놓을지부터 정해야 한다.
 - `GET /feed/*`는 이 앱 최초의 무인증 데이터 엔드포인트다. `limit ≤ 50` 인덱스 조회에 공개 데이터뿐이라 괜찮다고 판단했지만, 실수가 아니라 결정이었음을 남겨둔다.

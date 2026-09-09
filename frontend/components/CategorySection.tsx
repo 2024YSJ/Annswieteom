@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/error-messages";
 import { CATEGORY_LABELS } from "@/lib/session-routes";
 import { queryKeys } from "@/lib/query-keys";
 import { ChatBubble } from "@/components/ChatBubble";
+import { TypingDots } from "@/components/TypingDots";
 import type { ComposerEvent } from "@/components/ChatComposer";
 
 interface SuggestionRow extends CategoryInput {
@@ -38,6 +39,8 @@ export function CategorySection({
   // 추출을 한 번이라도 끝냈는지. suggestions가 빈 것만으로는 "아직 안 보냈다"와
   // "보냈는데 못 찾았다"를 구분할 수 없다.
   const [hasExtracted, setHasExtracted] = useState(false);
+  // AI가 되묻는 질문. 활동을 하나도 못 찾았을 때만 서버가 채워준다.
+  const [followupQuestion, setFollowupQuestion] = useState<string | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -56,11 +59,16 @@ export function CategorySection({
       setHasExtracted(false);
       setIsExtracting(true);
       try {
-        const { suggestions: found } = await sessionApi.extractCategories(sessionId, text, accessToken);
+        const { suggestions: found, followup_question: followup } = await sessionApi.extractCategories(
+          sessionId,
+          text,
+          accessToken,
+        );
         if (highestNonceRef.current !== nonce) return; // a newer request already resolved
         // Replaces the previous list rather than accumulating — sending a
         // new message re-extracts from scratch.
         setSuggestions(found.map((s) => ({ ...s, localId: `${nextLocalId++}` })));
+        setFollowupQuestion(followup ?? null);
         setHasExtracted(true);
       } catch (err) {
         if (highestNonceRef.current !== nonce) return;
@@ -130,7 +138,13 @@ export function CategorySection({
 
       {sentText && <ChatBubble side="right">{sentText}</ChatBubble>}
 
-      {isExtracting && <ChatBubble side="left">찾는 중...</ChatBubble>}
+      {/* 마운트/언마운트 지점은 그대로 두고 내용물만 바꾼다 — 아래 두 분기가
+          !isExtracting으로 물려 있어서 지점을 옮기면 교체 타이밍이 달라진다. */}
+      {isExtracting && (
+        <ChatBubble side="left">
+          <TypingDots label="활동을 찾고 있어요" />
+        </ChatBubble>
+      )}
 
       {/* "잘 모르겠어" 같은 답변에는 백엔드가 정상 200으로 빈 배열을 준다
           (프롬프트가 "못 찾겠으면 빈 배열"이라고 지시한다 — LLM은 설계대로
@@ -140,13 +154,23 @@ export function CategorySection({
       {hasExtracted && suggestions.length === 0 && !isExtracting && (
         <ChatBubble side="left">
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <span aria-live="polite">
-              구체적인 활동이 잘 안 잡혔어요. 예를 들어 <b>편의점 알바</b>, <b>자격증 공부</b>, <b>운동</b>,
-              <b> 가족 돌봄</b>처럼 적어주시면 카테고리를 찾아드릴게요.
-            </span>
-            <span style={{ fontSize: 13, color: "var(--muted-text)" }}>
-              푹 쉬었거나 특별한 활동이 없었어도 괜찮아요 — 그것도 하나의 활동으로 적을 수 있어요.
-            </span>
+            {/* AI가 되묻는 질문이 오면 그걸 쓴다. "잘 모르겠어"에 같은 질문을
+                되풀이하면 사용자는 똑같이 막히므로, 구체적인 갈래를 콕 집어
+                물어보게 했다(2026-09-09 요청). LLM을 못 쓰면 followup이 null로
+                오고, 그때는 아래 정적 예시로 자동으로 되돌아간다. */}
+            {followupQuestion ? (
+              <span aria-live="polite">{followupQuestion}</span>
+            ) : (
+              <>
+                <span aria-live="polite">
+                  구체적인 활동이 잘 안 잡혔어요. 예를 들어 <b>편의점 알바</b>, <b>자격증 공부</b>, <b>운동</b>,
+                  <b> 가족 돌봄</b>처럼 적어주시면 카테고리를 찾아드릴게요.
+                </span>
+                <span style={{ fontSize: 13, color: "var(--muted-text)" }}>
+                  푹 쉬었거나 특별한 활동이 없었어도 괜찮아요 — 그것도 하나의 활동으로 적을 수 있어요.
+                </span>
+              </>
+            )}
             <button type="button" onClick={addManualSuggestion} style={{ alignSelf: "flex-start" }}>
               직접 입력할게요
             </button>
