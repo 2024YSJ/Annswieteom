@@ -30,6 +30,7 @@ from app.services.embedding import get_embedding_provider
 from app.services.feed.ingest import get_feed_refresher
 from app.services.feed.profile_adapter import get_profile_embedder
 from app.services.llm.base import (
+    LLMUnavailableError,
     BasedOn,
     CategorySuggestion,
     DraftDocument,
@@ -108,6 +109,7 @@ class FakeLLMProvider:
         job_info_query_params=None,
         draft_job_info_query: str | None = None,
         activity_period=None,
+        probe_question: str | None = None,
     ):
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
@@ -124,6 +126,11 @@ class FakeLLMProvider:
         self._draft_job_info_query = draft_job_info_query
         # 기본 None = "기간을 알 수 없다" — 커버리지를 다루는 테스트만 명시적으로 준다.
         self._activity_period = activity_period
+        # 기본 None = "되묻는 질문을 못 만들었다" — 라우터가 그걸 정적 예시
+        # 폴백으로 처리하는지 확인하는 게 기본 경로다.
+        self._probe_question = probe_question
+        self.probe_question_calls: list[str] = []
+        self.probe_focus_calls: list[str] = []
         self.activity_period_calls: list[str] = []
         self.job_info_query_calls: list[str] = []
         self.select_relevant_calls: list[tuple] = []
@@ -205,6 +212,13 @@ class FakeLLMProvider:
     async def extract_activity_period(self, category_label, facts, gap_start, gap_end):
         self.activity_period_calls.append(category_label)
         return self._activity_period
+
+    async def probe_activity_question(self, free_text, gap_start, gap_end, focus):
+        self.probe_question_calls.append(free_text)
+        self.probe_focus_calls.append(focus)
+        if self._probe_question is None:
+            raise LLMUnavailableError("fake: no probe question configured")
+        return self._probe_question
 
     async def extract_period(self, free_text, today):
         self.period_calls.append(free_text)

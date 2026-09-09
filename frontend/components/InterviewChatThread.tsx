@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ActivityCategoryRead, BasedOnRead, ConfirmedFactRead, FactCandidateRead } from "@/lib/api-client";
 import { CATEGORY_LABELS } from "@/lib/session-routes";
 import { ChatBubble } from "@/components/ChatBubble";
+import { TypingDots } from "@/components/TypingDots";
 
 /** One answer can be split into several confirmed facts (extract_facts found
  * more than one thing in it) — grouping consecutive facts that share the same
@@ -133,7 +134,7 @@ export function InterviewChatThread({
 
               {isWaitingForAnswer && (
                 <ChatBubble side="left">
-                  <span style={{ color: "var(--muted-text)" }}>답변을 정리하고 있어요...</span>
+                  <TypingDots label="답변을 정리하고 있어요" />
                 </ChatBubble>
               )}
 

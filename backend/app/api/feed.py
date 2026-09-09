@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_current_user_optional
 from app.db.session import get_db
 from app.models.feed_item import FEED_CATEGORIES, FEED_KIND_BY_CATEGORY, FeedItem
+from app.models.feed_refresh_state import FeedRefreshState
 from app.models.user import User
-from app.schemas.feed import FeedItemRead, FeedRead
+from app.schemas.feed import FeedItemRead, FeedRead, FeedSourceStatusRead
 from app.services.feed.ingest import (
     feed_is_empty,
     get_feed_refresher,
@@ -21,7 +23,7 @@ from app.services.feed.profile_adapter import (
     profile_needs_refresh,
 )
 from app.services.feed.ranking import get_feed_ranker
-from app.services.feed.sources import FEED_CATEGORY_LABELS, FEED_SOURCE_LABELS
+from app.services.feed.sources import FEED_CATEGORY_LABELS, FEED_SOURCE_LABELS, all_sources
 
 # /me는 api/profile.py(문답 아카이브)가 점유했고, 무엇보다 피드는 로그아웃
 # 방문자에게도 떠야 한다 — /me/* 는 정의상 인증이 필요하므로 최상위 /feed에 둔다.
@@ -201,3 +203,52 @@ async def list_recommended_job_feed(
         feed_kind="job", category=None, limit=limit, offset=offset,
         profile_vector=vector, fallback_reason=fallback_reason,
     )
+
+
+@router.get("/sources", response_model=list[FeedSourceStatusRead])
+async def list_feed_sources(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[FeedSourceStatusRead]:
+    """소스별 설정/수집 상태. 인증 필요 — 외부 API 설정 상태를 익명에 노출하지 않는다.
+
+    피드가 비어 보일 때 "키가 안 들어갔다"와 "호출이 실패한다"를 구분하기 위한
+    진단용이다. `configured_sources()`가 아니라 `all_sources()`를 도는 게
+    핵심이다 — 조용히 빠진 소스가 목록에서도 사라지면 진단이 안 된다.
+    """
+    states = {
+        row.source_key: row
+        for row in (await db.execute(select(FeedRefreshState))).scalars().all()
+    }
+    counts = {
+        (source, category): total
+        for source, category, total in (
+            await db.execute(
+                select(FeedItem.source, FeedItem.category, func.count(FeedItem.id))
+                .where(FeedItem.is_active.is_(True))
+                .group_by(FeedItem.source, FeedItem.category)
+            )
+        ).all()
+    }
+
+    rows: list[FeedSourceStatusRead] = []
+    for source in all_sources():
+        for category in source.categories:
+            key = f"{source.name}:{category}"
+            state = states.get(key)
+            rows.append(
+                FeedSourceStatusRead(
+                    source=source.name,
+                    source_label=FEED_SOURCE_LABELS.get(source.name, source.name),
+                    category=category,
+                    category_label=FEED_CATEGORY_LABELS.get(category, category),
+                    source_key=key,
+                    configured=source.is_category_configured(category),
+                    last_succeeded_at=state.last_succeeded_at if state else None,
+                    last_failed_at=state.last_failed_at if state else None,
+                    last_error=state.last_error if state else None,
+                    item_count=state.item_count if state else 0,
+                    active_item_count=counts.get((source.name, category), 0),
+                )
+            )
+    return rows
