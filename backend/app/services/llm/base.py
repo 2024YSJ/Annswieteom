@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol, runtime_checkable
 
+# 프로바이더 메서드는 호출 시점에 두 샘플링 모드 중 하나를 반드시 명시한다 —
+# 기본값을 두지 않는 게 핵심이고, 새 메서드를 추가할 때 "이건 판단인가 생성인가"를
+# 한 번 결정하게 만든다. 분류/추출/판단은 같은 입력에 같은 답이 나와야 하는데,
+# 지정하지 않으면 모델 기본값(~0.7)이 걸려 회차마다 답이 달라진다(devlog 19).
+TEMPERATURE_DETERMINISTIC = 0.0
+# 초안/문서 생성처럼 표현의 다양성이 바람직한 호출. 대부분 모델의 기본값과
+# 맞춰 둬서, 온도를 명시하는 이 변경이 생성 계열의 동작을 바꾸지 않게 했다.
+TEMPERATURE_CREATIVE = 0.7
+
 
 @dataclass
 class RecordExcerpt:
@@ -164,6 +173,23 @@ class JobInfoCandidate:
     meta_lines: list[str] = field(default_factory=list)
 
 
+@dataclass
+class JobInfoQueryParams:
+    """사용자 질문에서 뽑아낸 조회 조건 — 워크넷 호출에 그대로 실린다.
+
+    예전에는 이런 게 아예 없어서, 카테고리(=엔드포인트)만 고르고 조회는
+    전국 첫 20건을 무조건 받아왔다. "경기 북부 백엔드"라고 물어도 후보에
+    강원/경남 과정이 들어오니 관련성 판단이 아무리 정확해도 건질 게 없었다
+    (devlog 20).
+
+    같은 차원에 값이 여러 개 올 수 있어("서울이나 경기") 전부 리스트다 —
+    API는 파라미터 하나에 값 하나만 받으므로(콤마는 0건, 반복 파라미터는 첫
+    값만 적용) 값마다 호출을 쪼개는 건 조회 계층이 담당한다.
+    """
+    regions: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+
+
 class LLMUnavailableError(Exception):
     """로컬 Ollama에 요청을 보낼 수 없거나, 보냈는데 쓸 수 없는 응답이 온 경우.
 
@@ -197,6 +223,7 @@ class LLMProvider(Protocol):
         self, category_label: str, facts: list[ConfirmedFact], gap_start: date, gap_end: date
     ) -> PeriodSuggestion | None: ...
     async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]: ...
+    async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams: ...
     async def select_relevant_job_info_results(
         self, query: str, category_label: str, candidates: list[JobInfoCandidate]
     ) -> list[int]: ...

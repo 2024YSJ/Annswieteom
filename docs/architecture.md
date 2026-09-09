@@ -195,8 +195,8 @@ classDiagram
 | `feed/profile_adapter.py` | `interview_answers`를 읽는 **유일한 지점**(계약은 파일 상단) | `read_profile_signal()`, `refresh_profile_embedding()`, `get_profile_embedder()` |
 | `feed/ranking.py` | 코사인 정렬, 실패 시 최신순 | `rank_feed_items()`, `get_feed_ranker()` |
 | `storage.py` | Supabase Storage(비공개 버킷) 래퍼 | `SupabaseStorage`(upload/download/delete/create_signed_url), `get_storage()` |
-| `llm/base.py` | LLM 프로바이더 계약 | `LLMProvider`(Protocol), `InterviewContext`, `Suggestion`, `DraftDocument` 등 dataclass |
-| `llm/local_ollama.py` | 로컬 Ollama 어댑터 | `LocalOllamaProvider` |
+| `llm/base.py` | LLM 프로바이더 계약 + 샘플링 모드 상수 | `LLMProvider`(Protocol), `InterviewContext`, `Suggestion`, `DraftDocument` 등 dataclass, `JobInfoQueryParams`, `LLMUnavailableError`, `TEMPERATURE_DETERMINISTIC`/`TEMPERATURE_CREATIVE` |
+| `llm/local_ollama.py` | 로컬 Ollama 어댑터(유일한 프로바이더) | `LocalOllamaProvider`, `_NUM_CTX` |
 | `llm/__init__.py` | DI 훅 | `get_llm_provider()` |
 | `embedding/base.py` | 임베딩 프로바이더 계약 | `EmbeddingProvider`(Protocol) |
 | `embedding/local_ollama_embedding.py` | bge-m3 임베딩 어댑터 | `LocalOllamaEmbedding` |
@@ -207,6 +207,8 @@ classDiagram
 | `record_pipeline/chunker.py` | 텍스트 청크 분할 | `chunk_text()` |
 | `record_pipeline/citation.py` | 근거 인용 정보(출처 URL/발행일) 조회 | `resolve_fact_citation()`, `get_fact_citation()`(DI 훅) |
 | `record_pipeline/search.py` | 카테고리 라벨로 의미 검색 | `search_relevant_chunks()`, `get_chunk_search()`(DI 훅) |
+| `job_pipeline/job_info_client.py` | 워크넷/고용24 6개 카테고리 조회 + 조건별 호출 분할·병합 | `JobInfoClient.search()`, `search_training_courses()`, `WorknetApiError`, `get_job_info_client()`(DI 훅) |
+| `job_pipeline/regions.py` | 지역명 → 워크넷 지역 코드(실호출로 검증한 표) | `RegionFilter`, `resolve_region_filters()`, `KNOWN_REGION_NAMES` |
 
 ### `core/`
 
@@ -286,6 +288,9 @@ graph LR
 - **임베딩 실패는 데이터 손실이 아니라 정렬 품질 저하로만 나타나야 한다**: Gemini를 제거한 뒤 임베딩 경로는 로컬 bge-m3 하나뿐이라 터널이 끊기면 100% 실패한다. 그래서 벡터 컬럼은 nullable이고, 항목은 임베딩 전에 커밋되며, 다음 수집이 빈 벡터를 backfill한다. 조회는 벡터가 없으면 최신순으로 내려간다.
 - **`Vector` 컬럼은 1:1 곁테이블에 둔다**: pgvector는 SQLite 컴파일러가 없어서, 벡터를 본체 테이블에 얹으면 그 테이블을 쓰는 API를 `tests/api/conftest.py`에서 아예 생성할 수 없다. `feed_items`/`feed_item_embeddings`가 이 규칙을 따르고, `record_chunks`가 테스트하기 까다로운 이유도 같다. 대가는 조인 하나와 코사인 정렬 자체가 CI 미검증으로 남는 것이다.
 - **목록 페이지네이션은 `limit`/`offset` + `Query(ge=, le=)`**: `api/profile.py`가 세운 선례를 `api/feed.py`가 따른다. 커서 방식을 새로 만들지 않는다. 정렬에는 항상 결정적 2차 키(`id`)를 붙인다 — 한 수집 배치는 타임스탬프가 같아서 없으면 페이지가 겹치고 새어나간다.
+- **fan-out은 싼 계층에서만 한다**: 워크넷 조회는 순수 HTTP라 동시에 던져도 카테고리당 0.2~1.2초에 끝나지만, 로컬 Ollama는 요청을 직렬 처리하므로 LLM 호출을 동시에 던지면 뒤쪽 호출이 큐에서 자기 타임아웃을 다 쓰고 죽는다(6개 중 5개 실패를 실측, devlog 20). 그래서 조회는 `asyncio.gather`로, LLM 판단은 순차 + 전체 시간 예산으로 돌린다. 새로 LLM 호출을 카테고리/항목마다 추가하려 한다면 먼저 호출 수가 상수인지 확인한다.
+- **조건은 사후 필터링이 아니라 조회 질의로 넘긴다**: 워크넷 API는 지역/키워드 필터를 지원하므로, 전국 목록을 받아 LLM에게 걸러내게 하지 않고 질문에서 뽑은 조건을 API에 실어 보낸다. 같은 파라미터에 값을 여러 개 넣는 건 불가능하고(콤마는 0건, 반복 파라미터는 첫 값만 적용), 잘못된 코드도 에러가 아니라 조용한 0건이라 코드 변환은 `regions.py`의 검증된 표만 쓴다.
+- **LLM 프로바이더 메서드는 샘플링 모드를 명시한다**: 프로바이더에 새 메서드를 추가하면 `_generate`/`_call`에 `TEMPERATURE_DETERMINISTIC`(분류·추출·판단) 또는 `TEMPERATURE_CREATIVE`(초안·문서 생성) 중 하나를 반드시 넘겨야 한다 — 기본값을 두지 않은 건 그 결정을 강제하려는 의도다. 지정하지 않으면 모델 기본값(~0.7)이 걸려 같은 입력에 회차마다 다른 답이 나온다(devlog 19에서 실측).
 - **`api/X.py` ↔ `schemas/X.py` 1:1**: 새 라우터를 추가하면 그 스키마도 같은 이름의 새 파일에 둔다. 기존 파일에 끼워 넣지 않는다.
 - **라우터 간 직접 import 금지**: 두 라우터가 같은 헬퍼가 필요하면 그 헬퍼는 `models/`나 `services/`로 옮긴다(모델에 대한 순수 함수라면 그 모델의 property/method로).
 

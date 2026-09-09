@@ -105,6 +105,7 @@ class FakeLLMProvider:
         activity_items: list[list[str]] | None = None,
         job_info_categories: list["JobInfoCategoryQuery"] | None = None,
         job_info_relevant_indices: list[int] | None = None,
+        job_info_query_params=None,
         draft_job_info_query: str | None = None,
         activity_period=None,
     ):
@@ -119,12 +120,14 @@ class FakeLLMProvider:
         self._activity_items_queue = list(activity_items) if activity_items else None
         self._job_info_categories = job_info_categories
         self._job_info_relevant_indices = job_info_relevant_indices
+        self._job_info_query_params = job_info_query_params
         self._draft_job_info_query = draft_job_info_query
         # 기본 None = "기간을 알 수 없다" — 커버리지를 다루는 테스트만 명시적으로 준다.
         self._activity_period = activity_period
         self.activity_period_calls: list[str] = []
         self.job_info_query_calls: list[str] = []
         self.select_relevant_calls: list[tuple] = []
+        self.extract_query_params_calls: list[tuple] = []
         self.draft_job_info_query_calls: list[list] = []
         self.activity_items_calls: list[tuple[str, str]] = []
         self.extract_facts_calls: list[tuple[str, str, str]] = []
@@ -214,6 +217,16 @@ class FakeLLMProvider:
         if self._job_info_categories is not None:
             return self._job_info_categories
         return []
+
+    async def extract_job_info_query_params(self, query, known_regions):
+        from app.services.llm.base import JobInfoQueryParams
+
+        self.extract_query_params_calls.append((query, known_regions))
+        if self._job_info_query_params is not None:
+            return self._job_info_query_params
+        # 기본값은 "조건 없음" — 카테고리 라우팅/집계만 보는 테스트가 이걸
+        # 일일이 설정하지 않아도 되게 한다(조건 없이 조회하던 예전 동작과 동일).
+        return JobInfoQueryParams()
 
     async def select_relevant_job_info_results(self, query, category_label, candidates):
         self.select_relevant_calls.append((query, category_label, candidates))

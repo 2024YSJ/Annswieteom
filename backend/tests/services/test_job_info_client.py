@@ -4,7 +4,8 @@ import httpx
 import pytest
 
 from app.services.job_pipeline import job_info_client as jic
-from app.services.job_pipeline.job_info_client import WorknetApiError
+from app.services.job_pipeline.job_info_client import JobInfoResult, WorknetApiError
+from app.services.llm.base import JobInfoQueryParams
 
 # 실제로 관찰된 오류 응답 두 형태(2026-09-08) — 정상 응답과 구분하려면 둘 다
 # 정확히 잡아내야 한다.
@@ -151,3 +152,134 @@ async def test_search_training_courses_continues_when_one_endpoint_fails(monkeyp
 
     results = await jic.search_training_courses()
     assert len(results) == 3
+
+
+# --- 조회 조건을 실어 보내는 경로 (devlog 20) ---
+#
+# 예전에는 조건을 넘길 수단이 없어 전국 첫 20건을 무조건 받아왔다. 그래서
+# "경기 북부 백엔드"라고 물어도 후보에 강원/경남 과정이 들어오니 관련성
+# 판단이 아무리 정확해도 건질 게 없었다.
+
+
+def test_no_params_means_one_unfiltered_combo():
+    assert jic._training_combos(None) == [(None, None)]
+    assert jic._training_combos(JobInfoQueryParams()) == [(None, None)]
+
+
+def test_each_same_dimension_value_becomes_its_own_combo():
+    # 같은 파라미터에 값을 여러 개 넣는 건 API가 지원하지 않는다 — 콤마는 0건,
+    # 반복 파라미터는 첫 값만 적용된다(실측).
+    combos = jic._training_combos(JobInfoQueryParams(regions=["서울", "부산"], keywords=["자바"]))
+
+    assert [(r.area1, k) for r, k in combos] == [("11", "자바"), ("26", "자바")]
+
+
+def test_keywords_without_a_region_still_produce_one_combo_each():
+    combos = jic._training_combos(JobInfoQueryParams(keywords=["자바", "디자인"]))
+
+    assert [(r, k) for r, k in combos] == [(None, "자바"), (None, "디자인")]
+
+
+def test_combo_count_is_capped():
+    # 조합 하나가 엔드포인트 4개 호출이 되므로 상한이 없으면 호출이 폭발한다.
+    combos = jic._training_combos(JobInfoQueryParams(regions=["서울", "부산", "대구"], keywords=["자바", "디자인"]))
+
+    assert len(combos) <= jic._MAX_TRAINING_COMBOS
+
+
+@pytest.mark.asyncio
+async def test_filters_are_passed_through_to_every_endpoint(monkeypatch):
+    calls: list[tuple] = []
+
+    async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
+        calls.append((label, region.area1 if region else None, keyword))
+        # 확대 임계값을 넘길 만큼 돌려줘서 이 테스트가 통과 경로만 보게 한다.
+        return [JobInfoResult(title=f"{label} 과정 {i}", subtitle=label, meta_lines=[]) for i in range(5)]
+
+    monkeypatch.setattr(jic, "_search_one_training_endpoint", fake_endpoint)
+
+    results = await jic.search_training_courses(JobInfoQueryParams(regions=["경기 북부"], keywords=["자바"]))
+
+    # 엔드포인트 4개 × 조합 1개, 결과가 넉넉하니 확대 없이 끝난다.
+    assert len(calls) == 4
+    assert {c[1] for c in calls} == {"41"}
+    assert {c[2] for c in calls} == {"자바"}
+    assert len(results) == 20
+
+
+@pytest.mark.asyncio
+async def test_too_few_results_widens_by_dropping_the_keyword_but_keeps_the_region(monkeypatch):
+    # 실측(devlog 20): "경기 북부 + 자바/웹 개발"은 2건이었는데 지역만으로는
+    # 4건이었다 — 과정명에 그 키워드가 없는 IT 과정이 통째로 빠진 것이다.
+    # 지역은 사용자가 명시한 조건이라 유지하고 키워드만 뗀다.
+    calls: list[tuple] = []
+
+    async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
+        calls.append((region.area1 if region else None, keyword))
+        if keyword is not None:
+            return [JobInfoResult(title="키워드로 찾은 과정", subtitle=label, meta_lines=[])]
+        return [JobInfoResult(title=f"지역만으로 찾은 과정 {label}", subtitle=label, meta_lines=[])]
+
+    monkeypatch.setattr(jic, "_search_one_training_endpoint", fake_endpoint)
+
+    results = await jic.search_training_courses(JobInfoQueryParams(regions=["경기 북부"], keywords=["자바"]))
+
+    assert ("41", "자바") in calls, "먼저 키워드까지 걸고 시도해야 한다"
+    assert ("41", None) in calls, "결과가 적으면 키워드만 떼고 넓혀야 한다"
+    assert (None, None) not in calls, "지역은 사용자가 말한 조건이라 유지해야 한다"
+    titles = {r.title for r in results}
+    assert "키워드로 찾은 과정" in titles
+    assert any(t.startswith("지역만으로 찾은 과정") for t in titles)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_courses_across_combos_are_merged(monkeypatch):
+    async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
+        # 조합이 달라도 같은 과정이 걸려 나오는 상황.
+        return [JobInfoResult(title="같은 과정", subtitle="국민내일배움카드 · 고양", meta_lines=[])]
+
+    monkeypatch.setattr(jic, "_search_one_training_endpoint", fake_endpoint)
+
+    results = await jic.search_training_courses(JobInfoQueryParams(regions=["서울", "부산"]))
+
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_zero_filtered_results_falls_back_to_an_unfiltered_fetch(monkeypatch):
+    # 워크넷은 유효하지 않은 코드에도 에러가 아니라 빈 목록을 준다(실측: 광주
+    # 29는 두 엔드포인트 모두 0건) — "코드가 틀렸다"와 "그 지역에 과정이 없다"를
+    # 구분할 수 없으니, 조용히 빈 화면을 주는 대신 넓혀서 다시 받아온다.
+    attempts: list[tuple] = []
+
+    async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
+        attempts.append((region.area1 if region else None, keyword))
+        if region is not None or keyword is not None:
+            return []
+        return [JobInfoResult(title="조건 없이 찾은 과정", subtitle=label, meta_lines=[])]
+
+    monkeypatch.setattr(jic, "_search_one_training_endpoint", fake_endpoint)
+
+    results = await jic.search_training_courses(JobInfoQueryParams(regions=["광주"], keywords=["자바"]))
+
+    assert [a for a in attempts if a != (None, None)], "먼저 조건을 걸고 시도해야 한다"
+    assert (None, None) in attempts, "그래도 0건이면 조건을 다 떼고 재시도해야 한다"
+    assert len(results) == 4
+    assert results[0].title == "조건 없이 찾은 과정"
+
+
+@pytest.mark.asyncio
+async def test_unfiltered_search_does_not_retry(monkeypatch):
+    # 애초에 조건이 없었으면 재시도할 게 없다 — 같은 호출을 두 번 하지 않는다.
+    attempts: list[tuple] = []
+
+    async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
+        attempts.append((region, keyword))
+        return []
+
+    monkeypatch.setattr(jic, "_search_one_training_endpoint", fake_endpoint)
+
+    results = await jic.search_training_courses(None)
+
+    assert results == []
+    assert len(attempts) == 4  # 엔드포인트 4개, 재시도 없음

@@ -260,7 +260,7 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <SessionGroup
             title="공백기 채우기"
-            newLabel="+ 공백기 채우기"
+            newLabel="공백기 채우기 새로 만들기"
             onNew={() => handleNewSession("gap_fill")}
             isCreating={isCreating}
             sessions={gapFillSessions}
@@ -269,7 +269,7 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
           />
           <SessionGroup
             title="취업 정보 검색"
-            newLabel="+ 취업 정보 검색"
+            newLabel="취업 정보 검색 새로 만들기"
             onNew={() => handleNewSession("job_search")}
             isCreating={isCreating}
             sessions={jobSearchSessions}
@@ -316,12 +316,37 @@ function SessionGroup({
 }) {
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <h2 style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted-text)", margin: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        {/* 220px 고정 폭 사이드바에서는 타이틀과 버튼 라벨을 모두 온전히 담을 수 없어,
+            보호가 없으면 한글 타이틀이 글자 단위로 접힌다. 버튼은 "+"만 남기고
+            전체 의미는 title/aria-label로 넘긴다. aria-label은 접근성상 필수다 —
+            없으면 스크린 리더가 이 버튼을 그냥 "+"로 읽는다(e2e도 이 이름으로 찾는다).
+            타이포그래피(11px/700/letter-spacing)는 디자인 시스템 값을 유지한다. */}
+        <h2
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: "0.06em",
+            color: "var(--muted-text)",
+            margin: 0,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
           {title}
         </h2>
-        <button type="button" onClick={onNew} disabled={isCreating} title={newLabel} style={{ fontSize: 11.5, padding: "5px 9px" }}>
-          {isCreating ? "..." : newLabel}
+        <button
+          type="button"
+          onClick={onNew}
+          disabled={isCreating}
+          title={newLabel}
+          aria-label={newLabel}
+          style={{ flexShrink: 0, fontSize: 11.5, padding: "5px 9px" }}
+        >
+          {isCreating ? "..." : "+"}
         </button>
       </div>
       {sessions.length === 0 ? (

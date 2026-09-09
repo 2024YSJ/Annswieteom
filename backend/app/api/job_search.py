@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -19,7 +20,8 @@ from app.schemas.job_search import (
     JobInfoResultRead,
 )
 from app.services.job_pipeline.job_info_client import CATEGORY_LABELS, JobInfoClient, WorknetApiError, get_job_info_client
-from app.services.llm.base import LLMUnavailableError, JobInfoCandidate, LLMProvider
+from app.services.job_pipeline.regions import KNOWN_REGION_NAMES
+from app.services.llm.base import JobInfoCandidate, LLMProvider, LLMUnavailableError
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
 from app.services.llm import get_llm_provider
 
@@ -33,6 +35,19 @@ _CLARIFICATION_QUESTION = (
 # 관련 있다고 판단된 항목이 너무 많아도(예: 훈련과정 4개 엔드포인트 합쳐서
 # 40건 중 30건이 관련) 카드가 끝없이 늘어지지 않도록 화면에 보여줄 상한.
 _MAX_RESULTS_PER_CATEGORY = 8
+
+# 분류가 6개를 다 고르는 일이 실제로 흔하다("백엔드 개발자, 경기 북부"가 그렇다)
+# — 카테고리마다 관련성 판단 LLM 호출이 하나씩 붙으므로 상한을 두지 않으면
+# 질문 한 번이 LLM 호출 7회가 된다. 분류 프롬프트가 관련성 높은 순으로
+# 내놓으므로 앞에서부터 자른다.
+_MAX_CATEGORIES_PER_QUERY = 3
+
+# 질문 하나가 쓸 수 있는 전체 시간 예산. 예산을 넘기면 남은 카테고리는
+# skipped로 넘기고 그때까지 모인 결과만 돌려준다 — 무한정 기다리다 화면이
+# 멈추는 것보다 부분 결과가 낫다. 이 값은 로컬 3b + 후보 20건 기준으로
+# 관련성 판단 1회가 ~37초 걸리는 현실에 맞춘 잠정치다(devlog 20 실측).
+# 조회에 검색 조건이 실려 후보 수가 줄면 훨씬 내려갈 수 있다.
+_QUERY_BUDGET_SECONDS = 90.0
 
 
 def _require_job_search(session: SessionModel) -> None:
@@ -68,41 +83,83 @@ async def query_job_info(
     if not category_queries:
         return JobInfoQueryRead(categories=[], clarification_question=_CLARIFICATION_QUESTION)
 
-    async def _search_category(category: str) -> JobInfoCategoryResultRead | None:
-        label = CATEGORY_LABELS[category]
+    selected_categories = [cq.category for cq in category_queries][:_MAX_CATEGORIES_PER_QUERY]
+
+    # 조회에 실을 검색 조건(지역/직무 키워드)을 뽑는다. 이게 없던 동안에는
+    # 카테고리(=엔드포인트)만 맞게 고르고 조회는 전국 첫 20건을 무조건
+    # 받아왔다 — "경기 북부 백엔드"라고 물어도 후보에 강원/경남 과정이
+    # 들어오니 관련성 판단이 아무리 정확해도 건질 게 없었다(devlog 20).
+    try:
+        query_params = await llm.extract_job_info_query_params(payload.query, list(KNOWN_REGION_NAMES))
+    except LLMUnavailableError:
+        # 조건 추출이 실패하면 조건 없이라도 조회한다 — 예전 동작으로
+        # 퇴화할 뿐이고, 질문 전체를 실패시키는 것보다 낫다.
+        query_params = None
+
+    # 워크넷 조회는 병렬로 던진다 — 순수 HTTP라 실제로 동시에 처리되고
+    # 카테고리당 0.2~1.2초로 끝난다.
+    async def _fetch(category: str) -> list | None:
         try:
-            raw_results = await job_client.search(category)
+            return await job_client.search(category, query_params)
         except WorknetApiError:
             # 이 카테고리만 실패 처리하고 나머지는 계속 보여준다 — 카테고리
             # 하나가 승인 대기/오류라고 질문 전체가 실패로 보이면 안 된다.
             return None
 
+    fetched = await asyncio.gather(*[_fetch(category) for category in selected_categories])
+
+    # 관련성 판단은 반대로 순차 처리한다. 로컬 Ollama는 요청을 직렬로 처리하니
+    # 동시에 던지면 뒤쪽 호출들이 큐에서 기다리는 동안 자기 타임아웃을 다 써버린다
+    # — 6개를 asyncio.gather로 던졌을 때 1개만 성공하고 5개가 45초 타임아웃으로
+    # 죽는 걸 실측했다(devlog 20). 즉 fan-out은 싼 쪽(HTTP)에서만 하고 비싼
+    # 쪽(LLM)에서는 하지 않는다.
+    deadline = time.monotonic() + _QUERY_BUDGET_SECONDS
+    categories: list[JobInfoCategoryResultRead] = []
+    skipped: list[str] = []
+
+    for category, raw_results in zip(selected_categories, fetched):
+        label = CATEGORY_LABELS[category]
+        if raw_results is None:
+            skipped.append(label)
+            continue
         if not raw_results:
-            return JobInfoCategoryResultRead(category=category, category_label=label, results=[])
+            categories.append(JobInfoCategoryResultRead(category=category, category_label=label, results=[]))
+            continue
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            skipped.append(label)
+            continue
 
         candidates = [
             JobInfoCandidate(index=i, title=r.title, subtitle=r.subtitle, meta_lines=r.meta_lines)
             for i, r in enumerate(raw_results)
         ]
         try:
-            relevant_indices = await llm.select_relevant_job_info_results(payload.query, label, candidates)
-        except LLMUnavailableError:
+            async with asyncio.timeout(remaining):
+                relevant_indices = await llm.select_relevant_job_info_results(payload.query, label, candidates)
+        # TimeoutError를 계속 같이 잡는다. LLMUnavailableError가 프로바이더 쪽
+        # httpx 타임아웃을 이미 흡수하지만, 여기 asyncio.timeout(remaining)은
+        # 그 바깥에서 도는 전체 예산 타이머라 여전히 맨 TimeoutError를 던진다
+        # — 이걸 빼면 큐에 밀린 호출이 예산을 태울 때 라우트가 500으로 죽는다.
+        except (LLMUnavailableError, TimeoutError):
             # 원본 목록은 받아왔지만 관련성 판단이 안 되면, 걸러지지 않은
             # 목록을 그대로 보여주느니 이 카테고리를 빼는 쪽이 낫다 — 그게
-            # 바로 이번에 고치려는 문제(무관한 결과 노출)이기 때문이다.
-            return None
+            # 바로 devlog 18에서 고친 문제(무관한 결과 노출)이기 때문이다.
+            # 다만 예전처럼 조용히 버리지 않고 무엇이 빠졌는지 알려준다.
+            skipped.append(label)
+            continue
 
         selected = [raw_results[i] for i in relevant_indices][:_MAX_RESULTS_PER_CATEGORY]
-        return JobInfoCategoryResultRead(
-            category=category,
-            category_label=label,
-            results=[JobInfoResultRead(**r.__dict__) for r in selected],
+        categories.append(
+            JobInfoCategoryResultRead(
+                category=category,
+                category_label=label,
+                results=[JobInfoResultRead(**r.__dict__) for r in selected],
+            )
         )
 
-    searched = await asyncio.gather(*[_search_category(cq.category) for cq in category_queries])
-    categories = [c for c in searched if c is not None]
-
-    return JobInfoQueryRead(categories=categories, clarification_question=None)
+    return JobInfoQueryRead(categories=categories, clarification_question=None, skipped_category_labels=skipped)
 
 
 @router.post("/{session_id}/job-search/draft-query-from-gap", response_model=JobInfoDraftQueryRead)

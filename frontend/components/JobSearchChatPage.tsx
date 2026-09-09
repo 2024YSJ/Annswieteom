@@ -12,6 +12,7 @@ interface Turn {
   query: string;
   categories: JobInfoCategoryResultRead[];
   clarificationQuestion: string | null;
+  skippedCategoryLabels: string[];
 }
 
 /** kind="job_search" 세션 전용 — 취업 정보 종합 검색(devlog 16). 이전
@@ -44,6 +45,9 @@ export function JobSearchChatPage({
   // 있음) 컴포저에 미리 채울 첫 질문 초안을 한 번 받아온다 — AI가 쓰고
   // 사용자가 확인/수정/그대로 전송하는, 이 앱 전반의 "AI 초안" 원칙 그대로다.
   const [prefillText, setPrefillText] = useState<string | null>(null);
+  // 실패한 질문을 붙잡아 둔다 — 시간 초과가 나면 사용자가 질문을 처음부터
+  // 다시 타이핑하는 게 아니라 그대로 재시도할 수 있어야 한다.
+  const [failedQuery, setFailedQuery] = useState<string | null>(null);
   const hasFetchedDraftRef = useRef(false);
   // 로컬 LLM 분류 호출이 수십 초씩 걸릴 수 있는데(이 프로젝트에서 반복 확인된
   // 제약) 그동안 화면에 아무 표시가 없으면 "사이트가 멈췄다"처럼 보인다 —
@@ -69,24 +73,35 @@ export function JobSearchChatPage({
       .catch(() => {});
   }, [linkedGapSessionId, sessionId, accessToken]);
 
-  async function handleSend(event: ComposerEvent) {
-    if (event.kind !== "text") return;
+  async function runQuery(queryText: string) {
     setError(null);
     setPrefillText(null);
-    setPendingQuery(event.value);
+    setPendingQuery(queryText);
     setIsSubmitting(true);
     try {
-      const result = await jobSearchApi.query(sessionId, event.value, accessToken!);
+      const result = await jobSearchApi.query(sessionId, queryText, accessToken!);
       setTurns((prev) => [
         ...prev,
-        { query: event.value, categories: result.categories, clarificationQuestion: result.clarification_question },
+        {
+          query: queryText,
+          categories: result.categories,
+          clarificationQuestion: result.clarification_question,
+          skippedCategoryLabels: result.skipped_category_labels ?? [],
+        },
       ]);
     } catch (err) {
       setError(errorMessage(err));
+      setFailedQuery(queryText); // 재시도 버튼이 같은 질문을 다시 보낼 수 있게
     } finally {
       setIsSubmitting(false);
       setPendingQuery(null);
     }
+  }
+
+  async function handleSend(event: ComposerEvent) {
+    if (event.kind !== "text") return;
+    setFailedQuery(null);
+    await runQuery(event.value);
   }
 
   return (
@@ -108,22 +123,39 @@ export function JobSearchChatPage({
               {turn.clarificationQuestion ? (
                 <ChatBubble side="left">{turn.clarificationQuestion}</ChatBubble>
               ) : (
-                turn.categories.map((category) => (
-                  <div key={category.category} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted-text)" }}>{category.category_label}</div>
-                    {category.results.length === 0 ? (
-                      <ChatBubble side="left">조건에 맞는 {category.category_label} 정보를 찾지 못했어요.</ChatBubble>
-                    ) : (
-                      <ChatBubble side="left" variant="card">
-                        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                          {category.results.map((r, ri) => (
-                            <JobInfoResultCard key={ri} result={r} />
-                          ))}
-                        </div>
-                      </ChatBubble>
-                    )}
-                  </div>
-                ))
+                <>
+                  {turn.categories.map((category) => (
+                    <div key={category.category} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted-text)" }}>{category.category_label}</div>
+                      {category.results.length === 0 ? (
+                        <ChatBubble side="left">조건에 맞는 {category.category_label} 정보를 찾지 못했어요.</ChatBubble>
+                      ) : (
+                        <ChatBubble side="left" variant="card">
+                          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                            {category.results.map((r, ri) => (
+                              <JobInfoResultCard key={ri} result={r} />
+                            ))}
+                          </div>
+                        </ChatBubble>
+                      )}
+                    </div>
+                  ))}
+
+                  {/* 카테고리가 하나도 안 남으면 예전엔 사용자 말풍선만 남고
+                      AI 쪽에는 아무것도 안 그려졌다 — 한 턴에 최소 한 개의
+                      응답 말풍선은 반드시 나와야 한다(devlog 20). */}
+                  {turn.categories.length === 0 && turn.skippedCategoryLabels.length === 0 && (
+                    <ChatBubble side="left">
+                      조건에 맞는 정보를 찾지 못했어요. 지역이나 직무를 조금 더 구체적으로 적어서 다시 물어봐 주세요.
+                    </ChatBubble>
+                  )}
+
+                  {turn.skippedCategoryLabels.length > 0 && (
+                    <ChatBubble side="left">
+                      {turn.skippedCategoryLabels.join(", ")} 정보는 이번에 가져오지 못했어요. 다시 물어보시면 재시도합니다.
+                    </ChatBubble>
+                  )}
+                </>
               )}
             </div>
           ))}
@@ -137,7 +169,19 @@ export function JobSearchChatPage({
             </div>
           )}
 
-          {error && <p style={{ color: "var(--danger)", fontSize: 13 }}>{error}</p>}
+          {error && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {/* 색은 디자인 시스템 토큰을 쓴다(하드코딩 crimson 아님) — 재시도 버튼은
+                  일자리 찾기 쪽에서 추가한 것으로, 조회가 실패했을 때 사용자가 질문을
+                  다시 타이핑하지 않아도 되게 한다. */}
+              <p style={{ color: "var(--danger)", fontSize: 13, margin: 0 }}>{error}</p>
+              {failedQuery && (
+                <button type="button" onClick={() => runQuery(failedQuery)} disabled={isSubmitting} style={{ fontSize: 12 }}>
+                  다시 시도
+                </button>
+              )}
+            </div>
+          )}
 
           <div ref={bottomRef} />
         </main>
