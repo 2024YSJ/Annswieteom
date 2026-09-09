@@ -42,17 +42,38 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 |---|---|---|---|
 | 워크넷/고용24 | job_fair, public_recruitment, public_recruitment_company, promising_sme | job | 동작 |
 | 워크넷/고용24 | training_course, job_seeker_program | **policy** | 동작 |
-| 온통청년 | youth_policy | policy | **인증키 미발급 — 조용히 스킵 중** |
+| 온통청년 | youth_policy | policy | **동작**(2026-09-09 인증키 발급, 30건 수집 확인) |
 
 **훈련과정과 구직자취업역량강화프로그램을 `policy`로 보낸 게 이 표에서 가장 중요한 두 줄이다.** 온통청년 키가 9/16까지 안 나와도 지원 정책 섹션이 비지 않는다. 실측으로 정책 피드 59건이 채워지는 것을 확인했다.
 
-### 온통청년 — 확인된 것 / 확인 안 된 것
+### 온통청년 — 2026-09-09 실 인증키로 확정
 
-**확인됨**: 엔드포인트 `https://www.youthcenter.go.kr/opi/youthPlcyList.do`, 파라미터 `openApiVlak`/`pageIndex`/`display`, 응답 XML, 회원가입 후 [마이페이지 - OPEN API]에서 신청해 **담당자 승인** 후 발급(워크넷과 같은 사람 심사 게이트).
+문서에서 유추해 써뒀던 내용은 **대부분 틀렸다.** 실측으로 확정한 것:
 
-**확인 안 됨 — 확정된 것처럼 코딩하지 말 것**: 응답 엘리먼트/필드 이름 전부, 안정적인 정책 id의 존재 여부, 오류 응답 형태, 등록일 필드.
+| 항목 | 유추했던 값 | 실제 |
+|---|---|---|
+| 엔드포인트 | `/opi/youthPlcyList.do` | **`/go/ythip/getPlcy`** — 옛 경로는 같은 호스트인데 이 경로만 연결이 타임아웃된다(죽어 있다) |
+| 파라미터 | `openApiVlak`/`pageIndex`/`display` | **`apiKeyNm`/`pageNum`/`pageSize`/`rtnType`** |
+| 응답 포맷 | XML | **JSON** (`rtnType=xml`도 되지만 JSON을 쓴다) |
+| 오류 표시 | `<errMsg>` 등 | **HTTP 200 + 본문 `resultCode`** (워크넷과 같은 계열의 함정) |
+| 정책 id | 있는지 불명 | **`plcyNo` 있음** — 안정적인 중복 제거 키 |
+| 등록일 | 불명 | **`frstRegDt`**, `"2026-09-08 09:13:11"` 형태(YYYYMMDD 아님) |
 
-그래서 `_parse_policy_items()`가 후보 태그를 여러 개 시도하는 형태이고 파서 테스트는 `xfail`이다. **실 키가 나오면 첫 작업은 `curl`로 진짜 응답을 받아 테스트 상수로 붙여넣고 후보 목록을 정답 하나로 줄이는 것이다.** devlog 15에서 코드값을 짐작했다가 겪은 실패를 반복하지 않는다.
+응답 항목당 필드 60개. 실제로 쓰는 매핑:
+
+- 제목 `plcyNm` / 주관기관 `sprvsnInstCdNm` / 운영기관 `operInstCdNm`
+- 분류 `lclsfNm`·`mclsfNm` / 지원내용 `plcySprtCn`(없으면 `plcyExplnCn`)
+- 신청기간 `aplyYmd`(상시모집이면 비어 있고, 그때는 `bizPrdBgngYmd~bizPrdEndYmd`로 갈음)
+- 상세 URL `aplyUrlAddr`(없으면 `refUrlAddr1`)
+
+**API가 이미 등록 최신순으로 돌려준다**(실측 확인). 전체 2751건이라 앞쪽 30건만 받는다.
+
+**분류로 걸러내지 않는다.** 대분류는 일자리 / 교육･직업훈련 / 금융･복지･문화 /
+참여･기반 / 주거 다섯 가지이고 취업 관련은 절반쯤이다. 그래도 전부 받는 이유는
+섹션 이름이 "취업 정책"이 아니라 "청년 지원 정책"이고, 공백기 청년에게 월세·금융
+지원도 실제로 쓸모가 있기 때문이다. 대신 분류를 `meta_lines` 첫 줄에 실어 카드에서
+바로 구분되게 했다. 취업 관련만 보이길 원하면 `lclsfNm`으로 거르면 되고, 그건
+제품 결정이다.
 
 ## 수집·갱신 (stale-while-revalidate)
 
@@ -109,7 +130,6 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 ## 범위 밖 / 후속
 
 - `JobInfoResult.source_key`(`eventNo`/`empSeqno`) — 병합 후 1순위.
-- 온통청년 실연동.
 - ivfflat 인덱스 — 수백 행 규모에서는 seq scan이 더 빠르다. 데이터가 쌓이면 init 마이그레이션과 같은 raw SQL 형태로 추가.
 - 프론트 연동 전체(`lib/api/feed.ts`, 메인 화면 섹션). ⚠️ `app/page.tsx`가 **세션이 1개 이상인 로그인 사용자를 곧바로 최근 세션으로 리다이렉트**한다 — 즉 프로필이 쌓인 바로 그 사용자가 랜딩을 못 본다. 피드를 어디에 놓을지부터 정해야 한다.
 - `GET /feed/*`는 이 앱 최초의 무인증 데이터 엔드포인트다. `limit ≤ 50` 인덱스 조회에 공개 데이터뿐이라 괜찮다고 판단했지만, 실수가 아니라 결정이었음을 남겨둔다.
