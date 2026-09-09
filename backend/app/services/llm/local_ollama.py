@@ -21,6 +21,7 @@ from app.services.llm.base import (
     JOB_INFO_CATEGORIES,
     JobInfoCandidate,
     JobInfoCategoryQuery,
+    JobInfoQueryParams,
     ParagraphDraft,
     PeriodSuggestion,
     ProviderUnavailableError,
@@ -239,6 +240,20 @@ class LocalOllamaProvider:
                 if c in JOB_INFO_CATEGORIES  # hallucinated category name -> drop, don't guess
             ]
         except (json.JSONDecodeError, KeyError) as exc:
+            raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams:
+        prompt = _render("extract_job_info_query_params.jinja", query=query, known_regions=known_regions)
+        response_text = await self._generate(prompt, timeout=45.0, temperature=TEMPERATURE_DETERMINISTIC)
+        try:
+            data = json.loads(response_text)
+            # 알 수 없는 지역명은 조회 계층에서 걸러지지만, 여기서도 문자열만
+            # 남겨 리스트 안에 dict/숫자가 섞여 들어오는 걸 막는다.
+            return JobInfoQueryParams(
+                regions=[str(r) for r in data.get("regions", []) if isinstance(r, str) and r.strip()],
+                keywords=[str(k) for k in data.get("keywords", []) if isinstance(k, str) and k.strip()],
+            )
+        except (json.JSONDecodeError, AttributeError, TypeError) as exc:
             raise ProviderUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def select_relevant_job_info_results(

@@ -125,6 +125,52 @@ async def test_select_relevant_non_iterable_indices_raises_provider_unavailable(
 
 
 @pytest.mark.asyncio
+async def test_extract_query_params_keeps_only_strings(ollama_calls):
+    # 리스트 안에 dict/숫자가 섞여 오면 지역 변환에서 터지므로 여기서 걸러낸다.
+    _, canned = ollama_calls
+    canned["content"] = json.dumps(
+        {"regions": ["경기 북부", "", 41, {"name": "서울"}], "keywords": ["자바", None, "웹 개발"]}
+    )
+
+    params = await LocalOllamaProvider().extract_job_info_query_params("질문", ["경기 북부", "서울"])
+
+    assert params.regions == ["경기 북부"]
+    assert params.keywords == ["자바", "웹 개발"]
+
+
+@pytest.mark.asyncio
+async def test_extract_query_params_tolerates_missing_keys(ollama_calls):
+    # 조건이 없는 질문("요즘 공채 뜬 거 있어?")이면 키가 아예 빠져 올 수 있다 —
+    # 그건 실패가 아니라 "조건 없음"이라 조건 없이 조회하면 된다.
+    _, canned = ollama_calls
+    canned["content"] = json.dumps({})
+
+    params = await LocalOllamaProvider().extract_job_info_query_params("질문", [])
+
+    assert params.regions == []
+    assert params.keywords == []
+
+
+@pytest.mark.asyncio
+async def test_extract_query_params_uses_deterministic_temperature(ollama_calls):
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps({"regions": [], "keywords": []})
+
+    await LocalOllamaProvider().extract_job_info_query_params("질문", [])
+
+    assert calls[0]["options"]["temperature"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_extract_query_params_malformed_json_raises_provider_unavailable(ollama_calls):
+    _, canned = ollama_calls
+    canned["content"] = "경기 북부에서 자바 과정을 찾으시는군요"
+
+    with pytest.raises(ProviderUnavailableError):
+        await LocalOllamaProvider().extract_job_info_query_params("질문", [])
+
+
+@pytest.mark.asyncio
 async def test_classify_drops_hallucinated_category_names(ollama_calls):
     _, canned = ollama_calls
     canned["content"] = json.dumps({"categories": ["training_course", "job_board", "잡페어"]})

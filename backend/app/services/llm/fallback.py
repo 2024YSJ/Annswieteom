@@ -14,6 +14,7 @@ from app.services.llm.base import (
     InterviewContext,
     JobInfoCandidate,
     JobInfoCategoryQuery,
+    JobInfoQueryParams,
     LLMProvider,
     PeriodSuggestion,
     ProviderUnavailableError,
@@ -154,6 +155,14 @@ class FallbackProvider:
                 return await provider.classify_job_info_query(query)
             except (TimeoutError, ProviderUnavailableError) as exc:
                 self._log_failure("classify_job_info_query", provider, exc)
+        raise AllProvidersFailedError()
+
+    async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams:
+        for provider in self.providers:
+            try:
+                return await provider.extract_job_info_query_params(query, known_regions)
+            except (TimeoutError, ProviderUnavailableError) as exc:
+                self._log_failure("extract_job_info_query_params", provider, exc)
         raise AllProvidersFailedError()
 
     async def select_relevant_job_info_results(

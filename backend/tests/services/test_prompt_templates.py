@@ -88,6 +88,25 @@ def test_select_relevant_prompt_ends_with_output_format():
     assert rendered.rstrip().endswith('{ "relevant_indices": [번호, 번호, ...] }')
 
 
+def test_query_params_prompt_lists_only_recognized_region_names():
+    # 목록 밖의 지역명을 LLM이 만들면 코드 변환에서 조용히 버려지므로, 인식
+    # 가능한 어휘를 프롬프트에 그대로 보여주고 그 안에서만 고르게 한다.
+    from app.services.job_pipeline.regions import KNOWN_REGION_NAMES
+
+    rendered = _render(
+        "extract_job_info_query_params.jinja",
+        query="경기 북부에서 자바 과정 있어?",
+        known_regions=list(KNOWN_REGION_NAMES),
+    )
+
+    assert "경기 북부" in rendered
+    assert "수도권" in rendered
+    for name in KNOWN_REGION_NAMES:
+        assert name in rendered
+    # 검색으로 좁힐 수 없는 조건을 넣으라고 시키면 안 된다.
+    assert "급여" in rendered  # "넣지 마라"는 지시가 남아 있는지
+
+
 def test_classify_prompt_mentions_every_job_info_category():
     # 카테고리를 코드에 추가했는데 프롬프트에 안 적으면 LLM이 그걸 고를 수 없다.
     rendered = _render("classify_job_info_query.jinja", query="이직 준비 도움될 거 있어?")

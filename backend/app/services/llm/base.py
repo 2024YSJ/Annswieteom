@@ -139,6 +139,23 @@ class JobInfoCandidate:
     meta_lines: list[str] = field(default_factory=list)
 
 
+@dataclass
+class JobInfoQueryParams:
+    """사용자 질문에서 뽑아낸 조회 조건 — 워크넷 호출에 그대로 실린다.
+
+    예전에는 이런 게 아예 없어서, 카테고리(=엔드포인트)만 고르고 조회는
+    전국 첫 20건을 무조건 받아왔다. "경기 북부 백엔드"라고 물어도 후보에
+    강원/경남 과정이 들어오니 관련성 판단이 아무리 정확해도 건질 게 없었다
+    (devlog 20).
+
+    같은 차원에 값이 여러 개 올 수 있어("서울이나 경기") 전부 리스트다 —
+    API는 파라미터 하나에 값 하나만 받으므로(콤마는 0건, 반복 파라미터는 첫
+    값만 적용) 값마다 호출을 쪼개는 건 조회 계층이 담당한다.
+    """
+    regions: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+
+
 class ProviderUnavailableError(Exception):
     pass
 
@@ -163,6 +180,7 @@ class LLMProvider(Protocol):
     ) -> list[CategorySuggestion]: ...
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None: ...
     async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]: ...
+    async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams: ...
     async def select_relevant_job_info_results(
         self, query: str, category_label: str, candidates: list[JobInfoCandidate]
     ) -> list[int]: ...
