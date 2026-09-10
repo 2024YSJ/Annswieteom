@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { feedApi, type FeedItemRead, type FeedRead } from "@/lib/api-client";
@@ -71,12 +73,15 @@ export function FeedSection({
   icon,
   aside,
   accessToken,
+  action,
   limit = 6,
 }: {
   scope: FeedScope;
   title: string;
   icon: string;
   aside?: string;
+  /** 섹션 헤더 오른쪽 액션(예: "맞춤 정보 수정"). aside 대신 쓰인다. */
+  action?: ReactNode;
   /** `recommended`는 로그인 필수. 나머지는 없어도 되고, 있으면 그대로 실어 보낸다. */
   accessToken: string | null;
   limit?: number;
@@ -110,7 +115,7 @@ export function FeedSection({
             <span aria-hidden>{icon}</span> {title}
             {data?.personalized && <span className="feed-badge">맞춤</span>}
           </h2>
-          {aside && <span className="section-aside">{aside}</span>}
+          {action ?? (aside && <span className="section-aside">{aside}</span>)}
         </div>
 
         {notice && !suppressed && (

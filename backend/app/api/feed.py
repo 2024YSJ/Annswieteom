@@ -18,8 +18,8 @@ from app.services.feed.ingest import (
 )
 from app.services.feed.profile_adapter import (
     get_profile_embedder,
+    has_profile_input,
     load_profile_vector,
-    profile_counters,
     profile_needs_refresh,
 )
 from app.services.feed.ranking import get_feed_ranker
@@ -183,14 +183,18 @@ async def list_recommended_job_feed(
     # 잡혔지만 프로덕션에서도 벡터 차원 불일치 등으로 같은 경로를 탈 수 있다.
     user_id = current_user.id
 
-    answer_count, _ = await profile_counters(db, user_id)
-    vector = await load_profile_vector(db, user_id) if answer_count else None
+    # 문답이든 직접 쓴 희망사항이든, 개인화에 쓸 재료가 하나라도 있으면 켠다.
+    # 예전엔 문답 개수만 셌는데, 그러면 "맞춤 정보"만 적어둔 사용자가 영영
+    # 개인화되지 않는다 — 인터뷰를 아직 안 한 사람에게 조종간을 주려고 만든
+    # 기능이므로 그게 바로 이 기능이 필요한 사람이다.
+    has_input = await has_profile_input(db, user_id)
+    vector = await load_profile_vector(db, user_id) if has_input else None
 
-    if answer_count and await profile_needs_refresh(db, user_id):
+    if has_input and await profile_needs_refresh(db, user_id):
         background_tasks.add_task(profile_embedder, user_id)
 
     fallback_reason = None
-    if answer_count == 0:
+    if not has_input:
         fallback_reason = "no_profile"
     elif vector is None:
         # 문답은 있는데 벡터가 아직 없다 = 방금 계산을 예약한 상태. 문답을

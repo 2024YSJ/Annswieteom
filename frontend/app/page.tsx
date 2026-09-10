@@ -134,14 +134,43 @@ export default function Home() {
 
       {/* 맞춤 공고는 로그인 사용자에게만. 프로필이 없어도 오류가 아니라 최신순 +
        * 안내로 내려오므로(FeedSection 참고) 세션 유무로는 가리지 않는다. */}
-      {user && (
+      {user ? (
         <FeedSection
           scope="recommended"
           icon="🎯"
           title="맞춤 공고"
-          aside="문답 기록에 맞춰 정렬해요"
           accessToken={accessToken}
+          // 정렬이 마음에 안 들 때 바로 고치러 갈 수 있어야 한다 — 헤더 링크만
+          // 있으면 "맞춤 정보를 고치는 곳"으로 읽히지 않았다(2026-09-10 피드백).
+          // 게스트는 /archive가 회원가입 안내만 보여주므로 그리로 바로 보낸다.
+          action={
+            user.is_guest ? (
+              <Link href="/register" className="section-aside">
+                회원가입하고 맞춤 정보 설정하기 →
+              </Link>
+            ) : (
+              <Link href="/archive" className="section-aside">
+                맞춤 정보 수정 →
+              </Link>
+            )
+          }
         />
+      ) : (
+        /* 로그아웃 방문자에게도 이 기능이 있다는 걸 알린다 — 안 보이면
+           존재 자체를 모른다. */
+        <section className="landing-section">
+          <div className="landing-wrap">
+            <div className="section-head">
+              <h2>
+                <span aria-hidden>🎯</span> 맞춤 공고
+              </h2>
+            </div>
+            <p className="feed-notice">
+              로그인하고 어떤 일을 찾고 있는지 적어두시면, 그 내용에 맞는 공고를 골라 여기에
+              올려드려요. <Link href="/register">회원가입</Link> · <Link href="/login">로그인</Link>
+            </p>
+          </div>
+        </section>
       )}
 
       <FeedSection scope="jobs" icon="🧭" title="최신 공고" aside="워크넷에서 모아왔어요" accessToken={accessToken} />

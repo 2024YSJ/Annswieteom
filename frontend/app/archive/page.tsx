@@ -8,6 +8,7 @@ import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
 import { useAuth } from "@/lib/auth-context";
 import { LoadingNotice } from "@/components/LoadingNotice";
+import { PreferenceEditor } from "@/components/PreferenceEditor";
 
 /** 계정에 쌓인 문답 기록.
  *
@@ -110,9 +111,10 @@ export default function ArchivePage() {
   if (!user) {
     return (
       <main style={PAGE_STYLE}>
-        <h1>내 문답 기록</h1>
+        <h1>맞춤 정보</h1>
         <p style={{ color: "var(--body-text)" }}>
-          로그인하면 지금까지의 문답 기록을 볼 수 있어요. <Link href="/login">로그인하기</Link>
+          로그인하면 어떤 일을 찾고 있는지 적어두고, 지금까지의 문답 기록도 보실 수 있어요.{" "}
+          <Link href="/login">로그인하기</Link> · <Link href="/register">회원가입</Link>
         </p>
       </main>
     );
@@ -121,10 +123,10 @@ export default function ArchivePage() {
   if (user.is_guest) {
     return (
       <main style={PAGE_STYLE}>
-        <h1>내 문답 기록</h1>
+        <h1>맞춤 정보</h1>
         <p style={{ color: "var(--body-text)" }}>
-          문답 기록은 이메일로 회원가입한 계정에 쌓여요. 지금 가입하면 비회원으로 남긴 답변도
-          그대로 이어집니다. <Link href="/register">회원가입하기</Link>
+          맞춤 정보와 문답 기록은 이메일로 회원가입한 계정에 쌓여요. 지금 가입하면 비회원으로 남긴
+          답변도 그대로 이어집니다. <Link href="/register">회원가입하기</Link>
         </p>
       </main>
     );
@@ -133,9 +135,10 @@ export default function ArchivePage() {
   return (
     <main style={PAGE_STYLE}>
       <header style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <h1>내 문답 기록</h1>
+        <h1>맞춤 정보</h1>
         <p style={{ color: "var(--body-text)" }}>
-          인터뷰에서 직접 쓴 답변이 계정에 남아 있어요. 세션을 지워도 이 기록은 남습니다.
+          어떤 일을 찾고 있는지 직접 적어두면 맞춤 공고가 그 내용에 맞춰 정렬돼요. 아래에는 인터뷰에서
+          직접 쓴 답변이 남아 있고, 세션을 지워도 이 기록은 남습니다.
         </p>
         {summary && (
           <p style={{ fontSize: 13, color: "var(--muted-text)" }}>
@@ -143,6 +146,11 @@ export default function ArchivePage() {
           </p>
         )}
       </header>
+
+      {/* 맞춤 공고 정렬의 조종간. 문답이 하나도 없어도 이것만으로 개인화가 켜진다. */}
+      <PreferenceEditor accessToken={accessToken!} />
+
+      <h2 style={{ margin: 0, fontSize: 16 }}>문답 기록</h2>
 
       {error && <p className="msg-error" style={{ marginTop: 12 }}>{error}</p>}
       {loadError && <p className="msg-error" style={{ marginTop: 12 }}>{errorMessage(loadError)}</p>}
