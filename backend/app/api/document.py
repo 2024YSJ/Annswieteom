@@ -33,7 +33,7 @@ from app.services import interview_orchestrator as orchestrator
 from app.services.embedding import get_embedding_provider
 from app.services.embedding.base import EmbeddingProvider
 from app.services.evidence import grade_for
-from app.services.llm.base import LLMProvider
+from app.services.llm.base import LLMProvider, LLMUnavailableError
 from app.services.llm import get_llm_provider
 from app.services.record_pipeline.citation import get_fact_citations
 
@@ -170,9 +170,16 @@ async def generate_document(
     except orchestrator.StateMachineViolation as exc:
         raise _violation_to_409(exc) from exc
 
-    document = await document_generator.generate_full_document(
-        session.id, payload.tone, db, llm, embedding_provider=embedding_provider
-    )
+    # 문서 생성은 카테고리마다 LLM을 순차로 부르는, 이 서비스에서 가장 긴 LLM
+    # 경로다. 여기만 LLMUnavailableError를 잡지 않아서 Ollama 장애가 503이 아니라
+    # 500으로 나갔고, 그러면 프론트의 llm_unavailable → "AI 서버가 수리 중이예요."
+    # 매핑을 타지 못해 사용자에게 정체불명의 오류로 보였다.
+    try:
+        document = await document_generator.generate_full_document(
+            session.id, payload.tone, db, llm, embedding_provider=embedding_provider
+        )
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
     session.status = next_status
     await db.commit()
 
@@ -209,9 +216,12 @@ async def regenerate_document(
     if latest is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document_not_found")
 
-    document = await document_generator.generate_full_document(
-        session.id, payload.tone, db, llm, version=latest.version + 1, embedding_provider=embedding_provider
-    )
+    try:
+        document = await document_generator.generate_full_document(
+            session.id, payload.tone, db, llm, version=latest.version + 1, embedding_provider=embedding_provider
+        )
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
     return await _document_read(document, db, fact_citations)
 
 

@@ -15,15 +15,30 @@ CANDIDATES = [
 ]
 
 
-class _StubResponse:
-    def __init__(self, content: str) -> None:
+class _StubStreamResponse:
+    """Ollama의 stream=true 응답 흉내.
+
+    실제 Ollama는 `{"message":{"content":"..."},"done":false}` NDJSON을 한 줄씩
+    내려보내고 마지막 줄에 done:true를 붙인다. 여기서는 content를 두 조각으로
+    쪼개 내려보내 어댑터가 정말로 이어붙이는지(한 조각만 쓰지 않는지) 확인한다.
+    """
+
+    def __init__(self, content: str, status_code: int = 200) -> None:
         self._content = content
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
-        pass
+        if self.status_code >= 400:
+            raise AssertionError(f"stub was given status {self.status_code}")
 
-    def json(self) -> dict:
-        return {"message": {"content": self._content}}
+    async def aread(self) -> bytes:
+        return b""
+
+    async def aiter_lines(self):
+        half = len(self._content) // 2
+        yield json.dumps({"message": {"content": self._content[:half]}, "done": False})
+        yield ""  # 빈 줄이 섞여 와도 건너뛰어야 한다
+        yield json.dumps({"message": {"content": self._content[half:]}, "done": True})
 
 
 @pytest.fixture
@@ -39,6 +54,16 @@ def ollama_calls(monkeypatch):
     # 언패킹하고 있어서 반환 형태를 바꾸면 전부 손봐야 한다.
     canned: dict = {"content": "{}", "sent_headers": []}
 
+    class _StubStreamCtx:
+        def __init__(self, response: _StubStreamResponse) -> None:
+            self._response = response
+
+        async def __aenter__(self) -> _StubStreamResponse:
+            return self._response
+
+        async def __aexit__(self, *exc_info) -> None:
+            return None
+
     class _StubClient:
         def __init__(self, *args, **kwargs) -> None:
             pass
@@ -49,10 +74,11 @@ def ollama_calls(monkeypatch):
         async def __aexit__(self, *exc_info) -> None:
             return None
 
-        async def post(self, url: str, json: dict, headers: dict | None = None) -> _StubResponse:  # noqa: A002 - httpx의 인자명
+        def stream(self, method: str, url: str, json: dict, headers: dict | None = None):  # noqa: A002 - httpx의 인자명
+            assert method == "POST"
             calls.append(json)
             canned["sent_headers"].append(headers)
-            return _StubResponse(canned["content"])
+            return _StubStreamCtx(_StubStreamResponse(canned["content"]))
 
     monkeypatch.setattr(local_ollama.httpx, "AsyncClient", _StubClient)
     return calls, canned
@@ -224,3 +250,86 @@ async def test_half_configured_access_token_sends_no_headers(ollama_calls, monke
     await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
 
     assert canned["sent_headers"][0] == {}
+
+
+@pytest.mark.asyncio
+async def test_generation_is_streamed_and_reassembled(ollama_calls):
+    # 스트리밍은 성능이 아니라 Cloudflare 때문이다 — 무료 플랜의 프록시 read
+    # timeout(약 100초)은 첫 바이트까지의 시간에 걸리고, 72b는 stream=False로는
+    # 문서 생성을 그 안에 끝내지 못해 524가 뜬다. 그러니 stream 플래그가 꺼지면
+    # 프로덕션이 조용히 524로 돌아간다.
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps({"items": ["카페 아르바이트", "재고 관리"]}, ensure_ascii=False)
+
+    items = await LocalOllamaProvider().extract_activity_items("아르바이트", "카페에서 일했어요")
+
+    assert calls[0]["stream"] is True
+    # 조각을 하나만 쓰지 않고 전부 이어붙였는지 — 이어붙이지 않으면 JSON이 깨진다
+    assert items == ["카페 아르바이트", "재고 관리"]
+
+
+@pytest.mark.asyncio
+async def test_every_call_pins_keep_alive(ollama_calls):
+    # 43GB 모델을 호출마다 재적재하면 그 시간만으로 첫 바이트가 100초를 넘긴다.
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps({"items": []})
+
+    await LocalOllamaProvider().extract_activity_items("아르바이트", "카페에서 일했어요")
+
+    assert calls[0]["keep_alive"] == -1
+
+
+@pytest.mark.asyncio
+async def test_error_inside_the_stream_raises_unavailable(ollama_calls, monkeypatch):
+    # Ollama는 HTTP 200으로 스트림을 시작한 뒤에도 error 필드로 실패를 알린다
+    # (예: 모델이 없을 때). raise_for_status로는 잡히지 않는 경로다.
+    from app.services.llm import local_ollama as mod
+
+    class _ErrorStream:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            pass
+
+        async def aread(self) -> bytes:
+            return b""
+
+        async def aiter_lines(self):
+            yield json.dumps({"error": 'model "qwen2.5:72b" not found'})
+
+    class _Ctx:
+        async def __aenter__(self):
+            return _ErrorStream()
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+        def stream(self, *args, **kwargs):
+            return _Ctx()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _Client)
+
+    with pytest.raises(LLMUnavailableError, match="not found"):
+        await LocalOllamaProvider().extract_activity_items("아르바이트", "카페에서 일했어요")
+
+
+@pytest.mark.asyncio
+async def test_generate_timeout_is_the_shared_constant(ollama_calls):
+    # 호출부 15곳이 각자 숫자를 들고 있으면 한 곳을 빠뜨린 채 서버를 바꾸게 된다.
+    import inspect
+
+    from app.services.llm import local_ollama as mod
+
+    source = inspect.getsource(mod)
+    assert "timeout=45.0" not in source
+    assert mod._GENERATE_TIMEOUT == 240.0
