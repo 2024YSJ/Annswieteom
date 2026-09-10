@@ -13,7 +13,7 @@ import { queryKeys } from "@/lib/query-keys";
  * 잠시 기다렸다 다시 물어보는 것 말고는 방법이 없다. */
 const WARMING_POLL_MS = 4000;
 
-export type FeedScope = "policies" | "jobs" | "recommended" | "recommended_policies";
+export type FeedScope = "policies" | "trainings" | "jobs" | "recommended" | "recommended_policies";
 
 const PERSONALIZED_SCOPES: ReadonlySet<FeedScope> = new Set(["recommended", "recommended_policies"]);
 
@@ -118,6 +118,7 @@ export function FeedSection({
     queryFn: ({ pageParam }) => {
       const options = { limit, offset: pageParam };
       if (scope === "policies") return feedApi.policies(options, accessToken);
+      if (scope === "trainings") return feedApi.trainings(options, accessToken);
       if (scope === "jobs") return feedApi.jobs(options, accessToken);
       if (scope === "recommended_policies") return feedApi.recommendedPolicies(options, accessToken!);
       return feedApi.recommendedJobs(options, accessToken!);

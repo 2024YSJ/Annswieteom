@@ -63,6 +63,12 @@ export const feedApi = {
       headers: accessToken ? authHeaders(accessToken) : undefined,
     }),
 
+  /** 직업훈련·취업 프로그램(고용24 훈련과정 + 구직자취업역량 강화프로그램). 로그아웃 방문자도 받는다. */
+  trainings: (options: FeedQuery = {}, accessToken?: string | null) =>
+    request<FeedRead>(`/api/v1/feed/trainings${queryString(options)}`, {
+      headers: accessToken ? authHeaders(accessToken) : undefined,
+    }),
+
   /** 공고 — 최신순. 로그인 여부와 무관하게 같은 목록. */
   jobs: (options: FeedQuery = {}, accessToken?: string | null) =>
     request<FeedRead>(`/api/v1/feed/jobs${queryString(options)}`, {

@@ -211,11 +211,22 @@ export default function Home() {
 
       <FeedSection scope="jobs" icon="🧭" title="최신 공고" aside="고용24에서 모아왔어요" accessToken={accessToken} />
 
+      {/* 온통청년 청년정책만. 고용24 훈련과정·구직자 프로그램은 예전엔 여기 섞였는데,
+       * 훈련기관 이름만 적힌 카드가 정책 사이에 끼어 무엇인지 알아보기 어려워서
+       * 아래 섹션으로 뺐다(2026-09-11). */}
       <FeedSection
         scope="policies"
         icon="🏛️"
         title="청년 지원 정책"
-        aside="최신 등록순"
+        aside="온통청년 · 최신 등록순"
+        accessToken={accessToken}
+      />
+
+      <FeedSection
+        scope="trainings"
+        icon="🛠️"
+        title="직업훈련·취업 프로그램"
+        aside="고용24에서 모아왔어요"
         accessToken={accessToken}
       />
 

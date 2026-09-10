@@ -70,8 +70,19 @@ def test_anonymous_visitor_gets_the_job_feed(feed_client):
 
 
 def test_anonymous_visitor_gets_the_policy_feed(feed_client):
-    _seed(feed_client, [_item("국민내일배움카드 과정", feed_kind="policy", category="training_course")], [_fresh_state()])
+    _seed(
+        feed_client,
+        [_item("청년월세 지원", feed_kind="policy", category="youth_policy", source="youthcenter")],
+        [_fresh_state()],
+    )
     resp = feed_client.get("/api/v1/feed/policies")
+    assert resp.status_code == 200
+    assert [i["title"] for i in resp.json()["items"]] == ["청년월세 지원"]
+
+
+def test_anonymous_visitor_gets_the_training_feed(feed_client):
+    _seed(feed_client, [_item("국민내일배움카드 과정", feed_kind="policy", category="training_course")], [_fresh_state()])
+    resp = feed_client.get("/api/v1/feed/trainings")
     assert resp.status_code == 200
     assert [i["title"] for i in resp.json()["items"]] == ["국민내일배움카드 과정"]
 
@@ -144,17 +155,39 @@ def test_policy_feed_prefers_the_source_published_date(feed_client):
     assert titles == ["최근 등록", "옛날 등록"]
 
 
-def test_job_and_policy_feeds_do_not_leak_into_each_other(feed_client):
+def test_job_policy_and_training_feeds_do_not_leak_into_each_other(feed_client):
+    """훈련과정·구직자프로그램은 policy로 저장되지만 "청년 지원 정책"에는 안 나온다
+    — 훈련기관 이름만 적힌 카드가 정책 사이에 섞였었다(2026-09-11)."""
     _seed(
         feed_client,
         [
             _item("공고", feed_kind="job", category="job_fair"),
-            _item("정책", feed_kind="policy", category="training_course"),
+            _item("청년정책", feed_kind="policy", category="youth_policy", source="youthcenter"),
+            _item("훈련과정", feed_kind="policy", category="training_course"),
+            _item("취업특강", feed_kind="policy", category="job_seeker_program"),
         ],
         [_fresh_state()],
     )
     assert [i["title"] for i in feed_client.get("/api/v1/feed/jobs").json()["items"]] == ["공고"]
-    assert [i["title"] for i in feed_client.get("/api/v1/feed/policies").json()["items"]] == ["정책"]
+    policies = feed_client.get("/api/v1/feed/policies").json()
+    assert [i["title"] for i in policies["items"]] == ["청년정책"]
+    assert policies["total"] == 1
+    trainings = feed_client.get("/api/v1/feed/trainings").json()
+    assert sorted(i["title"] for i in trainings["items"]) == ["취업특강", "훈련과정"]
+    assert trainings["total"] == 2
+
+
+def test_training_feed_interleaves_its_two_categories(feed_client):
+    """한 번의 수집이 카테고리를 차례로 넣으므로 최신순만 쓰면 한쪽이 통째로 앞을 막는다."""
+    base = datetime.now(timezone.utc)
+    _seed(
+        feed_client,
+        [_item(f"훈련 {n}", feed_kind="policy", category="training_course", seen=base) for n in range(3)]
+        + [_item(f"특강 {n}", feed_kind="policy", category="job_seeker_program", seen=base - timedelta(hours=1)) for n in range(3)],
+        [_fresh_state()],
+    )
+    categories = [i["category"] for i in feed_client.get("/api/v1/feed/trainings?limit=4").json()["items"]]
+    assert categories.count("training_course") == 2 and categories.count("job_seeker_program") == 2
 
 
 def test_inactive_items_are_excluded_from_items_and_total(feed_client):
@@ -186,6 +219,13 @@ def test_category_from_the_other_feed_kind_is_422(feed_client):
 
 def test_unknown_category_is_422(feed_client):
     assert feed_client.get("/api/v1/feed/jobs?category=nope").status_code == 422
+
+
+def test_category_from_another_section_is_422(feed_client):
+    """같은 policy로 저장돼 있어도 섹션이 다르면 명시적 오류다."""
+    assert feed_client.get("/api/v1/feed/policies?category=training_course").status_code == 422
+    assert feed_client.get("/api/v1/feed/trainings?category=youth_policy").status_code == 422
+    assert feed_client.get("/api/v1/feed/trainings?category=job_seeker_program").status_code == 200
 
 
 def test_category_filter_narrows_within_a_feed_kind(feed_client):
