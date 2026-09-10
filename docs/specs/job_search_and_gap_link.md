@@ -20,12 +20,12 @@ Phase 1~5 로드맵과 마찬가지로 원래 마일스톤 체크리스트에는
   - `extract_job_preferences(free_text) -> JobPreferences` — 자유 텍스트에서 구조화된 선호도 추출. 언급 안 된 항목은 절대 추측하지 않고 null/빈 배열.
   - `judge_job_fit(preferences, posting) -> JobFitResult` — bool(`fit`) + 이유 한 줄. 사용자가 언급 안 한 항목은 판단 기준에서 제외.
   - `infer_job_preferences_from_facts(confirmed_facts) -> JobPreferenceInferenceResult` — 연동용. `work_style_tags`/`keyword_hints`/`notes`만 있고 급여·근무지 필드 자체가 없다(STAR 사실만으로 유추 불가능하므로).
-- **워크넷(고용24) 채용정보 API 클라이언트** (`app/services/job_pipeline/worknet_client.py`) — `httpx` + `Settings` + DI 팩토리(`storage.py`와 동일 패턴), XML은 표준 라이브러리 `xml.etree.ElementTree`로 파싱. 사람인(승인 대기+일 500회 제한)·잡코리아(공공기관/학교 우선)보다 즉시 발급이 가능해 v1 단일 소스로 선택. 지역/학력/경력 코드 매핑은 후속 과제로 미루고 자유 텍스트를 `keyword` 파라미터로 검색.
+- **고용24 채용정보 API 클라이언트** (`app/services/job_pipeline/worknet_client.py`) — `httpx` + `Settings` + DI 팩토리(`storage.py`와 동일 패턴), XML은 표준 라이브러리 `xml.etree.ElementTree`로 파싱. 사람인(승인 대기+일 500회 제한)·잡코리아(공공기관/학교 우선)보다 즉시 발급이 가능해 v1 단일 소스로 선택. 지역/학력/경력 코드 매핑은 후속 과제로 미루고 자유 텍스트를 `keyword` 파라미터로 검색.
 - **엔드포인트** (`app/api/job_search.py`, prefix `/sessions`):
   - `GET /{id}/job-search` — 상태+선호도+캐시된 검색 결과 조회(외부 API 재호출 없음, 새로고침용).
   - `POST /{id}/job-search/preferences/extract` — 제안만 반환, 미저장.
   - `POST /{id}/job-search/preferences` — 확정 저장.
-  - `POST /{id}/job-search/search` — 워크넷 최대 15건 조회 → `asyncio.Semaphore(4)`로 병렬 `judge_job_fit` → fit 우선 정렬 → 캐시.
+  - `POST /{id}/job-search/search` — 고용24 최대 15건 조회 → `asyncio.Semaphore(4)`로 병렬 `judge_job_fit` → fit 우선 정렬 → 캐시.
   - `POST /{id}/job-search/seed-from-gap` — 연동 출처 세션 소유자 확인 후 `infer_job_preferences_from_facts` 호출, 제안만 반환.
   - `POST /sessions`를 확장해 `kind`/`linked_gap_session_id`를 받음(기본값 있어 기존 호출 하위 호환).
 
@@ -40,11 +40,11 @@ Phase 1~5 로드맵과 마찬가지로 원래 마일스톤 체크리스트에는
 ## 의도적으로 처리하지 않은 것 (이번 범위 밖)
 
 - 사람인/원티드/잡코리아 등 추가 구인 API 소스, 다중 소스 통합.
-- 워크넷 지역/학력/경력 코드 정밀 매핑(v1은 keyword 텍스트 검색으로 대체).
+- 고용24 지역/학력/경력 코드 정밀 매핑(v1은 keyword 텍스트 검색으로 대체).
 - 검색 결과 저장/북마크 기능(세션당 마지막 검색 결과 1건만 캐시).
 - "이미 확정된 선호도를 확인 단계 밖에서 나중에 고치는" 별도 관리 기능 — 카테고리 CRUD와 동일한 이유로, 확인 단계에서만 되면 충분하다고 범위를 좁힘.
 
 ## 다음 단계
 
 - 실 `WORKNET_API_KEY` 발급 후 실 로컬 Ollama와 함께 최소 1회 수동 확인(현재는 mock으로만 왕복 검증).
-- 워크넷 XML 응답의 정확한 래핑 태그명은 실 키로 첫 응답을 받아본 뒤 `worknet_client.py`의 파싱 로직을 한 번 더 확인해야 한다.
+- 고용24 XML 응답의 정확한 래핑 태그명은 실 키로 첫 응답을 받아본 뒤 `worknet_client.py`의 파싱 로직을 한 번 더 확인해야 한다.

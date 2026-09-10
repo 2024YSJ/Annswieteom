@@ -18,8 +18,8 @@ from app.services.feed.ingest import (
 )
 from app.services.feed.profile_adapter import (
     get_profile_embedder,
+    has_profile_input,
     load_profile_vector,
-    profile_counters,
     profile_needs_refresh,
 )
 from app.services.feed.ranking import get_feed_ranker
@@ -81,6 +81,7 @@ async def _build(
     profile_vector: list[float] | None = None,
     fallback_reason: str | None = None,
     prefer_published_date: bool = False,
+    interleave_categories: bool = False,
 ) -> FeedRead:
     is_warming = await _schedule_refresh_if_needed(db, background_tasks, refresher)
     ranked = await ranker(
@@ -89,11 +90,14 @@ async def _build(
         category=category,
         profile_vector=profile_vector,
         prefer_published_date=prefer_published_date,
+        interleave_categories=interleave_categories,
         limit=limit,
         offset=offset,
     )
-    # 벡터를 넘겼는데도 최신순으로 내려왔다면 정렬이 실패한 것이다.
-    if profile_vector is not None and not ranked.personalized:
+    # 정렬 질의가 실제로 터졌을 때만 고장 안내를 띄운다. "벡터를 넘겼는데
+    # 최신순으로 내려왔다"는 조건만 보면, 아직 항목 임베딩이 안 채워진 정상
+    # 상태(= 갓 수집된 피드)까지 고장으로 잘못 보고한다 — 그건 `preparing`이다.
+    if ranked.vector_ranking_failed:
         fallback_reason = "ai_unavailable"
     return FeedRead(
         items=[_to_read(i) for i in ranked.items],
@@ -152,6 +156,9 @@ async def list_job_feed(
     return await _build(
         db, background_tasks, refresher, ranker,
         feed_kind="job", category=category, limit=limit, offset=offset,
+        # 순수 최신순이면 목록이 카테고리 덩어리가 되고, 링크를 못 다는
+        # 강소기업이 통째로 앞을 막는다(ranking._interleaved_order 주석 참고).
+        interleave_categories=True,
     )
 
 
@@ -183,14 +190,18 @@ async def list_recommended_job_feed(
     # 잡혔지만 프로덕션에서도 벡터 차원 불일치 등으로 같은 경로를 탈 수 있다.
     user_id = current_user.id
 
-    answer_count, _ = await profile_counters(db, user_id)
-    vector = await load_profile_vector(db, user_id) if answer_count else None
+    # 문답이든 직접 쓴 희망사항이든, 개인화에 쓸 재료가 하나라도 있으면 켠다.
+    # 예전엔 문답 개수만 셌는데, 그러면 "맞춤 정보"만 적어둔 사용자가 영영
+    # 개인화되지 않는다 — 인터뷰를 아직 안 한 사람에게 조종간을 주려고 만든
+    # 기능이므로 그게 바로 이 기능이 필요한 사람이다.
+    has_input = await has_profile_input(db, user_id)
+    vector = await load_profile_vector(db, user_id) if has_input else None
 
-    if answer_count and await profile_needs_refresh(db, user_id):
+    if has_input and await profile_needs_refresh(db, user_id):
         background_tasks.add_task(profile_embedder, user_id)
 
     fallback_reason = None
-    if answer_count == 0:
+    if not has_input:
         fallback_reason = "no_profile"
     elif vector is None:
         # 문답은 있는데 벡터가 아직 없다 = 방금 계산을 예약한 상태. 문답을

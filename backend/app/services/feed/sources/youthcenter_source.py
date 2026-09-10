@@ -15,14 +15,16 @@ _ENDPOINT = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
 
 #: 한 번에 받아올 정책 수. 전체는 2751건이고 API가 이미 등록 최신순으로
 #: 돌려주므로(실측 확인) 앞쪽만 받으면 된다. pageSize=100까지는 정상 동작한다.
-_FETCH_LIMIT = 30
+#: 메인 화면에 "더보기"를 붙이면서 30에서 올렸다 — 30이면 정책 섹션이 다섯 번쯤
+#: 누르면 바닥났다.
+_FETCH_LIMIT = 100
 
 
 class YouthCenterApiError(Exception):
     """온통청년이 정상 목록 대신 오류를 돌려준 경우.
 
     이 API는 HTTP 200으로 응답하면서 본문 `resultCode`로 성공/실패를 구분한다
-    (워크넷과 같은 계열의 함정 — `raise_for_status()`로는 못 잡는다).
+    (고용24과 같은 계열의 함정 — `raise_for_status()`로는 못 잡는다).
     """
 
     def __init__(self, code: object, message: str | None) -> None:
@@ -104,7 +106,7 @@ def _parse_policy_items(payload: dict) -> list[FeedItemData]:
                 # 신청 URL이 없는 정책도 많아 참고 URL로 갈음한다.
                 detail_url=_text(raw, "aplyUrlAddr") or _text(raw, "refUrlAddr1") or None,
                 # plcyNo는 정책 고유번호라 안정적인 중복 제거 키가 된다 —
-                # 워크넷 카테고리 대부분이 못 주는 것이다.
+                # 고용24 카테고리 대부분이 못 주는 것이다.
                 source_key=_text(raw, "plcyNo") or None,
                 source_published_at=_parse_reg_date(_text(raw, "frstRegDt")),
             )
@@ -116,7 +118,7 @@ class YouthCenterFeedSource:
     """온통청년(청년정책 통합) Open API 소스.
 
     인증키는 회원가입 후 [마이페이지 - OPEN API]에서 신청해 담당자 승인을 거쳐
-    발급된다(워크넷과 같은 사람 심사 게이트). 비어 있으면 이 소스는 오류가 아니라
+    발급된다(고용24과 같은 사람 심사 게이트). 비어 있으면 이 소스는 오류가 아니라
     수집 대상에서 조용히 빠진다(services/feed/sources/__init__.py).
 
     **분류로 걸러내지 않는다.** 대분류는 일자리/교육･직업훈련/금융･복지･문화/

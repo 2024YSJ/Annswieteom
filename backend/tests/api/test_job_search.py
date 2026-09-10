@@ -113,7 +113,7 @@ def test_query_spanning_multiple_categories_returns_all_of_them(session_client):
 
 
 def test_query_drops_only_the_category_that_fails(session_client):
-    # 워크넷 오류(예: 승인 대기 중인 카테고리)는 해당 카테고리만 결과에서
+    # 고용24 오류(예: 승인 대기 중인 카테고리)는 해당 카테고리만 결과에서
     # 빠지고 나머지는 그대로 보여야 한다 — 질문 전체가 실패로 보이면 안 된다.
     token = _register_and_login(session_client)
     session_id = _create_job_search_session(session_client, token)
@@ -156,7 +156,7 @@ def test_query_empty_results_for_a_category_still_shown(session_client):
 
 
 def test_query_only_shows_results_the_llm_judged_relevant(session_client):
-    # 문자열 부분일치 대신 LLM이 실제로 관련 있는 항목만 고른다 — 워크넷이
+    # 문자열 부분일치 대신 LLM이 실제로 관련 있는 항목만 고른다 — 고용24이
     # 3건을 돌려줘도 LLM이 1건만 관련 있다고 판단하면 그 1건만 보여야 한다.
     token = _register_and_login(session_client)
     session_id = _create_job_search_session(session_client, token)

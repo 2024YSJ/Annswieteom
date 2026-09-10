@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -31,6 +32,15 @@ EMBED_BATCH = 16
 
 #: 소스 목록에서 사라진 지 이만큼 지난 항목은 실제로 지운다.
 PRUNE_AFTER = timedelta(days=14)
+
+#: 임베딩 단계 직렬화용. 수집 락(_claim)은 source_key 단위라, 서로 다른 소스를
+#: 갱신하는 두 요청이 동시에 돌면 둘 다 "벡터 없는 항목" 전역 목록을 집어 같은
+#: 행을 INSERT 하려 든다 — 실제로 프로덕션 로그에
+#: `duplicate key value violates unique constraint "feed_item_embeddings_pkey"`로
+#: 터졌다(2026-09-10). 임베딩은 어차피 로컬 Ollama가 직렬 처리하므로 여기서
+#: 줄 세워도 잃는 게 없다. 프로세스 단위 락이라는 한계는 아래 IntegrityError
+#: 처리로 보완한다.
+_EMBED_LOCK = asyncio.Lock()
 
 
 def _now() -> datetime:
@@ -251,7 +261,14 @@ async def _embed_pending(db: AsyncSession) -> None:
             else:
                 emb.embedding = vector
                 emb.embedding_model = provider.model_name
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # 다른 워커가 같은 항목을 먼저 넣었다. 이미 벡터가 생겼다는 뜻이라
+            # 잃는 게 없다 — 이 배치만 버리고 계속한다. 락을 잡고 들어와도
+            # 프로세스가 둘이면 여기로 올 수 있다.
+            await db.rollback()
+            logger.info("feed: embeddings for this batch were written by another worker; skipping")
 
 
 async def _prune(db: AsyncSession) -> None:
@@ -289,7 +306,11 @@ async def refresh_feed(sources: list[FeedSource] | None = None, source_keys: lis
         # 오래된 항목 정리까지 건너뛸 이유는 없다.
         for stage in (_embed_pending, _prune):
             try:
-                await stage(db)
+                if stage is _embed_pending:
+                    async with _EMBED_LOCK:
+                        await stage(db)
+                else:
+                    await stage(db)
             except Exception:
                 await db.rollback()
                 logger.warning("feed: %s failed", stage.__name__, exc_info=True)

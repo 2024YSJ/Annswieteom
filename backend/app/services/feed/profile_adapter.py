@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import AsyncSessionLocal
 from app.models.interview_answer import InterviewAnswer
+from app.models.user_preference import UserPreference
 from app.models.user_profile_embedding import UserProfileEmbedding
 from app.services.embedding import LocalOllamaEmbedding
 
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 # 아니므로, 의존하는 컬럼을 여기 명시해 두고 바뀌면 이 파일만 고친다.
 #
 #   user_id / answer_text / category_label / confirmed_facts / created_at
+#
+# 여기에 더해 우리 소유인 `user_preferences.wish_text`(사용자가 직접 쓴 희망사항)를
+# 같은 프로필 텍스트에 합친다. 문답이 하나도 없어도 희망사항만으로 개인화가
+# 켜지는 게 핵심이다 — 공백기 정리를 아직 안 한 사용자가 정렬을 조종할 유일한
+# 수단이기 때문이다.
 #
 # 이 다섯 개뿐이다. session_id, question_source, category_type, question_text에는
 # 의존하지 않는다. confirmed_facts의 원소에 대해서도 `.get("content")` 하나만
@@ -44,6 +50,9 @@ class ProfileSignal:
     fingerprint: str
     answer_count: int
     latest_answer_at: datetime | None
+    #: 사용자가 직접 쓴 희망사항이 섞였는지. 문답이 0건이어도 이게 True면
+    #: 개인화를 켤 수 있다.
+    has_wish: bool = False
 
     @property
     def is_empty(self) -> bool:
@@ -87,7 +96,18 @@ def _build_text(rows: list[InterviewAnswer]) -> str:
     return text.strip()
 
 
+async def read_wish_text(db: AsyncSession, user_id: uuid.UUID) -> str:
+    """사용자가 직접 쓴 희망사항. 없으면 빈 문자열."""
+    try:
+        row = await db.get(UserPreference, user_id)
+    except Exception:
+        await db.rollback()
+        return ""
+    return (row.wish_text or "").strip() if row is not None else ""
+
+
 async def read_profile_signal(db: AsyncSession, user_id: uuid.UUID) -> ProfileSignal:
+    wish = await read_wish_text(db, user_id)
     try:
         rows = (
             await db.execute(
@@ -100,20 +120,25 @@ async def read_profile_signal(db: AsyncSession, user_id: uuid.UUID) -> ProfileSi
     except Exception:
         # 테이블이 없거나(테스트 픽스처, 마이그레이션 이전) 스키마가 바뀐 경우.
         await db.rollback()
-        logger.warning("feed: interview_answers unreadable; falling back to no profile", exc_info=True)
-        return _EMPTY
+        logger.warning("feed: interview_answers unreadable; falling back to the wish text alone", exc_info=True)
+        rows = []
 
-    if not rows:
-        return _EMPTY
+    # 희망사항을 맨 앞에 둔다 — 사용자가 방금 직접 쓴 말이라 과거 문답보다
+    # 현재 의도를 잘 나타내고, 4000자 상한에 걸려 잘려 나가서도 안 된다.
+    blocks = [f"[희망사항] {wish}"] if wish else []
+    answers_text = _build_text(list(rows))
+    if answers_text:
+        blocks.append(answers_text)
+    text = "\n\n".join(blocks).strip()
 
-    text = _build_text(list(rows))
     if not text:
         return _EMPTY
     return ProfileSignal(
         text=text,
         fingerprint=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         answer_count=len(rows),
-        latest_answer_at=rows[0].created_at,
+        latest_answer_at=rows[0].created_at if rows else None,
+        has_wish=bool(wish),
     )
 
 
@@ -134,6 +159,19 @@ async def profile_counters(db: AsyncSession, user_id: uuid.UUID) -> tuple[int, d
         return 0, None
 
 
+async def has_profile_input(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    """개인화에 쓸 재료가 하나라도 있는가 — 문답이든 희망사항이든.
+
+    예전에는 라우터가 문답 개수만 셌다. 그러면 희망사항만 적어둔 사용자가
+    영영 개인화되지 않는다 — 인터뷰를 안 한 사용자에게 조종간을 주려고 만든
+    기능이므로 그게 바로 이 기능이 필요한 사람이다.
+    """
+    count, _ = await profile_counters(db, user_id)
+    if count:
+        return True
+    return bool(await read_wish_text(db, user_id))
+
+
 async def load_profile_vector(db: AsyncSession, user_id: uuid.UUID) -> list[float] | None:
     """저장된 프로필 벡터. 없거나 못 읽으면 None(= 비개인화 경로).
 
@@ -150,7 +188,8 @@ async def load_profile_vector(db: AsyncSession, user_id: uuid.UUID) -> list[floa
 
 async def profile_needs_refresh(db: AsyncSession, user_id: uuid.UUID) -> bool:
     count, latest = await profile_counters(db, user_id)
-    if count == 0:
+    wish = await read_wish_text(db, user_id)
+    if count == 0 and not wish:
         return False
     try:
         row = await db.get(UserProfileEmbedding, user_id)
@@ -165,6 +204,13 @@ async def profile_needs_refresh(db: AsyncSession, user_id: uuid.UUID) -> bool:
     if row is None or row.embedding is None:
         return True
     if row.source_answer_count != count:
+        return True
+    # 희망사항만 고친 경우 문답 개수도 최신 시각도 그대로다 — 저장해둔 프로필
+    # 텍스트와 직접 비교해야 잡힌다. 사용자가 "맞춤 정보 수정"을 누른 직후
+    # 아무 일도 안 일어나면 기능 자체가 없는 것과 같다.
+    if wish and (row.profile_text is None or f"[희망사항] {wish}" not in row.profile_text):
+        return True
+    if not wish and row.profile_text and "[희망사항] " in row.profile_text:
         return True
     if latest is not None and row.source_latest_answer_at is not None:
         stored = row.source_latest_answer_at

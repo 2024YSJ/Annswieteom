@@ -8,9 +8,10 @@
     app/apple-icon.png       iOS 홈 화면 아이콘
     app/opengraph-image.png  링크 공유 카드
 
-로고 출처는 Flaticon(juicy_fish)이고 제작자 표기가 필수다 — README 의
-'에셋 출처'와 components/SiteFooter.tsx 참고. 텍스트는 사이트 본문과 같은
-Noto Sans KR(OFL)을 쓴다.
+로고 출처는 Flaticon의 'no bed' 아이콘(id 13322151, 제작자 juicy_fish)이고
+제작자 표기가 필수다 — README 의 '에셋 출처'와 components/SiteFooter.tsx 참고.
+Flaticon이 복사해주는 크레딧 조각은 검색어가 섞인 문구라 그대로 쓰지 말 것.
+텍스트는 사이트 본문과 같은 Noto Sans KR(OFL)을 쓴다.
 """
 import os
 from PIL import Image, ImageDraw, ImageFont

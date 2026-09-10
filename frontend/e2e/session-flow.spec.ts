@@ -80,7 +80,11 @@ test.describe("unified session chat flow", () => {
     const manualInput = page.locator('input[type="text"]').first();
     await manualInput.fill("독학");
     await page.getByRole("button", { name: "확인" }).click();
-    await expect(page.getByText("선택한 활동: 독학")).toBeVisible({ timeout: 10000 });
+    // 이 마지막 단계는 실제 백엔드로 POST /categories를 치고 세션 컨텍스트를
+    // 다시 받아온다. 이 테스트만 단독으로 돌려도 27초가 걸려서(로컬 dev DB가
+    // 다른 리전이라 요청당 ~2초), 전체 스위트에서 부하가 겹치면 10초로는 못
+    // 버틴다 — 실제로 단독 통과/전체 실패로 갈렸다.
+    await expect(page.getByText("선택한 활동: 독학")).toBeVisible({ timeout: 25000 });
   });
 
   test("period -> categories -> records -> interview section, on one URL", async ({ page }) => {

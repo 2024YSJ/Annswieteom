@@ -26,6 +26,7 @@ from app.models.record_chunk import RecordChunk
 from app.models.refresh_token import RefreshToken
 from app.models.session import Session as SessionModel
 from app.models.user import User
+from app.models.user_preference import UserPreference
 from app.services.embedding import get_embedding_provider
 from app.services.feed.ingest import get_feed_refresher
 from app.services.feed.profile_adapter import get_profile_embedder
@@ -325,6 +326,7 @@ def feed_client():
         RefreshToken.__table__,
         SessionModel.__table__,
         InterviewAnswer.__table__,
+        UserPreference.__table__,
         FeedItem.__table__,
         FeedRefreshState.__table__,
     ]
@@ -378,6 +380,7 @@ def session_client():
         ActivityCategory.__table__,
         ConfirmedFact.__table__,
         InterviewAnswer.__table__,
+        UserPreference.__table__,
         # Empty but must exist: deleting a Session lazy-loads these
         # cascade="all, delete-orphan" relationships even with zero rows.
         Record.__table__,
@@ -460,6 +463,7 @@ def records_client():
         ActivityCategory.__table__,
         ConfirmedFact.__table__,
         InterviewAnswer.__table__,
+        UserPreference.__table__,
         Record.__table__,
         # Empty but must exist: deleting a Record lazy-loads this
         # cascade="all, delete-orphan" relationship even with zero rows.
@@ -539,6 +543,7 @@ def document_client():
         ActivityCategory.__table__,
         ConfirmedFact.__table__,
         InterviewAnswer.__table__,
+        UserPreference.__table__,
         Record.__table__,
         RecordChunk.__table__,
         GeneratedDocument.__table__,

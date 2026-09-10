@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.feed_item import FeedItem
 from app.models.feed_item_embedding import FeedItemEmbedding
@@ -17,6 +18,10 @@ class RankedFeed:
     items: list[FeedItem]
     total: int
     personalized: bool
+    #: 벡터 질의가 **실패**해서 최신순으로 내려왔는가. `personalized=False`만으로는
+    #: 세 가지가 구분되지 않는다 — 프로필이 없거나, 아직 임베딩이 안 채워졌거나,
+    #: 정말 고장났거나. 라우터가 "AI 서버가 수리 중" 안내를 띄울지 정하는 데 쓴다.
+    vector_ranking_failed: bool = False
 
 
 def _base(feed_kind: str, category: str | None) -> Select:
@@ -29,6 +34,26 @@ def _base(feed_kind: str, category: str | None) -> Select:
 async def _count(db: AsyncSession, feed_kind: str, category: str | None) -> int:
     stmt = select(func.count(FeedItem.id)).where(
         FeedItem.is_active.is_(True), FeedItem.feed_kind == feed_kind
+    )
+    if category is not None:
+        stmt = stmt.where(FeedItem.category == category)
+    return int(await db.scalar(stmt) or 0)
+
+
+async def _count_embedded(db: AsyncSession, feed_kind: str, category: str | None) -> int:
+    """개인화 정렬로 실제 도달 가능한 행 수.
+
+    전체 활성 행 수를 그대로 `total`로 내보내면 벡터가 아직 없는 행까지 세는
+    셈이라, 프론트의 "더보기"가 갈 수 없는 페이지로 가는 버튼을 그린다.
+    """
+    stmt = (
+        select(func.count(FeedItem.id))
+        .join(FeedItemEmbedding, FeedItemEmbedding.feed_item_id == FeedItem.id)
+        .where(
+            FeedItem.is_active.is_(True),
+            FeedItem.feed_kind == feed_kind,
+            FeedItemEmbedding.embedding.is_not(None),
+        )
     )
     if category is not None:
         stmt = stmt.where(FeedItem.category == category)
@@ -55,6 +80,28 @@ def _recent_order(stmt: Select, by_published: bool) -> Select:
     return stmt.order_by(FeedItem.first_seen_at.desc(), FeedItem.id)
 
 
+def _interleaved_order(stmt: Select) -> Select:
+    """카테고리를 라운드로빈으로 섞은 최신순.
+
+    순수 최신순으로 두면 목록이 **카테고리 덩어리**가 된다. 한 번의 수집이
+    카테고리를 차례로 넣으므로 마지막에 들어간 카테고리가 통째로 맨 위를
+    차지하기 때문이다. 실측(2026-09-10, 공고 200건)에서는 강소기업 50건이
+    앞을 다 막고 있었는데, 하필 그 카테고리만 고용24가 상세 URL도 항목 id도
+    주지 않아 **링크를 달 수 없는 카드 50장을 지나야 눌리는 카드가 나왔다.**
+
+    그래서 카테고리별 최신 1건씩을 먼저 모으고, 그다음 2건씩을 모은다.
+    limit/offset 페이지네이션이 그대로 성립하도록 순서는 완전히 결정적이어야
+    하므로 (순번, 수집시각, id) 세 단계로 정렬한다.
+    """
+    rank = func.row_number().over(
+        partition_by=FeedItem.category,
+        order_by=(FeedItem.first_seen_at.desc(), FeedItem.id),
+    ).label("category_rank")
+    sub = stmt.add_columns(rank).subquery()
+    item = aliased(FeedItem, sub)
+    return select(item).order_by(sub.c.category_rank, sub.c.first_seen_at.desc(), sub.c.id)
+
+
 async def rank_feed_items(
     db: AsyncSession,
     *,
@@ -62,6 +109,7 @@ async def rank_feed_items(
     category: str | None = None,
     profile_vector: list[float] | None = None,
     prefer_published_date: bool = False,
+    interleave_categories: bool = False,
     limit: int = 20,
     offset: int = 0,
 ) -> RankedFeed:
@@ -74,6 +122,7 @@ async def rank_feed_items(
     피드 읽기는 아무것도 쓰지 않으므로 요청 세션에서 rollback을 불러도 안전하다.
     """
     total = await _count(db, feed_kind, category)
+    vector_failed = False
 
     if profile_vector is not None:
         stmt = (
@@ -85,16 +134,35 @@ async def rank_feed_items(
             .offset(offset)
         )
         try:
-            rows = (await db.execute(stmt)).scalars().all()
+            embedded_total = await _count_embedded(db, feed_kind, category)
+            rows = (await db.execute(stmt)).scalars().all() if embedded_total else None
         except Exception:
             await db.rollback()
             logger.warning("feed: vector ranking unavailable; falling back to recency", exc_info=True)
             rows = None
-        if rows:
-            return RankedFeed(items=list(rows), total=total, personalized=True)
+            vector_failed = True
+        # `rows == []`를 실패로 읽으면 안 된다. 개인화 목록의 끝을 넘어선
+        # offset(= "더보기"의 마지막 클릭)에서 같은 offset으로 최신순 분기에
+        # 떨어지면, 정렬이 다른 목록의 N번째 페이지가 나와 **이미 본 카드가
+        # 다시 보인다.** 벡터가 하나도 없을 때(embedded_total == 0)만
+        # 최신순으로 내려간다.
+        if rows is not None:
+            return RankedFeed(items=list(rows), total=embedded_total, personalized=True)
 
-    stmt = _recent_order(_base(feed_kind, category), prefer_published_date).limit(limit).offset(offset)
-    return RankedFeed(items=list((await db.execute(stmt)).scalars().all()), total=total, personalized=False)
+    base = _base(feed_kind, category)
+    # 카테고리를 하나만 골라 본다면 섞을 게 없다.
+    ordered = (
+        _interleaved_order(base)
+        if interleave_categories and category is None
+        else _recent_order(base, prefer_published_date)
+    )
+    stmt = ordered.limit(limit).offset(offset)
+    return RankedFeed(
+        items=list((await db.execute(stmt)).scalars().all()),
+        total=total,
+        personalized=False,
+        vector_ranking_failed=vector_failed,
+    )
 
 
 def get_feed_ranker():

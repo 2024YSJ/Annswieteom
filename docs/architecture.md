@@ -162,7 +162,9 @@ classDiagram
 | `session.py` | `sessions.py` | `SessionCreate`, `SessionRead`(`title` 포함), `SessionRename`, `SessionContextRead`, `ActivityCategoryRead`, `ConfirmedFactRead`, `RecordChunkExcerptRead` |
 | `interview.py` | `interview.py` | `GapPeriodSet/Read`, `PeriodExtractRequest/Read`, `CategoryInput`, `CategorySelect`, `CategoryExtractRequest/Read`, `StatusRead`, `RecordsSkipRead`, `BasedOnRead`, `InterviewNextRead`, `InterviewConfirm`, `InterviewConfirmRead` |
 | `record.py` | `records.py` | `BlogRecordCreate`, `TextRecordCreate`, `RecordRead` |
-| `feed.py` | `feed.py` | `FeedItemRead`, `FeedRead` |
+| `feed.py` | `feed.py` | `FeedItemRead`, `FeedRead`, `FeedSourceStatusRead` |
+| `profile.py` | `profile.py` | `ArchivedAnswerRead`, `ArchiveSummaryRead`, `PreferenceRead`, `PreferenceUpdate` |
+| `coverage.py` | `coverage.py` | `CoverageRead`, `CoverageFillRequest/Read`, `CategoryPeriodUpdate`, `DateRangeRead` |
 | `document.py` | `document.py` | `GenerateRequest`, `CitationRead`, `EvidenceRead`, `SentenceRead`, `SentenceUpdate`, `DocumentRead` |
 
 ### `models/` — SQLAlchemy ORM (2절 다이어그램 참고)
@@ -182,6 +184,7 @@ classDiagram
 | `feed_item_embedding.py` | `feed_item_embeddings` | 항목 벡터(1:1 곁테이블). **본체와 분리한 이유는 6절 참고** |
 | `user_profile_embedding.py` | `user_profile_embeddings` | 사용자 프로필 벡터(우리 소유의 파생 캐시) |
 | `feed_refresh_state.py` | `feed_refresh_states` | 소스별 갱신 상태 + 시간 기반 동시 갱신 락 |
+| `user_preference.py` | `user_preferences` | 사용자가 직접 쓴 "맞춤 정보"(희망사항). 파생 캐시가 아니라 **원본 입력** |
 | `generated_sentence.py` | `generated_sentences` | `evidence_fact_ids`(JSON 배열), `consistency_check_passed` |
 
 ### `services/` — 비즈니스 로직
@@ -191,7 +194,7 @@ classDiagram
 | `interview_orchestrator.py` | 상태머신 전이 규칙(순수 함수, DB 접근 없음) | `require_simple_transition`, `require_status`, `require_draft_step`, `require_confirm_step`, `resolve_after_achievement_confirm`, `next_category` |
 | `document_generator.py` | 카테고리별 LLM 호출 → 문장 생성 → 일관성 검사 → 저장 | `generate_full_document()`, `regenerate_sentence()` |
 | `consistency_check.py` | 생성 문장과 인용 근거 간 코사인 유사도로 사후 검증(정직성 가드레일 마지막 방어선) | `check_sentence_consistency()`, `max_cosine_similarity()` |
-| `feed/sources/{base,worknet_source,youthcenter_source}.py` | 피드 소스 어댑터. 워크넷은 `job_info_client`를 재사용만 한다 | `FeedItemData`, `WorknetFeedSource`, `YouthCenterFeedSource` |
+| `feed/sources/{base,worknet_source,youthcenter_source}.py` | 피드 소스 어댑터. 고용24은 `job_info_client`를 재사용만 한다 | `FeedItemData`, `WorknetFeedSource`, `YouthCenterFeedSource` |
 | `feed/sources/__init__.py` | 소스 레지스트리 — 키 없는 소스는 조용히 스킵 | `configured_sources()`, `source_keys_for()` |
 | `feed/dedup.py` | 안정 id 우선, 없으면 내용 해시 | `compute_dedup_key()`, `build_embed_text()` |
 | `feed/ingest.py` | 백그라운드 수집(락/upsert/임베딩 backfill/정리) | `refresh_feed()`, `stale_source_keys()`, `get_feed_refresher()` |
@@ -210,8 +213,8 @@ classDiagram
 | `record_pipeline/chunker.py` | 텍스트 청크 분할 | `chunk_text()` |
 | `record_pipeline/citation.py` | 근거 인용 정보(출처 URL/발행일) 조회 | `resolve_fact_citation()`, `get_fact_citation()`(DI 훅) |
 | `record_pipeline/search.py` | 카테고리 라벨로 의미 검색 | `search_relevant_chunks()`, `get_chunk_search()`(DI 훅) |
-| `job_pipeline/job_info_client.py` | 워크넷/고용24 6개 카테고리 조회 + 조건별 호출 분할·병합 | `JobInfoClient.search()`, `search_training_courses()`, `WorknetApiError`, `get_job_info_client()`(DI 훅) |
-| `job_pipeline/regions.py` | 지역명 → 워크넷 지역 코드(실호출로 검증한 표) | `RegionFilter`, `resolve_region_filters()`, `KNOWN_REGION_NAMES` |
+| `job_pipeline/job_info_client.py` | 고용24 6개 카테고리 조회 + 조건별 호출 분할·병합 | `JobInfoClient.search()`, `search_training_courses()`, `WorknetApiError`, `get_job_info_client()`(DI 훅) |
+| `job_pipeline/regions.py` | 지역명 → 고용24 지역 코드(실호출로 검증한 표) | `RegionFilter`, `resolve_region_filters()`, `KNOWN_REGION_NAMES` |
 
 ### `core/`
 
@@ -249,6 +252,7 @@ classDiagram
 | `ResultSection.tsx` | 문서 생성/톤 변경/문장 수정·재생성/확정/내보내기 |
 | `EvidenceTag.tsx` | 문장별 근거 태그(클릭 시 출처 상세) |
 | `TypingDots.tsx` | 채팅 대기 공용 말줄임표(애니메이션은 `globals.css`의 `.typing-dots`) |
+| `PreferenceEditor.tsx` | 맞춤 정보(희망사항) 편집 — 맞춤 공고 정렬의 사용자 조종간 |
 | `ToneSlider.tsx` | 담백/일반/적극 톤 선택 |
 
 ### `lib/`
@@ -288,13 +292,14 @@ graph LR
 
 - **정직성 가드레일**: 생성 문서의 모든 문장은 `confirmed_facts`를 인용해야 한다. 이건 한 함수의 책임이 아니라 세 겹으로 강제된다 — (1) `document_generator.generate_full_document`가 LLM에 ORM 객체가 아니라 `confirmed_facts`의 내용만 넘김, (2) `interview.py`의 `interview_confirm`이 `source_type`을 클라이언트가 지정 못하게 서버가 캐시해둔 `pending_draft`에서만 도출, (3) `consistency_check.check_sentence_consistency`가 생성된 문장과 인용된 근거의 의미적 유사도를 사후 검증. 새 생성 경로를 추가한다면 이 세 겹을 다 거쳐야 한다.
 - **DI 훅은 자기 서비스 파일에 둔다**: FastAPI 라우터가 교체 가능한 의존성이 필요하면(테스트에서 가짜로 바꿔치기하기 위해), `get_X()` 함수를 그 X를 구현하는 서비스 모듈 안에 정의한다 — `get_storage()`(`services/storage.py`), `get_chunk_search()`(`services/record_pipeline/search.py`), `get_embedding_provider()`(`services/embedding/__init__.py`), `get_llm_provider()`(`services/llm/__init__.py`)가 전부 이 규칙을 따른다. 라우터 파일에 두면 다른 라우터가 그걸 가져다 쓰려 할 때 라우터끼리 직접 의존하게 된다 (7절 참고).
-- **외부 소스는 등록제이고, 인증키가 없으면 조용히 빠진다**: 워크넷/온통청년 키는 담당자 심사를 거쳐 카테고리마다 따로 발급된다. 미발급은 오류가 아니라 설정 상태다 — 예외로 다루면 승인될 때까지 메인 화면에 배너가 계속 뜬다(`services/feed/sources/__init__.py`).
+- **외부 소스는 등록제이고, 인증키가 없으면 조용히 빠진다**: 고용24/온통청년 키는 담당자 심사를 거쳐 카테고리마다 따로 발급된다. 미발급은 오류가 아니라 설정 상태다 — 예외로 다루면 승인될 때까지 메인 화면에 배너가 계속 뜬다(`services/feed/sources/__init__.py`).
 - **임베딩 실패는 데이터 손실이 아니라 정렬 품질 저하로만 나타나야 한다**: Gemini를 제거한 뒤 임베딩 경로는 로컬 bge-m3 하나뿐이라 터널이 끊기면 100% 실패한다. 그래서 벡터 컬럼은 nullable이고, 항목은 임베딩 전에 커밋되며, 다음 수집이 빈 벡터를 backfill한다. 조회는 벡터가 없으면 최신순으로 내려간다.
 - **`Vector` 컬럼은 1:1 곁테이블에 둔다**: pgvector는 SQLite 컴파일러가 없어서, 벡터를 본체 테이블에 얹으면 그 테이블을 쓰는 API를 `tests/api/conftest.py`에서 아예 생성할 수 없다. `feed_items`/`feed_item_embeddings`가 이 규칙을 따르고, `record_chunks`가 테스트하기 까다로운 이유도 같다. 대가는 조인 하나와 코사인 정렬 자체가 CI 미검증으로 남는 것이다.
 - **목록 페이지네이션은 `limit`/`offset` + `Query(ge=, le=)`**: `api/profile.py`가 세운 선례를 `api/feed.py`가 따른다. 커서 방식을 새로 만들지 않는다. 정렬에는 항상 결정적 2차 키(`id`)를 붙인다 — 한 수집 배치는 타임스탬프가 같아서 없으면 페이지가 겹치고 새어나간다.
-- **fan-out은 싼 계층에서만 한다**: 워크넷 조회는 순수 HTTP라 동시에 던져도 카테고리당 0.2~1.2초에 끝나지만, 로컬 Ollama는 요청을 직렬 처리하므로 LLM 호출을 동시에 던지면 뒤쪽 호출이 큐에서 자기 타임아웃을 다 쓰고 죽는다(6개 중 5개 실패를 실측, devlog 20). 그래서 조회는 `asyncio.gather`로, LLM 판단은 순차 + 전체 시간 예산으로 돌린다. 새로 LLM 호출을 카테고리/항목마다 추가하려 한다면 먼저 호출 수가 상수인지 확인한다.
-- **조건은 사후 필터링이 아니라 조회 질의로 넘긴다**: 워크넷 API는 지역/키워드 필터를 지원하므로, 전국 목록을 받아 LLM에게 걸러내게 하지 않고 질문에서 뽑은 조건을 API에 실어 보낸다. 같은 파라미터에 값을 여러 개 넣는 건 불가능하고(콤마는 0건, 반복 파라미터는 첫 값만 적용), 잘못된 코드도 에러가 아니라 조용한 0건이라 코드 변환은 `regions.py`의 검증된 표만 쓴다.
+- **fan-out은 싼 계층에서만 한다**: 고용24 조회는 순수 HTTP라 동시에 던져도 카테고리당 0.2~1.2초에 끝나지만, 로컬 Ollama는 요청을 직렬 처리하므로 LLM 호출을 동시에 던지면 뒤쪽 호출이 큐에서 자기 타임아웃을 다 쓰고 죽는다(6개 중 5개 실패를 실측, devlog 20). 그래서 조회는 `asyncio.gather`로, LLM 판단은 순차 + 전체 시간 예산으로 돌린다. 새로 LLM 호출을 카테고리/항목마다 추가하려 한다면 먼저 호출 수가 상수인지 확인한다.
+- **조건은 사후 필터링이 아니라 조회 질의로 넘긴다**: 고용24 API는 지역/키워드 필터를 지원하므로, 전국 목록을 받아 LLM에게 걸러내게 하지 않고 질문에서 뽑은 조건을 API에 실어 보낸다. 같은 파라미터에 값을 여러 개 넣는 건 불가능하고(콤마는 0건, 반복 파라미터는 첫 값만 적용), 잘못된 코드도 에러가 아니라 조용한 0건이라 코드 변환은 `regions.py`의 검증된 표만 쓴다.
 - **LLM 프로바이더 메서드는 샘플링 모드를 명시한다**: 프로바이더에 새 메서드를 추가하면 `_generate`/`_call`에 `TEMPERATURE_DETERMINISTIC`(분류·추출·판단) 또는 `TEMPERATURE_CREATIVE`(초안·문서 생성) 중 하나를 반드시 넘겨야 한다 — 기본값을 두지 않은 건 그 결정을 강제하려는 의도다. 지정하지 않으면 모델 기본값(~0.7)이 걸려 같은 입력에 회차마다 다른 답이 나온다(devlog 19에서 실측).
+- **사용자 입력 원본과 파생 캐시는 테이블을 나눈다**: `user_preferences`(직접 쓴 희망사항)는 지우면 복구가 안 되고, `user_profile_embeddings`(그걸 임베딩한 벡터)는 언제든 `TRUNCATE` 해도 지문 메커니즘이 다시 채운다. 수명이 다른 데이터를 한 테이블에 두면 후자를 초기화할 때 전자가 같이 날아간다.
 - **LLM에게 "다양하게 하라"고 시키지 말고 선택을 코드로 가져온다**: 카테고리 되묻기에서 모델에게 갈래를 고르게 했더니 프롬프트를 손볼 때마다 쏠리는 갈래만 바뀌었다(아르바이트 → 운동/건강, 14b 실측). 서버가 `PROBE_FOCUSES`에서 고르고 LLM은 문장만 만들게 하니 다양성이 보장되고 테스트도 가능해졌다.
 - **`api/X.py` ↔ `schemas/X.py` 1:1**: 새 라우터를 추가하면 그 스키마도 같은 이름의 새 파일에 둔다. 기존 파일에 끼워 넣지 않는다.
 - **라우터 간 직접 import 금지**: 두 라우터가 같은 헬퍼가 필요하면 그 헬퍼는 `models/`나 `services/`로 옮긴다(모델에 대한 순수 함수라면 그 모델의 property/method로).
