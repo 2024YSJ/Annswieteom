@@ -23,6 +23,7 @@
 | [05_cloudflare_tunnel.md](05_cloudflare_tunnel.md) | 로컬 Ollama를 외부에 안전하게 노출 | 13-3 | 2주차 (급하지 않음) |
 | [06_consistency_check.md](06_consistency_check.md) | 생성 문장의 사실 일치 여부 자동 검증 | 12-4 | 2~3주차 |
 | [07_server_ops_checklist.md](07_server_ops_checklist.md) | 매일/데모 당일 서버 점검 루틴 | 19, 17 | 상시 (2주차부터) |
+| [08_dgx_spark_migration.md](08_dgx_spark_migration.md) | 추론 서버를 RTX 4090에서 DGX Spark로 이관 | 2-1, 13-3, 17, 19 | 2026-09-10 ~ 동결(9/16) 전 |
 
 ## 막혔을 때 기억할 것 (17절)
 
