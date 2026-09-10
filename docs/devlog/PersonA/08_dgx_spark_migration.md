@@ -32,19 +32,30 @@
 - [x] `GET /api/v1/health/llm` 신설
 - [x] `pytest` 354 passed
 
-## 미완 — 온-머신 작업 (사람이 해야 함)
+## 온-머신 작업 — 완료 (2026-09-10 ~ 09-11)
 
-체크리스트 08번의 1~10절 전부. 요약하면:
+- [x] Ollama 설치 방식 확인 → **snap이 아니었다**(아래 트러블슈팅). `localhost:11434`가 이미 응답해서 바인딩은 건드리지 않았다
+- [x] `qwen2.5:32b` + `bge-m3` pull, `/api/tags`로 둘 다 확인
+- [x] 계약 검증: `GET /`, `/api/tags`, 백엔드와 동일 페이로드 `/api/chat`, `/api/embed` 길이 1024
+- [x] cloudflared arm64 설치, `cloudflared tunnel login` → `tunnel create annswieteom-llm-spark`
+- [x] `/etc/cloudflared/config.yml`(`httpHostHeader` 포함), `route dns --overwrite-dns`로 호스트명 인수
+- [x] `service install` + `systemctl enable --now`, 터널 경유 200 확인
+- [x] Cloudflare Access 애플리케이션 + 서비스 토큰, 토큰 없이 403 / 토큰으로 200
+- [x] 터널+Access 경유 `/api/chat` 실측 — ttfb 7.74초 / total 83.09초 / 200
+- [x] Render 환경변수 3개 반영, `GEMINI_API_KEY`·`LLM_PROVIDER_ORDER` 부재(있으면 부팅이 실패하므로 배포 성공 자체가 증거)
+- [x] 프로덕션 마이그레이션 `f3b6d0c8a114` 적용 확인(`alembic current`)
+- [x] **배포된 사이트에서 AI 응답 생성 확인** — Render는 노트북 `localhost`에 닿을 수 없으니 이게 Spark 경로의 증명이다
 
-1. Spark에서 Ollama 설치 방식 확인 후(필요 시에만) 바인딩 조정, `qwen2.5:32b` + `bge-m3` + `qwen2.5:14b` pull
-2. 계약 검증 4항목(특히 임베딩 길이 1024)과 GPU 실사용 확인
-3. cloudflared arm64 설치, `annswieteom-llm-spark` 터널 생성, `--overwrite-dns`로 호스트명 인수
-4. Cloudflare Access 애플리케이션 + 서비스 토큰 발급, `.env`/Render에 반영
-5. 외부 기기·재부팅·휴대폰 데이터망 확인
-6. 브라우저로 한 세션 완주 + `POST /generate` 실측 시간 기록
-7. 4090 정리 (터널 삭제, 자격증명 파일 삭제)
+## 남은 작업
 
-**남은 실측은 32b 것이다** — 아래 표의 72b 행은 채워졌고, 같은 페이로드로 `qwen2.5:32b`의 decode/총 시간/적재를 재서 채워야 한다. 그리고 브라우저 완주에서 `POST /generate` 전체 시간(카테고리 개수 × 카테고리당 시간)도 재야 한다 — 개별 호출이 Cloudflare 100초 벽을 넘는 것과, 사용자가 한 화면에서 기다리는 총 시간이 받아들여지는 것은 별개다.
+- `qwen2.5:14b`(롤백용)이 실제로 pull됐는지 확인. 롤백 경로의 전제다
+- 1절 기록 항목(`uname -m`, `nvidia-smi`, `/etc/os-release`)과 절전/서스펜드 마스킹
+- **Spark 재부팅 테스트** — 사람 손 없이 Ollama·cloudflared가 돌아오는지
+- **휴대폰 데이터망 확인** — Access 때문에 403이 정답(1033/530이면 터널 문제)
+- `GET /api/v1/health/llm` 확인 — Render 주소가 아직 저장소 어디에도 없어서 못 했다
+- **브라우저 완주로 한국어 품질 판단** — `extract_categories`·`extract_activity_period` 프롬프트가 로컬 3b에 맞춰 튜닝된 뒤 큰 모델에서 재확인된 적이 없다(`devlog/PersonB/23`). 실질적으로 남은 마지막 위험이다
+- **4090 정리** — 터널 2개 삭제, `~/.cloudflared/*.json`(자격증명) 삭제
+- 9/21 이후: `infra/cloudflare/config.yml.example`(Windows용)과 문서의 Windows 추론 호스트 잔재 정리
 
 ## 핵심 결정 사항과 이유
 
@@ -127,6 +138,9 @@ Windows 절은 **통째로 지우지 않았다.** 추론 호스트만 Linux이�
 | `cloudflared tunnel create`가 `No file cert.pem`으로 실패 | `tunnel login`을 먼저 하지 않았다 — 계정 인증서가 없으면 터널을 만들 수 없다 | `cloudflared tunnel login` 후 재시도. SSH면 브라우저가 안 뜨고 URL만 나오니 그걸 다른 기기 브라우저에서 열어 존을 승인한다. 그리고 **`sudo`로 login하면 `cert.pem`이 `/root`에 생겨** `sudo` 없는 `tunnel create`가 못 찾으므로 둘을 같은 사용자로 실행한다 |
 | `tunnel route dns ... --overwrite-dns`가 사용법 에러를 뱉음 | cloudflared는 위치 인자 뒤의 플래그를 파싱하지 않는다. 내가 쓴 문서 4곳이 전부 플래그를 뒤에 두고 있었다 | `cloudflared tunnel route dns --overwrite-dns <터널> <호스트명>` — 플래그를 앞으로. 08번·07번·`config.linux.yml.example`·`verify_tunnel.ps1` 수정 |
 | Access 서비스 토큰을 붙였는데 계속 302 | Access는 실패 이유를 본문에 안 적는다. 리다이렉트 URL의 `meta`가 JWT이고 거기에 `service_token_status: false` / `auth_status: NONE`이 있었다 — 정책 거부가 아니라 **토큰이 인정되지 않은** 상태였다. 토큰을 재발급해도 같았고, 결국 `aud`(어느 Access 앱이 처리했는지)를 대시보드 AUD와 비교하는 단계에서 풀렸다 | 08번 7절에 `meta` JWT 디코드 진단을 추가. 교훈: 대시보드를 찍어보기 전에 이 JWT를 먼저 읽으면 "토큰이 안 왔다"와 "다른 앱이 가로챘다"가 즉시 갈린다 |
+| `cloudflared tunnel create`가 `No file cert.pem`으로 실패 | `tunnel login`을 먼저 하지 않았다 | login 후 재시도. SSH면 브라우저가 안 뜨고 URL만 나오니 다른 기기에서 열어 존을 승인한다. **`sudo`로 login하면 `cert.pem`이 `/root`에 생겨** `sudo` 없는 create가 못 찾으므로 둘을 같은 사용자로 실행한다 |
+| `"4090이 꺼져 있는데 AI 응답이 나온다"를 Spark의 증거로 오인 | 개발 노트북에도 Ollama가 `qwen2.5:3b-instruct`와 함께 떠 있고 로컬 `.env`가 그걸 가리킨다. 4090은 이관 시작 시점부터 이미 경로에서 빠져 있었으므로 꺼져 있다는 사실은 아무것도 증명하지 않는다 | `.env`의 `LOCAL_LLM_BASE_URL`을 직접 확인해 로컬을 가리키는 것을 보였다. 증명은 **배포된 사이트**(Render는 노트북 localhost에 닿을 수 없다) 또는 `.env`를 터널로 임시 전환한 상태에서만 성립한다 |
+| PowerShell에서 `DATABASE_URL=... alembic current`가 `CommandNotFoundException` | PowerShell에는 `VAR=값 명령` 접두사 문법이 없어 `DATABASE_URL=...`을 실행 파일 이름으로 해석한다 | `$env:DATABASE_URL = ...` 사용. 그리고 **실패한 명령줄이 그대로 되울려 프로덕션 DB 연결 문자열이 대화 기록에 노출됐다** — 값을 파일에 넣고 `Get-Content`로 읽는 방식으로 바꿨고(에러에 값이 안 찍힌다), 비밀번호 재발급을 권고했다. 이 프로젝트는 같은 사고 이력이 있다 |
 | 긴 Bash heredoc이 `unexpected EOF`로 끊김 | 명령 문자열이 길어지면 heredoc 종료 토큰까지 도달하지 못한다 | 긴 편집은 스크립트 파일로 쓴 뒤 실행. 한국어 문자열을 유니코드 이스케이프로 넣다가 `추론`을 `추로`로 오타내기도 해서, 그 뒤로는 직접 파일에 썼다 |
 
 ## 관련 커밋
