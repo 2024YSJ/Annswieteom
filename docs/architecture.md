@@ -141,9 +141,11 @@ classDiagram
 - **세션 스코프**(`sessions`/`interview`/`records`/`document`/`job_search`/`coverage`): `Depends(get_owned_session)`으로 소유권 검증을 공유한다.
 - **계정 스코프**(`auth`의 일부, `profile`): `Depends(get_current_user)`.
 - **익명 허용**(`feed`): `Depends(get_current_user_optional)` — 메인 화면 피드는 로그아웃 방문자에게도 떠야 한다. 단 `feed/jobs/recommended`만 `get_current_user`.
+- **인증 없음**(`health`): 운영자가 데모 중 휴대폰에서 JWT 없이 확인해야 하고, 노출값은 명세서에 이미 적힌 모델 이름과 호스트명뿐이다.
 
 | 파일 | 책임 | 주요 엔드포인트 |
 |---|---|---|
+| `health.py` | 추론 서버 도달 여부(운영자용). **항상 200**이고 상태는 본문에 담는다 — 503을 내면 "AI 서버만 죽었다"와 "앱 전체가 죽었다"를 구분할 수 없다. `main.py`의 `/health`(Render liveness probe)와는 **절대 합치지 않는다** | `GET /health/llm` |
 | `auth.py` | 회원가입/로그인/게스트/토큰 재발급/로그아웃 | `POST /register`, `/login`, `/guest`, `/refresh`, `/logout`, `GET /me` |
 | `sessions.py` | 세션 CRUD (생성/목록/상세/이름변경/삭제) | `POST /sessions`, `GET /sessions`, `GET /sessions/{id}`, `PATCH /sessions/{id}`, `DELETE /sessions/{id}` |
 | `interview.py` | 상태머신 진행: 기간→카테고리→기록물스킵→인터뷰(초안/확인) | `POST .../period`, `.../period/extract`, `.../categories`, `.../categories/extract`, `.../records/skip`, `GET .../interview/next`, `POST .../interview/confirm` |
@@ -155,6 +157,7 @@ classDiagram
 
 | 파일 | 대응 라우터 | 주요 클래스 |
 |---|---|---|
+| `health.py` | `health.py` | `LLMHealthRead` |
 | `user.py` | `auth.py` | `UserCreate`, `LoginRequest`, `UserRead`, `TokenPair`, `RegisterResponse` |
 | `session.py` | `sessions.py` | `SessionCreate`, `SessionRead`(`title` 포함), `SessionRename`, `SessionContextRead`, `ActivityCategoryRead`, `ConfirmedFactRead`, `RecordChunkExcerptRead` |
 | `interview.py` | `interview.py` | `GapPeriodSet/Read`, `PeriodExtractRequest/Read`, `CategoryInput`, `CategorySelect`, `CategoryExtractRequest/Read`, `StatusRead`, `RecordsSkipRead`, `BasedOnRead`, `InterviewNextRead`, `InterviewConfirm`, `InterviewConfirmRead` |

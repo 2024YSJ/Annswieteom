@@ -92,6 +92,9 @@ journalctl -u cloudflared -n 50 --no-pager     # "active" alone is not evidence 
 ## API Structure
 
 All routes under `/api/v1`:
+- `GET /health/llm` — operator probe: is the inference server reachable from *this*
+  backend? Always 200; status is in the body. Distinct from `GET /health` (outside
+  `/api/v1`), which is Render's liveness probe and must stay dependency-free.
 - `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me`
 - `POST /sessions`, `POST /sessions/{id}/period`, `POST /sessions/{id}/categories`
 - `GET /sessions/{id}/interview/next` → returns AI draft + context

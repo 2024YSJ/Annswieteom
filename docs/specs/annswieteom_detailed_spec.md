@@ -463,7 +463,17 @@ class InterviewContext(BaseModel):
 | POST `/sessions/{id}/document/finalize` 🔒 | 최종 확정 | - |
 | GET `/sessions/{id}/export?format=txt` 🔒 | 텍스트 내보내기 | - |
 
-### 9-6. 공통 에러 포맷
+### 9-6. 운영 상태 확인
+
+| 메서드/경로 | 설명 | 비고 |
+|---|---|---|
+| GET `/health/llm` | 추론 서버·임베딩 서버 도달 여부 | 인증 없음. **항상 200**이고 상태는 본문(`llm_reachable`, `embedding_reachable`, `model_name`, `embedding_model_name`, `base_url_host`)에 담는다 |
+
+폴백이 없어서(10-2절) 추론 서버 장애가 곧 AI 기능 전체 정지이고, 노트북에서 터널로 직접 보내는 curl은 실제 경로(Render → Cloudflare Access → Spark)와 **다른 경로**를 검사한다. 이 엔드포인트가 그 전체 경로를 한 요청으로 확인하는 유일한 지점이다.
+
+`base_url_host`는 전체 URL이 아니라 호스트만 담는다 — Access 토큰이 붙은 뒤로는 URL 주변이 자격증명 자리다. 그리고 `/api/v1` 밖의 `GET /health`는 Render의 플랫폼 liveness probe로 남겨두고 여기에 합치지 않는다(합치면 Spark 장애가 서비스 재시작 루프로 번진다).
+
+### 9-7. 공통 에러 포맷
 
 ```json
 { "error": "error_code_snake_case", "message": "사용자에게 보여줄 한국어 설명" }
