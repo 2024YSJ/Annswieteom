@@ -124,6 +124,7 @@ Windows 절은 **통째로 지우지 않았다.** 추론 호스트만 Linux이�
 | 72b 유지 결정이 실측 후 뒤집힘 | 결정 시점에는 계산상 범위(2.7~7 tok/s)만 있었고, 실제 3.0 tok/s에서 카테고리 하나가 240초 타임아웃을 넘겼다 | 운영 모델을 32b로, 롤백을 14b로 내렸다. 측정을 터널 작업 **전에** 한 덕에 되돌린 비용이 문서와 주석뿐이었다 |
 | `cloudflared tunnel create`가 `No file cert.pem`으로 실패 | `tunnel login`을 먼저 하지 않았다 — 계정 인증서가 없으면 터널을 만들 수 없다 | `cloudflared tunnel login` 후 재시도. SSH면 브라우저가 안 뜨고 URL만 나오니 그걸 다른 기기 브라우저에서 열어 존을 승인한다. 그리고 **`sudo`로 login하면 `cert.pem`이 `/root`에 생겨** `sudo` 없는 `tunnel create`가 못 찾으므로 둘을 같은 사용자로 실행한다 |
 | `tunnel route dns ... --overwrite-dns`가 사용법 에러를 뱉음 | cloudflared는 위치 인자 뒤의 플래그를 파싱하지 않는다. 내가 쓴 문서 4곳이 전부 플래그를 뒤에 두고 있었다 | `cloudflared tunnel route dns --overwrite-dns <터널> <호스트명>` — 플래그를 앞으로. 08번·07번·`config.linux.yml.example`·`verify_tunnel.ps1` 수정 |
+| Access 서비스 토큰을 붙였는데 계속 302 | Access는 실패 이유를 본문에 안 적는다. 리다이렉트 URL의 `meta`가 JWT이고 거기에 `service_token_status: false` / `auth_status: NONE`이 있었다 — 정책 거부가 아니라 **토큰이 인정되지 않은** 상태였다. 토큰을 재발급해도 같았고, 결국 `aud`(어느 Access 앱이 처리했는지)를 대시보드 AUD와 비교하는 단계에서 풀렸다 | 08번 7절에 `meta` JWT 디코드 진단을 추가. 교훈: 대시보드를 찍어보기 전에 이 JWT를 먼저 읽으면 "토큰이 안 왔다"와 "다른 앱이 가로챘다"가 즉시 갈린다 |
 | 긴 Bash heredoc이 `unexpected EOF`로 끊김 | 명령 문자열이 길어지면 heredoc 종료 토큰까지 도달하지 못한다 | 긴 편집은 스크립트 파일로 쓴 뒤 실행. 한국어 문자열을 유니코드 이스케이프로 넣다가 `추론`을 `추로`로 오타내기도 해서, 그 뒤로는 직접 파일에 썼다 |
 
 ## 관련 커밋

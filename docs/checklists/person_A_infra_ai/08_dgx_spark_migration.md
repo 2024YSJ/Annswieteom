@@ -153,6 +153,24 @@ Linux의 `service install`은 config를 읽어 인자가 제대로 들어간 유
 - [ ] 백엔드에 값을 넣는다: `backend/.env`와 Render 환경변수의 `LLM_ACCESS_CLIENT_ID`, `LLM_ACCESS_CLIENT_SECRET`
 - [ ] 이 토큰을 **채팅창·커밋·devlog에 붙여넣지 않는다.** 이 프로젝트는 터널 토큰과 DB 비밀번호를 대화 기록에 노출해 재발급한 사고가 이미 있었다.
 
+### 토큰을 붙였는데 302가 나올 때 (2026-09-10에 실제로 겪음)
+
+Access는 실패 원인을 본문에 적어주지 않는다. 대신 **리다이렉트 URL의 `meta` 파라미터가 JWT**이고, 그 페이로드에 판정 결과가 들어 있다. 대시보드를 찍어보기 전에 이걸 먼저 디코드하면 원인이 두 갈래로 좁혀진다:
+
+```bash
+curl -s -o /dev/null -D -   -H "CF-Access-Client-Id: $ID" -H "CF-Access-Client-Secret: $SECRET"   https://llm.annswieteom.com/ | grep -io 'meta=[^&]*' | cut -d= -f2 | python3 -c "
+import base64,json,sys
+p=sys.stdin.read().strip().split('.')[1]; p+='='*(-len(p)%4)
+d=json.loads(base64.urlsafe_b64decode(p))
+for k in ('aud','service_token_status','auth_status','hostname'):
+    print(f'{k:22}= {d.get(k)}')
+"
+```
+
+- `service_token_status = false` → Access가 **유효한 서비스 토큰을 못 봤다**는 뜻이다. 정책이 거부한 게 아니라 토큰이 도착하지 않았거나 인정되지 않은 것이다. 확인 순서: (1) 셸 변수가 비어 있지 않은지(`${#ID}`), (2) 값 끝에 개행이 붙지 않았는지 — `echo` 대신 `printf`로 파일에 쓴다, (3) Client ID가 `.access`로 끝나는 전체 값인지.
+- **`aud`를 대시보드의 Application Audience (AUD) Tag와 비교한다.** 다르면 **다른 Access 앱이 이 호스트명을 가로채고 있다** — 정책을 아무리 고쳐도 반영되지 않는 상태다. Applications 목록에서 `annswieteom.com`이나 `*.annswieteom.com`을 포함하는 앱을 찾아 범위를 좁히거나 그쪽에 정책을 넣는다.
+- 정책은 **정확히 한 개**로 두는 게 진단에 유리하다 — Action `Service Auth`, Include `Any Access Service Token`. Access는 정책을 순서대로 평가하므로 위에 `Allow` 정책이 하나 있으면 그게 먼저 먹는다.
+
 ## 8. 외부 검증 (Spark 안에서 확인하는 것과 다르다)
 
 - [ ] **Spark가 아닌 기기에서** 인증 없이 요청 → **403이 오면 정상이다**(Access가 켜졌다는 증거):
