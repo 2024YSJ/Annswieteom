@@ -1,4 +1,4 @@
-# 메인 화면 피드 (청년 지원 정책 / 공고 / 맞춤 공고)
+# 메인 화면 피드 (청년 지원 정책 / 직업훈련·취업 프로그램 / 공고 / 맞춤 공고)
 
 원래 마일스톤 체크리스트에 없던 항목. 대응 devlog: [PersonB/25_main_page_feed.md](../devlog/PersonB/25_main_page_feed.md).
 같이 진행한 Gemini 제거는 [PersonB/24_remove_gemini_no_fallback.md](../devlog/PersonB/24_remove_gemini_no_fallback.md).
@@ -7,9 +7,11 @@
 
 취업 정보가 지금은 `job_search` 세션 안에서 **사용자가 먼저 질문해야만** 나온다. 뭘 물어야 할지 모르는 사용자에게는 아무것도 안 보인다. 질문 없이 먼저 보여주는 읽기 전용 피드를 만든다.
 
-1. **청년 지원 정책** — 최신 등록순
-2. **공고** — 최신순, 로그인 여부 무관
-3. **맞춤 공고** — 계정에 쌓인 문답으로 개인화
+1. **청년 지원 정책** — 온통청년 정책만, 최신 등록순
+2. **직업훈련·취업 프로그램** — 고용24 훈련과정 + 구직자취업역량 강화프로그램 (2026-09-11 분리, [devlog 32](../devlog/PersonB/32_policy_training_split.md))
+3. **공고** — 최신순, 로그인 여부 무관
+4. **맞춤 공고** — 계정에 쌓인 문답으로 개인화
+5. **맞춤 정책** — 대화로 알게 된 속성과 온통청년 자격조건의 교집합 → 합집합([profiling_and_matching.md](profiling_and_matching.md))
 
 ## 데이터 모델
 
@@ -45,6 +47,8 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 | 온통청년 | youth_policy | policy | **동작**(2026-09-09 인증키 발급, 30건 수집 확인) |
 
 **훈련과정과 구직자취업역량강화프로그램을 `policy`로 보낸 게 이 표에서 가장 중요한 두 줄이다.** 온통청년 키가 9/16까지 안 나와도 지원 정책 섹션이 비지 않는다. 실측으로 정책 피드 59건이 채워지는 것을 확인했다.
+
+> **2026-09-11 갱신:** 온통청년이 700여 건을 주게 되면서 위 이유가 사라졌고, "청년 지원 정책"에 훈련기관 이름만 적힌 카드가 섞여 알아보기 어려웠다. 저장(`feed_kind`)은 그대로 두고 **조회에서 카테고리로 섹션을 가른다** — `models/feed_item.py`의 `POLICY_SECTION_CATEGORIES`(`youth_policy`) / `TRAINING_SECTION_CATEGORIES`(`training_course`, `job_seeker_program`). `feed_kind`를 바꾸지 않은 건 CHECK 제약 때문에 운영 마이그레이션이 하나 더 필요해서다.
 
 ### 온통청년 — 2026-09-09 실 인증키로 확정
 
@@ -107,7 +111,9 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 
 | 엔드포인트 | 인증 | 정렬 |
 |---|---|---|
-| `GET /api/v1/feed/policies` | 익명 허용 | `coalesce(source_published_at, first_seen_at)` desc |
+| `GET /api/v1/feed/policies` | 익명 허용 | 온통청년만. `coalesce(source_published_at, first_seen_at)` desc |
+| `GET /api/v1/feed/trainings` | 익명 허용 | 훈련과정 + 구직자프로그램, 카테고리 라운드로빈 후 `first_seen_at` desc |
+| `GET /api/v1/feed/policies/recommended` | 인증 필요(게스트 포함) | 온통청년만. 티어(교집합 → 합집합 → 나머지) |
 | `GET /api/v1/feed/jobs` | 익명 허용 | 카테고리 라운드로빈(`ROW_NUMBER() OVER (PARTITION BY category ...)`) 후 `first_seen_at` desc |
 | `GET /api/v1/feed/jobs/recommended` | 인증 필요(게스트 포함) | 코사인, 불가 시 최신순 |
 | `GET /api/v1/feed/sources` | 인증 필요 | 정렬 없음 — 소스별 설정/수집 상태(진단용) |
