@@ -54,10 +54,17 @@ _PROMISING_SME_XML = """<?xml version="1.0" encoding="UTF-8"?>
 </smallGiant></smallGiantsList>
 """
 
+#: 2026-09-11 국민내일배움카드 실응답에서 쓰는 필드만 옮겼다. subTitle은
+#: 훈련기관명, title이 과정명이다 — 예전 파서는 subTitle을 제목으로 썼다.
 _TRAINING_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <HRDNet><pageNum>1</pageNum><scn_cnt>1</scn_cnt><srchList><scn_list>
-  <address>서울 구로구</address><subTitle>(주)휴넷</subTitle>
-  <subTitleLink>https://www.work24.go.kr/hr/course/1</subTitleLink>
+  <address>전북 전주시 완산구</address><courseMan>880000</courseMan>
+  <subTitle>평화요양보호사교육원</subTitle>
+  <subTitleLink>https://www.work24.go.kr/hr/a/a/3200/selectTrainInstitution.do?tracseId=AIG20250000524</subTitleLink>
+  <title>요양보호사자격취득과정</title>
+  <titleLink>https://www.work24.go.kr/hr/a/a/3100/selectTracseDetl.do?tracseId=AIG20250000524</titleLink>
+  <traStartDate>2026-09-11</traStartDate><traEndDate>2027-01-10</traEndDate>
+  <trprDegr>9</trprDegr><trprId>AIG20250000524076</trprId><trngAreaCd>52111</trngAreaCd>
 </scn_list></srchList></HRDNet>
 """
 
@@ -166,8 +173,74 @@ async def test_search_training_courses_aggregates_all_four_endpoints(monkeypatch
     _mock_get(monkeypatch, _TRAINING_XML)
     results = await jic.search_training_courses()
     # 4개 엔드포인트가 전부 같은 mock을 쓰므로 항목당 1건씩 총 4건이 합쳐진다.
+    # 유형(meta 첫 줄)이 달라서 서로 합쳐지지 않는다.
     assert len(results) == 4
-    assert all(r.title == "(주)휴넷" for r in results)
+    assert {r.meta_lines[0] for r in results} == {
+        "유형: 국민내일배움카드", "유형: 사업주훈련", "유형: 국가인적자원개발컨소시엄", "유형: 일학습병행",
+    }
+
+
+@pytest.mark.asyncio
+async def test_training_card_shows_the_course_name_not_the_institution(monkeypatch):
+    """예전엔 subTitle(훈련기관명 "평화요양보호사교육원")을 제목으로 써서 무슨
+    과정인지 알 수 없었다. 과정명은 title에 따로 온다(실응답 확인)."""
+    _mock_get(monkeypatch, _TRAINING_XML)
+    result = (await jic.search_training_courses())[0]
+
+    assert result.title == "요양보호사자격취득과정"
+    assert result.subtitle == "평화요양보호사교육원"
+    assert result.meta_lines == [
+        "유형: 국민내일배움카드",
+        "기간: 2026-09-11 ~ 2027-01-10",
+        "지역: 전북 전주시 완산구",
+        "훈련비: 880,000원",
+    ]
+    # 기관 소개가 아니라 과정 상세로 연결한다.
+    assert "selectTracseDetl" in result.detail_url
+    # 과정 id + 회차 — 해시 대신 안정적인 중복 제거 키.
+    assert result.source_key == "AIG20250000524076:9"
+    # 개설 지역 — 맞춤 직업훈련의 지역 우선 정렬 입력.
+    assert result.region_code == "52111"
+
+
+@pytest.mark.asyncio
+async def test_training_title_underscores_are_spaced_and_a_missing_title_falls_back(monkeypatch):
+    underscored = _TRAINING_XML.replace(
+        "<title>요양보호사자격취득과정</title>", "<title>2026년_(표준형)재직자_품질경영_L3</title>"
+    ).replace("<courseMan>880000</courseMan>", "<courseMan>0</courseMan>")
+    _mock_get(monkeypatch, underscored)
+    result = (await jic.search_training_courses())[0]
+    assert result.title == "2026년 (표준형)재직자 품질경영 L3"
+    assert not any(m.startswith("훈련비") for m in result.meta_lines)  # 0원은 표시하지 않는다
+
+    _mock_get(monkeypatch, _TRAINING_XML.replace("<title>요양보호사자격취득과정</title>", ""))
+    result = (await jic.search_training_courses())[0]
+    assert result.title == "평화요양보호사교육원"
+    assert result.subtitle == "국민내일배움카드"  # 제목과 같은 기관명을 두 번 쓰지 않는다
+
+
+@pytest.mark.asyncio
+async def test_http_and_transport_errors_never_carry_the_auth_key(monkeypatch):
+    """httpx 예외·raise_for_status 메시지에는 요청 URL(= authKey)이 들어 있다.
+    피드 수집이 그 문자열을 last_error에 저장하고 /feed/sources가 보여준다."""
+    monkeypatch.setattr(jic.settings, "worknet_job_posting_api_key", "secret-worknet-key")
+
+    async def http_403(self, url, params=None, **kwargs):
+        return httpx.Response(403, text="forbidden", request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", http_403)
+    with pytest.raises(WorknetApiError) as exc_info:
+        await jic.search_job_fairs()
+    assert "secret-worknet-key" not in str(exc_info.value)
+
+    async def timeout(self, url, params=None, **kwargs):
+        raise httpx.ReadTimeout(f"timed out: {httpx.Request('GET', url, params=params).url}")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", timeout)
+    with pytest.raises(WorknetApiError) as exc_info:
+        await jic.search_job_fairs()
+    assert "secret-worknet-key" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
 
 
 @pytest.mark.asyncio
@@ -280,8 +353,8 @@ async def test_duplicate_courses_across_combos_are_merged(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_zero_filtered_results_falls_back_to_an_unfiltered_fetch(monkeypatch):
-    # 고용24은 유효하지 않은 코드에도 에러가 아니라 빈 목록을 준다(실측: 광주
-    # 29는 두 엔드포인트 모두 0건) — "코드가 틀렸다"와 "그 지역에 과정이 없다"를
+    # 고용24은 유효하지 않은 코드에도 에러가 아니라 빈 목록을 준다(실측: 통합 전
+    # 광주 코드 29는 0건 — 지금은 12로 보낸다) — "코드가 틀렸다"와 "그 지역에 과정이 없다"를
     # 구분할 수 없으니, 조용히 빈 화면을 주는 대신 넓혀서 다시 받아온다.
     attempts: list[tuple] = []
 

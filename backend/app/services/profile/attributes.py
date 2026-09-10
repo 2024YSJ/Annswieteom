@@ -307,7 +307,16 @@ async def load_match_profile(db: AsyncSession, user_id: uuid.UUID) -> MatchProfi
     special = frozenset(
         code for row in by_key.get("special_groups", []) if (code := (row.value or {}).get("code"))
     )
+    desired: set[str] = set()
+    for row in by_key.get("desired_region", []):
+        value = row.value or {}
+        if value.get("code"):
+            desired.add(value["code"])
+        elif value.get("label") == "수도권":
+            # 광역이 셋이라 코드 하나로 저장하지 못한 값(normalize 참고) — 정렬에서는 펼친다.
+            desired.update({"11", "41", "28"})
     return MatchProfile(
+        desired_region_codes=frozenset(desired),
         birth_year=one("birth_year", "year"),
         residence_code=one("residence_region", "code"),
         education_code=one("education_level", "code"),

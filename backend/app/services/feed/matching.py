@@ -75,6 +75,14 @@ class MatchProfile:
     marital_code: str | None = None
     #: 연소득(만원).
     annual_income: int | None = None
+    #: 희망 근무지역 코드들. 정책 자격조건과는 무관해(정책은 "거주지" 기준) 티어
+    #: 매칭에는 안 쓰고, 맞춤 직업훈련의 지역 우선 정렬에만 쓴다.
+    desired_region_codes: frozenset[str] = frozenset()
+
+    @property
+    def region_codes(self) -> tuple[str, ...]:
+        """지역 우선 정렬에 쓰는 코드 — 거주지 먼저, 그다음 희망지역."""
+        return tuple(c for c in (self.residence_code, *sorted(self.desired_region_codes)) if c)
 
     @property
     def is_empty(self) -> bool:
@@ -267,6 +275,114 @@ def _recency(item: FeedItem) -> float:
     return 0.0
 
 
+async def _vector_distances(
+    db: AsyncSession, feed_kind: str, profile_vector: list[float] | None
+) -> tuple[dict, bool]:
+    """(항목 id → 코사인 거리, 벡터 질의가 실패했는가).
+
+    **항목을 읽기 전에** 불러야 한다. 실패하면 rollback하는데, rollback은 세션에
+    올라온 ORM 객체를 전부 expire시켜 이후 속성 접근이 lazy load(IO)가 되고 요청
+    핸들러에서 MissingGreenlet으로 터진다(api/feed.py 주석 참고). SQLite 테스트에는
+    벡터 테이블이 없어 여기서 조용히 빈 dict가 된다.
+    """
+    if profile_vector is None:
+        return {}, False
+    try:
+        rows = (
+            await db.execute(
+                select(FeedItemEmbedding.feed_item_id, FeedItemEmbedding.embedding.cosine_distance(profile_vector))
+                .join(FeedItem, FeedItem.id == FeedItemEmbedding.feed_item_id)
+                .where(
+                    FeedItem.is_active.is_(True),
+                    FeedItem.feed_kind == feed_kind,
+                    FeedItemEmbedding.embedding.is_not(None),
+                )
+            )
+        ).all()
+    except Exception:
+        await db.rollback()
+        logger.warning("feed: vector distances unavailable", exc_info=True)
+        return {}, True
+    return {item_id: float(d) for item_id, d in rows if d is not None}, False
+
+
+def _same_area(area_code: str, user_code: str) -> bool:
+    """개설 지역(시군구 5자리)이 사용자 지역(광역 2자리 또는 시·군 5자리) 안인가.
+
+    통합 전 코드(29/46)는 양쪽 다 12로 맞춘다. 시 코드(41110)는 구 코드
+    (41111·41113 …)와 앞 4자리를 공유한다(_region과 같은 규칙).
+    """
+    area_sido = yc.REGION_ALIASES.get(area_code[:2], area_code[:2])
+    user_sido = yc.REGION_ALIASES.get(user_code[:2], user_code[:2])
+    if area_sido != user_sido:
+        return False
+    if len(user_code) == 5 and user_code[:2] not in yc.REGION_ALIASES:
+        return area_code[:4] == user_code[:4]
+    return True
+
+
+def region_hit(area_code: str | None, profile: MatchProfile) -> str | None:
+    """가까운 과정이면 카드에 보일 이유("수원 거주지역"), 아니면 None."""
+    if not area_code:
+        return None
+    if profile.residence_code and _same_area(area_code, profile.residence_code):
+        return f"{region_label_for(profile.residence_code) or profile.residence_code} 거주지역"
+    for code in sorted(profile.desired_region_codes):
+        if _same_area(area_code, code):
+            return f"희망지역 {region_label_for(code) or code}"
+    return None
+
+
+async def rank_by_region(
+    db: AsyncSession,
+    *,
+    feed_kind: str,
+    categories: tuple[str, ...],
+    profile: MatchProfile,
+    profile_vector: list[float] | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> RankedFeed:
+    """맞춤 직업훈련 — 거주지·희망지역에서 열리는 과정 먼저, 그 안에서 프로필
+    벡터 유사도순, 그다음 최신·id.
+
+    지역이 안 맞는 과정도 **빼지 않고 뒤로 보낸다.** 정책과 달리 훈련은 신청
+    자격이 지역에 묶이지 않는다(원격 과정, 통학 가능 거리). 정렬 키가 완전히
+    결정적이라 limit/offset 페이지가 겹치거나 빠지지 않는다.
+    """
+    distances, vector_failed = await _vector_distances(db, feed_kind, profile_vector)
+    items = list(
+        (
+            await db.execute(
+                select(FeedItem).where(
+                    FeedItem.is_active.is_(True),
+                    FeedItem.feed_kind == feed_kind,
+                    FeedItem.category.in_(categories),
+                )
+            )
+        ).scalars().all()
+    )
+
+    scored: list[tuple[tuple, FeedItem, ItemMatch]] = []
+    for item in items:
+        hit = region_hit((item.eligibility or {}).get("area_code"), profile)
+        distance = distances.get(item.id)
+        key = (0 if hit else 1, distance if distance is not None else math.inf, -_recency(item), str(item.id))
+        # 티어 배지("조건 N개 모두 일치")는 정책 전용이라 none으로 두고, 가까운
+        # 이유만 matched_labels로 싣는다 — 카드에 "✓ 수원 거주지역"으로 보인다.
+        scored.append((key, item, ItemMatch(tier="none", matched_labels=[hit] if hit else [])))
+    scored.sort(key=lambda t: t[0])
+
+    page = scored[offset : offset + limit]
+    return RankedFeed(
+        items=[item for _, item, _ in page],
+        total=len(scored),
+        personalized=True,
+        vector_ranking_failed=vector_failed,
+        matches={item.id: match for _, item, match in page},
+    )
+
+
 async def rank_tiered(
     db: AsyncSession,
     *,
@@ -286,29 +402,7 @@ async def rank_tiered(
     완전히 결정적이라(마지막 id) limit/offset 페이지가 겹치거나 빠지지 않는다 —
     ranking.py가 지키는 것과 같은 보장이다.
     """
-    distances: dict = {}
-    vector_failed = False
-    if profile_vector is not None:
-        # 벡터 질의를 **항목을 읽기 전에** 한다. 실패하면 rollback하는데, rollback은
-        # 세션에 올라온 ORM 객체를 전부 expire시켜 이후 속성 접근이 lazy load(IO)가
-        # 되고 요청 핸들러에서 MissingGreenlet으로 터진다(api/feed.py 주석 참고).
-        try:
-            rows = (
-                await db.execute(
-                    select(FeedItemEmbedding.feed_item_id, FeedItemEmbedding.embedding.cosine_distance(profile_vector))
-                    .join(FeedItem, FeedItem.id == FeedItemEmbedding.feed_item_id)
-                    .where(
-                        FeedItem.is_active.is_(True),
-                        FeedItem.feed_kind == feed_kind,
-                        FeedItemEmbedding.embedding.is_not(None),
-                    )
-                )
-            ).all()
-            distances = {item_id: float(d) for item_id, d in rows if d is not None}
-        except Exception:
-            await db.rollback()
-            logger.warning("feed: vector distances unavailable for tiered ranking", exc_info=True)
-            vector_failed = True
+    distances, vector_failed = await _vector_distances(db, feed_kind, profile_vector)
 
     stmt = select(FeedItem).where(FeedItem.is_active.is_(True), FeedItem.feed_kind == feed_kind)
     if category is not None:
@@ -347,4 +441,18 @@ def get_tiered_ranker():
     return rank_tiered
 
 
-__all__ = ["ItemMatch", "MatchProfile", "get_tiered_ranker", "rank_tiered", "score_item"]
+def get_region_ranker():
+    """FastAPI DI 훅 — 맞춤 직업훈련용."""
+    return rank_by_region
+
+
+__all__ = [
+    "ItemMatch",
+    "MatchProfile",
+    "get_region_ranker",
+    "get_tiered_ranker",
+    "rank_by_region",
+    "rank_tiered",
+    "region_hit",
+    "score_item",
+]

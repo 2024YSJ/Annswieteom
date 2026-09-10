@@ -195,18 +195,33 @@ export default function Home() {
       {/* 맞춤 정책 — 대화로 알게 된 나이·거주지·학력 등과 정책 자격조건을 필드별로
        * 대조해, 조건이 모두 맞는 정책(교집합)을 먼저 올린다. 게스트도 속성이 쌓이고
        * /archive에서 고칠 수 있으므로 같은 링크를 준다. */}
+      {/* 맞춤 직업훈련 — 거주지·희망지역에서 열리는 과정 먼저, 그 안에서 문답
+       * 유사도순. 일반 섹션 3개(공고/지원 정책/직업훈련)와 짝을 맞췄다(2026-09-11). */}
       {user && (
-        <FeedSection
-          scope="recommended_policies"
-          icon="🧩"
-          title="맞춤 정책"
-          accessToken={accessToken}
-          action={
-            <Link href="/archive" className="section-aside">
-              알게 된 정보 확인 →
-            </Link>
-          }
-        />
+        <>
+          <FeedSection
+            scope="recommended_policies"
+            icon="🧩"
+            title="맞춤 지원 정책"
+            accessToken={accessToken}
+            action={
+              <Link href="/archive" className="section-aside">
+                알게 된 정보 확인 →
+              </Link>
+            }
+          />
+          <FeedSection
+            scope="recommended_trainings"
+            icon="🛠️"
+            title="맞춤 직업훈련"
+            accessToken={accessToken}
+            action={
+              <Link href="/archive" className="section-aside">
+                알게 된 정보 확인 →
+              </Link>
+            }
+          />
+        </>
       )}
 
       <FeedSection scope="jobs" icon="🧭" title="최신 공고" aside="고용24에서 모아왔어요" accessToken={accessToken} />

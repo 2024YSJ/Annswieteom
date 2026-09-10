@@ -38,9 +38,13 @@ class WorknetFeedSource:
     고용24 XML 스키마가 바뀔 때마다 두 곳을 고쳐야 하고, 반드시 한 곳을 잊는다.
 
     항목별 안정 id는 이제 `JobInfoResult.source_key`로 올라온다(채용행사
-    `eventNo`, 공채속보 `empSeqno`, 공채기업정보 `empCoNo`, 강소기업 `busiNo`).
-    구직자프로그램과 훈련과정은 응답에 id가 없어 여전히 내용 해시로 갈음한다
-    (services/feed/dedup.py).
+    `eventNo`, 공채속보 `empSeqno`, 공채기업정보 `empCoNo`, 강소기업 `busiNo`,
+    훈련과정 `trprId:trprDegr`). 구직자프로그램만 응답에 id가 없어 여전히 내용
+    해시로 갈음한다(services/feed/dedup.py).
+
+    훈련과정은 개설 지역 코드를 `eligibility={"area_code": …}`로 싣는다 — 맞춤
+    직업훈련이 사용자 거주지·희망지역과 가까운 과정을 먼저 올리는 입력이다
+    (services/feed/matching.rank_by_region).
     """
 
     name = "worknet"
@@ -68,6 +72,7 @@ class WorknetFeedSource:
                 # 소스가 준 항목 id를 먼저 쓴다. 없으면 상세 URL이 항목마다
                 # 고유하므로 사실상의 안정 id 역할을 한다.
                 source_key=r.source_key or r.detail_url or None,
+                eligibility={"area_code": r.region_code} if r.region_code else None,
             )
             for r in results
             if r.title
