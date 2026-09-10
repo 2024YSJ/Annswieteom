@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,7 @@ from app.services.job_pipeline.regions import KNOWN_REGION_NAMES
 from app.services.llm.base import JobInfoCandidate, LLMProvider, LLMUnavailableError
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
 from app.services.llm import get_llm_provider
+from app.services.profile.attributes import get_profile_extractor
 
 router = APIRouter(prefix="/sessions", tags=["job_search"])
 
@@ -63,9 +64,11 @@ def _require_job_search(session: SessionModel) -> None:
 @router.post("/{session_id}/job-search/query", response_model=JobInfoQueryRead)
 async def query_job_info(
     payload: JobInfoQueryRequest,
+    background_tasks: BackgroundTasks,
     session: SessionModel = Depends(get_owned_session),
     llm: LLMProvider = Depends(get_llm_provider),
     job_client: JobInfoClient = Depends(get_job_info_client),
+    extractor=Depends(get_profile_extractor),
 ) -> JobInfoQueryRead:
     """무상태 대화형 검색 — 매 질문마다 관련 카테고리(들)를 판단하고 그
     자리에서 바로 조회한다. 확정/저장할 게 없어(급여/조건을 모아뒀다가
@@ -79,6 +82,10 @@ async def query_job_info(
     있는 경우를 전혀 못 잡아서(2026-09-08 실사용 피드백) 폐기했다 —
     devlog 18 참고."""
     _require_job_search(session)
+    # 검색 질문도 사용자가 자기에 대해 한 말이다("경기 북부 백엔드 신입") — 희망
+    # 지역·직무를 프로필로 남긴다. 응답을 보낸 뒤 백그라운드에서만 돈다(이 라우트는
+    # 이미 LLM 호출이 많아 요청 경로에 하나를 더 얹을 수 없다).
+    background_tasks.add_task(extractor, session.user_id, "job_search", payload.query)
 
     try:
         category_queries = await llm.classify_job_info_query(payload.query)

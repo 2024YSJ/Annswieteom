@@ -23,6 +23,13 @@ class FeedItemRead(BaseModel):
     detail_url: str | None
     source_published_at: date | None
     first_seen_at: datetime
+    #: 맞춤 정책(/feed/policies/recommended)에서만 채워진다.
+    #: all = 걸린 조건이 모두 맞음(교집합), some = 일부 맞음(합집합),
+    #: none = 명시적으로 맞는 조건 없음(전원 대상 포함), excluded = 자격 밖
+    #: (include_excluded=true일 때만 나온다). services/feed/matching.py 참고.
+    match_tier: Literal["all", "some", "none", "excluded"] | None = None
+    matched_labels: list[str] = []
+    unmet_labels: list[str] = []
 
 
 class FeedRead(BaseModel):
@@ -53,7 +60,9 @@ class FeedRead(BaseModel):
     limit: int
     offset: int
     personalized: bool
-    fallback_reason: Literal["no_profile", "preparing", "ai_unavailable"] | None = None
+    #: `"no_attributes"`: 맞춤 정책 전용 — 대화로 알게 된 속성(나이·거주지 등)이
+    #: 아직 하나도 없어 조건 매칭을 못 했다. 최신순으로 채운다.
+    fallback_reason: Literal["no_profile", "preparing", "ai_unavailable", "no_attributes"] | None = None
     #: 캐시가 비어 있어 방금 수집을 예약한 상태. BackgroundTasks가 응답 이후에
     #: 돌기 때문에 최초 1회는 구조적으로 items가 빈 채로 나간다.
     is_warming: bool

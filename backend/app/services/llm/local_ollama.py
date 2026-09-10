@@ -10,6 +10,7 @@ from jinja2 import Environment, FileSystemLoader
 from app.core.config import settings
 from app.models.activity_category import CATEGORY_TYPES
 from app.services.llm.base import (
+    AttributeCandidate,
     BasedOn,
     CategorySuggestion,
     clamp_activity_period,
@@ -31,6 +32,7 @@ from app.services.llm.base import (
     TEMPERATURE_CREATIVE,
     TEMPERATURE_DETERMINISTIC,
 )
+from app.services.profile import vocabulary
 
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 _jinja_env = Environment(loader=FileSystemLoader(str(_PROMPTS_DIR)), autoescape=False)
@@ -148,6 +150,7 @@ class LocalOllamaProvider:
             confirmed_facts_so_far=context.confirmed_facts_so_far,
             record_excerpts=context.record_excerpts,
             asked_questions=context.asked_questions,
+            profile_summary=context.profile_summary,
         )
         response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
@@ -177,6 +180,7 @@ class LocalOllamaProvider:
             gap_end=context.gap_end,
             confirmed_facts_so_far=context.confirmed_facts_so_far,
             asked_questions=context.asked_questions,
+            profile_summary=context.profile_summary,
         )
         response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
@@ -352,6 +356,37 @@ class LocalOllamaProvider:
             data = json.loads(response_text)
             return str(data.get("draft_query") or "")
         except json.JSONDecodeError as exc:
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def extract_profile_attributes(
+        self, text: str, known: list[str], allow_sensitive: bool
+    ) -> list[AttributeCandidate]:
+        # allow_sensitive는 프롬프트를 바꾸지 않는다(base.py Protocol 주석 참고).
+        prompt = _render(
+            "extract_profile_attributes.jinja",
+            text=text,
+            known=known,
+            regions=", ".join(vocabulary.REGION_CHOICES),
+            education=", ".join(vocabulary.EDUCATION_CHOICES),
+            majors=", ".join(vocabulary.MAJOR_CHOICES),
+            employment=", ".join(vocabulary.EMPLOYMENT_CHOICES),
+            employment_types=", ".join(vocabulary.EMPLOYMENT_TYPE_CHOICES),
+            special=", ".join(vocabulary.SPECIAL_CHOICES),
+            marital=", ".join(vocabulary.MARITAL_CHOICES),
+        )
+        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        try:
+            data = json.loads(response_text)
+            return [
+                AttributeCandidate(
+                    key=str(a["key"]),
+                    value_label=str(a["value"]).strip(),
+                    evidence=str(a.get("evidence") or "").strip(),
+                )
+                for a in data["attributes"]
+                if isinstance(a, dict) and a.get("key") and a.get("value") not in (None, "")
+            ]
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def health_check(self) -> bool:

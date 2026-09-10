@@ -22,16 +22,24 @@ from app.services.feed.profile_adapter import (
     load_profile_vector,
     profile_needs_refresh,
 )
+from app.services.feed.matching import ItemMatch, get_tiered_ranker
 from app.services.feed.ranking import get_feed_ranker
 from app.services.feed.sources import FEED_CATEGORY_LABELS, FEED_SOURCE_LABELS, all_sources
+from app.services.profile.attributes import load_match_profile
 
 # /me는 api/profile.py(문답 아카이브)가 점유했고, 무엇보다 피드는 로그아웃
 # 방문자에게도 떠야 한다 — /me/* 는 정의상 인증이 필요하므로 최상위 /feed에 둔다.
 router = APIRouter(prefix="/feed", tags=["feed"])
 
 
-def _to_read(item: FeedItem) -> FeedItemRead:
+def _to_read(item: FeedItem, match: ItemMatch | None = None) -> FeedItemRead:
+    extra = (
+        {"match_tier": match.tier, "matched_labels": match.matched_labels, "unmet_labels": match.unmet_labels}
+        if match is not None
+        else {}
+    )
     return FeedItemRead(
+        **extra,
         id=item.id,
         source=item.source,
         source_label=FEED_SOURCE_LABELS.get(item.source, item.source),
@@ -213,6 +221,62 @@ async def list_recommended_job_feed(
         db, background_tasks, refresher, ranker,
         feed_kind="job", category=None, limit=limit, offset=offset,
         profile_vector=vector, fallback_reason=fallback_reason,
+    )
+
+
+@router.get("/policies/recommended", response_model=FeedRead)
+async def list_recommended_policy_feed(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    include_excluded: bool = Query(default=False),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    refresher=Depends(get_feed_refresher),
+    ranker=Depends(get_feed_ranker),
+    tiered_ranker=Depends(get_tiered_ranker),
+) -> FeedRead:
+    """맞춤 정책 — 걸린 조건이 모두 맞는 정책(교집합) 먼저, 일부 맞는 정책
+    (합집합) 다음, 나머지는 프로필 벡터 유사도순.
+
+    조건 판정은 대화로 알게 된 속성(user_attributes)과 온통청년 자격조건 코드를
+    필드별로 대조한다(services/feed/matching.py). 나이·거주지가 맞지 않는 정책은
+    신청 자격이 없으므로 기본적으로 뺀다 — `include_excluded=true`면 맨 뒤에 붙인다.
+
+    게스트도 받는다(맞춤 공고와 같은 이유). 속성이 하나도 없으면 최신순 +
+    `fallback_reason="no_attributes"`.
+    """
+    # rollback이 ORM 객체를 expire시키므로 id를 먼저 잡는다(list_recommended_job_feed 주석).
+    user_id = current_user.id
+    profile = await load_match_profile(db, user_id)
+    if profile.is_empty:
+        return await _build(
+            db, background_tasks, refresher, ranker,
+            feed_kind="policy", category=None, limit=limit, offset=offset,
+            prefer_published_date=True, fallback_reason="no_attributes",
+        )
+
+    is_warming = await _schedule_refresh_if_needed(db, background_tasks, refresher)
+    # 벡터는 티어 안에서의 2차 정렬에만 쓴다. 없어도(아직 계산 전, SQLite) 티어는 그대로다.
+    vector = await load_profile_vector(db, user_id)
+    ranked = await tiered_ranker(
+        db,
+        feed_kind="policy",
+        profile=profile,
+        profile_vector=vector,
+        include_excluded=include_excluded,
+        limit=limit,
+        offset=offset,
+    )
+    return FeedRead(
+        items=[_to_read(i, ranked.matches.get(i.id)) for i in ranked.items],
+        total=ranked.total,
+        limit=limit,
+        offset=offset,
+        personalized=True,
+        fallback_reason=None,
+        is_warming=is_warming,
+        refreshed_at=await last_refreshed_at(db),
     )
 
 
