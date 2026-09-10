@@ -89,4 +89,11 @@ export const feedApi = {
     request<FeedRead>(`/api/v1/feed/policies/recommended${queryString(options)}`, {
       headers: authHeaders(accessToken),
     }),
+
+  /** 맞춤 직업훈련 — 거주지·희망지역에서 열리는 과정 먼저, 그 안에서 문답 유사도순.
+   * 가까운 과정은 `matched_labels`에 이유("수원 거주지역")가 실려 온다. */
+  recommendedTrainings: (options: Omit<FeedQuery, "category"> = {}, accessToken: string) =>
+    request<FeedRead>(`/api/v1/feed/trainings/recommended${queryString(options)}`, {
+      headers: authHeaders(accessToken),
+    }),
 };

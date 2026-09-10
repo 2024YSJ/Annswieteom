@@ -13,6 +13,7 @@ export const queryKeys = {
    *
    * "더보기"는 페이지를 키에 넣지 않는다 — `useInfiniteQuery`가 이 키 하나 아래에
    * 페이지 배열을 모으므로, 페이지를 키에 넣으면 오히려 이어붙이기가 깨진다. */
-  feed: (scope: "policies" | "trainings" | "jobs" | "recommended" | "recommended_policies") =>
-    ["feed", scope] as const,
+  feed: (
+    scope: "policies" | "trainings" | "jobs" | "recommended" | "recommended_policies" | "recommended_trainings",
+  ) => ["feed", scope] as const,
 };

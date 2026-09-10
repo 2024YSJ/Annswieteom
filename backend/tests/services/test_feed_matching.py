@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.models.feed_item import FeedItem
-from app.services.feed.matching import MatchProfile, rank_tiered, score_item
+from app.services.feed.matching import MatchProfile, rank_by_region, rank_tiered, region_hit, score_item
 
 TODAY = date(2026, 9, 11)
 
@@ -100,7 +100,7 @@ def test_gwangju_users_match_the_merged_jeonnam_gwangju_code():
     whole_province = [f"12{i:03d}" for i in range(27)]
     match = score_item(elig(nationwide=False, zip_codes=whole_province), MatchProfile(residence_code="29"), TODAY)
     assert match.tier == "all"
-    assert match.matched_labels == ["광주 거주"]
+    assert match.matched_labels == ["전남광주 거주"]
 
 
 def test_not_having_said_you_are_in_a_special_group_is_unknown_not_a_mismatch():
@@ -116,6 +116,18 @@ def test_consented_special_group_matches():
 
 def test_items_without_eligibility_have_no_tier_to_claim():
     assert score_item(None, SUWON, TODAY).tier == "none"
+
+
+def test_region_hit_matches_city_province_and_desired_regions():
+    # 수원(41110) 사용자 — 권선구(41113)에서 열리는 과정은 가깝다, 고양(41285)은 아니다.
+    assert region_hit("41113", SUWON) == "수원 거주지역"
+    assert region_hit("41285", SUWON) is None
+    # 희망지역이 서울이면 서울 과정도 가깝다.
+    seoul_hope = MatchProfile(residence_code="41110", desired_region_codes=frozenset({"11"}))
+    assert region_hit("11110", seoul_hope) == "희망지역 서울"
+    # 통합 전 광주 코드(29)로 저장된 사용자도 12xxx 과정과 맞는다.
+    assert region_hit("12110", MatchProfile(residence_code="29")) == "전남광주 거주지역"
+    assert region_hit(None, SUWON) is None
 
 
 @pytest.fixture
@@ -176,3 +188,45 @@ async def test_rank_tiered_orders_by_tier_and_pages_without_overlap(db_session):
         )
         assert with_excluded.items[-1].title == "excluded-age"
         assert with_excluded.matches[with_excluded.items[0].id].tier == "all"
+
+
+def _training(title: str, area_code: str | None, seen_offset: int, category: str = "training_course") -> FeedItem:
+    return FeedItem(
+        source="worknet",
+        category=category,
+        feed_kind="policy",
+        dedup_key=f"k:{title}",
+        title=title,
+        eligibility={"area_code": area_code} if area_code else None,
+        first_seen_at=datetime(2026, 9, 1, tzinfo=timezone.utc) + timedelta(minutes=seen_offset),
+    )
+
+
+@pytest.mark.asyncio
+async def test_rank_by_region_puts_nearby_courses_first_but_keeps_the_rest(db_session):
+    async with db_session() as db:
+        db.add_all(
+            [
+                _training("고양 최신", "41285", 9),
+                _training("수원 과정", "41113", 1),
+                _training("서울 과정", "11110", 5),
+                _training("지역 모름", None, 8),
+                _training("수원 특강", "41111", 2, category="job_seeker_program"),
+                _policy("청년정책", elig(), 7),  # 다른 섹션 — 섞이면 안 된다
+            ]
+        )
+        await db.commit()
+
+        profile = MatchProfile(residence_code="41110", desired_region_codes=frozenset({"11"}))
+        ranked = await rank_by_region(
+            db, feed_kind="policy", categories=("training_course", "job_seeker_program"), profile=profile, limit=10
+        )
+
+        titles = [i.title for i in ranked.items]
+        # 가까운 과정(수원 거주지역·희망지역 서울) 먼저 — 그 안에서는 벡터가 없으니 최신순.
+        assert titles[:3] == ["서울 과정", "수원 특강", "수원 과정"]
+        # 먼 과정도 빠지지 않는다 — 훈련은 지역에 자격이 묶이지 않는다.
+        assert titles[3:] == ["고양 최신", "지역 모름"]
+        assert ranked.total == 5
+        assert ranked.matches[ranked.items[0].id].matched_labels == ["희망지역 서울"]
+        assert ranked.matches[ranked.items[3].id].matched_labels == []

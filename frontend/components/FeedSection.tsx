@@ -13,9 +13,19 @@ import { queryKeys } from "@/lib/query-keys";
  * 잠시 기다렸다 다시 물어보는 것 말고는 방법이 없다. */
 const WARMING_POLL_MS = 4000;
 
-export type FeedScope = "policies" | "trainings" | "jobs" | "recommended" | "recommended_policies";
+export type FeedScope =
+  | "policies"
+  | "trainings"
+  | "jobs"
+  | "recommended"
+  | "recommended_policies"
+  | "recommended_trainings";
 
-const PERSONALIZED_SCOPES: ReadonlySet<FeedScope> = new Set(["recommended", "recommended_policies"]);
+const PERSONALIZED_SCOPES: ReadonlySet<FeedScope> = new Set([
+  "recommended",
+  "recommended_policies",
+  "recommended_trainings",
+]);
 
 /** `fallback_reason`별 안내. 셋을 하나로 뭉치면 안 되는 이유는 서버 스키마 주석에
  * 적힌 그대로다 — 문답을 처음 남긴 사용자는 `preparing`을 반드시 한 번 지나가므로
@@ -36,7 +46,7 @@ function fallbackNotice(feed: FeedRead): { text: string; tone: "info" | "warn" }
       return { text: "AI 서버가 수리 중이라 맞춤 정렬을 못 하고 있어요. 아래 최신 공고는 그대로 보실 수 있어요.", tone: "warn" };
     case "no_attributes":
       return {
-        text: "대화에서 나이·사는 곳·학력 같은 정보를 알게 되면, 조건이 모두 맞는 정책부터 골라드려요. 맞춤 정보 화면에서 직접 적어두셔도 돼요.",
+        text: "대화에서 나이·사는 곳·희망 지역 같은 정보를 알게 되면, 나에게 맞는 것부터 골라드려요. 맞춤 정보 화면에서 직접 적어두셔도 돼요.",
         tone: "info",
       };
     default:
@@ -121,6 +131,7 @@ export function FeedSection({
       if (scope === "trainings") return feedApi.trainings(options, accessToken);
       if (scope === "jobs") return feedApi.jobs(options, accessToken);
       if (scope === "recommended_policies") return feedApi.recommendedPolicies(options, accessToken!);
+      if (scope === "recommended_trainings") return feedApi.recommendedTrainings(options, accessToken!);
       return feedApi.recommendedJobs(options, accessToken!);
     },
     initialPageParam: 0,

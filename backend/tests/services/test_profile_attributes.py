@@ -237,6 +237,19 @@ async def test_match_profile_hides_sensitive_values_until_consent(db_session):
 
 
 @pytest.mark.asyncio
+async def test_desired_regions_feed_the_match_profile_and_capital_area_expands(db_session):
+    user_id = uuid.uuid4()
+    async with db_session() as db:
+        await attrs.add_user_value(db, user_id, "desired_region", "수원")
+        await attrs.add_user_value(db, user_id, "desired_region", "수도권")
+        await db.commit()
+        profile = await attrs.load_match_profile(db, user_id)
+        assert profile.desired_region_codes == frozenset({"41110", "11", "41", "28"})
+        # 희망지역은 정책 자격(거주지 기준)과 무관하다 — 정책 매칭 입력으로는 비어 있다.
+        assert profile.is_empty
+
+
+@pytest.mark.asyncio
 async def test_summary_lines_never_include_sensitive_values(db_session):
     user_id = uuid.uuid4()
     async with db_session() as db:

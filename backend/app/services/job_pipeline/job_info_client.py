@@ -82,6 +82,9 @@ class JobInfoResult:
     #: 없으면 내용 해시로 갈음하는데, 그러면 소스가 문구를 한 글자만 고쳐도
     #: 새 항목으로 들어온다. 카테고리마다 id 필드 이름이 다르므로 파서에서 채운다.
     source_key: str | None = None
+    #: 개설 지역의 시군구 코드(훈련과정의 `trngAreaCd`, 예 "41285"). 맞춤 직업훈련이
+    #: 사용자 거주지·희망지역과 비교해 가까운 과정을 먼저 올리는 데 쓴다.
+    region_code: str | None = None
 
 
 def _text(item: ET.Element, tag: str) -> str:
@@ -100,12 +103,20 @@ def _check_error(root: ET.Element, category: str) -> None:
 
 
 async def _get(url: str, params: dict[str, str], category: str) -> ET.Element:
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(url, params=params)
-        resp.raise_for_status()
-        root = ET.fromstring(resp.text)
-        _check_error(root, category)
-        return root
+    # httpx 예외 메시지와 raise_for_status()의 메시지에는 요청 URL — 즉 쿼리스트링의
+    # authKey — 가 통째로 들어 있다. 그대로 올리면 피드 수집이 last_error에 저장하고
+    # /feed/sources가 로그인 사용자에게 보여준다(온통청년에서 같은 경로를 막은 것과
+    # 같은 이유, devlog 31). 상태코드를 직접 보고 URL 없는 WorknetApiError로 바꾼다.
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, params=params)
+    except httpx.HTTPError as exc:
+        raise WorknetApiError(category, f"transport error: {type(exc).__name__}") from None
+    if resp.status_code >= 400:
+        raise WorknetApiError(category, f"http {resp.status_code}")
+    root = ET.fromstring(resp.text)
+    _check_error(root, category)
+    return root
 
 
 async def search_job_fairs(limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
@@ -275,20 +286,48 @@ async def _search_one_training_endpoint(
         params["srchTraProcessNm"] = keyword
 
     root = await _get(url, params, f"training_course:{label}")
-    results = []
-    for item in root.findall(".//scn_list"):
-        address = _text(item, "address")
-        if region is not None and not region.matches_address(address):
-            continue
-        results.append(
-            JobInfoResult(
-                title=_text(item, "subTitle"),
-                subtitle=f"{label} · {address}" if address else label,
-                meta_lines=[],
-                detail_url=_text(item, "subTitleLink") or None,
-            )
+    return [
+        result
+        for item in root.findall(".//scn_list")
+        if (result := _parse_training_item(item, label, region)) is not None
+    ]
+
+
+def _parse_training_item(item: ET.Element, label: str, region: RegionFilter | None) -> JobInfoResult | None:
+    """훈련과정 한 건.
+
+    예전엔 `subTitle`을 제목으로 썼는데 그건 **훈련기관 이름**이다("한국폴리텍대학
+    춘천캠퍼스"). 과정명은 `title`에 따로 온다(2026-09-11, 4개 엔드포인트 실응답으로
+    확인). 링크도 `subTitleLink`는 기관 소개 페이지, `titleLink`가 과정 상세다.
+    """
+    address = _text(item, "address")
+    if region is not None and not region.matches_address(address):
+        return None
+    institution = _text(item, "subTitle")
+    # 일학습병행 과정명은 "2026년_(표준형)재직자_품질경영_L3_…"처럼 밑줄로 이어져 온다.
+    course = " ".join(_text(item, "title").replace("_", " ").split()) or institution
+    start, end = _text(item, "traStartDate"), _text(item, "traEndDate")
+    fee = _text(item, "courseMan")
+    meta = [
+        m
+        for m in (
+            f"유형: {label}",
+            f"기간: {start} ~ {end}" if start or end else "",
+            f"지역: {address}" if address else "",
+            f"훈련비: {int(fee):,}원" if fee.isdigit() and int(fee) > 0 else "",
         )
-    return results
+        if m
+    ]
+    # 과정 id + 회차가 한 개설 과정을 가리킨다 — 해시 대신 안정적인 중복 제거 키.
+    course_id, degree = _text(item, "trprId"), _text(item, "trprDegr")
+    return JobInfoResult(
+        title=course,
+        subtitle=institution if institution != course else label,
+        meta_lines=meta,
+        detail_url=_text(item, "titleLink") or _text(item, "subTitleLink") or None,
+        source_key=f"{course_id}:{degree}" if course_id else None,
+        region_code=_text(item, "trngAreaCd") or None,
+    )
 
 
 def _training_combos(params: JobInfoQueryParams | None) -> list[tuple[RegionFilter | None, str | None]]:
@@ -336,10 +375,13 @@ async def search_training_courses(params: JobInfoQueryParams | None = None) -> l
         )
         # 조합을 여러 개 던지면 같은 과정이 중복으로 들어온다.
         merged: list[JobInfoResult] = []
-        seen: set[tuple[str, str]] = set()
+        seen: set[tuple] = set()
         for group in groups:
             for r in group:
-                key = (r.title, r.subtitle)
+                # 부제가 이제 훈련기관명이라 유형(meta 첫 줄)까지 넣어야 서로 다른
+                # 엔드포인트의 과정이 합쳐지지 않는다. 같은 엔드포인트를 다른 지역
+                # 조합으로 부른 중복은 meta까지 같으므로 여전히 합쳐진다.
+                key = (r.title, r.subtitle, tuple(r.meta_lines))
                 if key in seen:
                     continue
                 seen.add(key)
