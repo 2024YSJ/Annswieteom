@@ -66,3 +66,18 @@ async def test_training_course_is_called_without_a_limit(monkeypatch):
     await WorknetFeedSource().fetch("training_course")
 
     assert called == {"params": None}
+
+
+@pytest.mark.asyncio
+async def test_training_area_code_is_carried_for_region_first_ranking(monkeypatch):
+    async def fake_training(params=None):
+        return [
+            JobInfoResult(title="요양보호사 과정", subtitle="기관", meta_lines=[], source_key="A:1", region_code="41113"),
+            JobInfoResult(title="지역 없는 과정", subtitle="기관", meta_lines=[], source_key="B:1"),
+        ]
+
+    monkeypatch.setitem(jic.CATEGORY_SEARCH_FUNCTIONS, "training_course", fake_training)
+
+    items = await WorknetFeedSource().fetch("training_course")
+
+    assert [i.eligibility for i in items] == [{"area_code": "41113"}, None]

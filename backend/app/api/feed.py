@@ -27,7 +27,7 @@ from app.services.feed.profile_adapter import (
     load_profile_vector,
     profile_needs_refresh,
 )
-from app.services.feed.matching import ItemMatch, get_tiered_ranker
+from app.services.feed.matching import ItemMatch, get_region_ranker, get_tiered_ranker
 from app.services.feed.ranking import get_feed_ranker
 from app.services.feed.sources import FEED_CATEGORY_LABELS, FEED_SOURCE_LABELS, all_sources
 from app.services.profile.attributes import load_match_profile
@@ -299,6 +299,55 @@ async def list_recommended_policy_feed(
         profile=profile,
         profile_vector=vector,
         include_excluded=include_excluded,
+        limit=limit,
+        offset=offset,
+    )
+    return FeedRead(
+        items=[_to_read(i, ranked.matches.get(i.id)) for i in ranked.items],
+        total=ranked.total,
+        limit=limit,
+        offset=offset,
+        personalized=True,
+        fallback_reason=None,
+        is_warming=is_warming,
+        refreshed_at=await last_refreshed_at(db),
+    )
+
+
+@router.get("/trainings/recommended", response_model=FeedRead)
+async def list_recommended_training_feed(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    refresher=Depends(get_feed_refresher),
+    ranker=Depends(get_feed_ranker),
+    region_ranker=Depends(get_region_ranker),
+) -> FeedRead:
+    """맞춤 직업훈련 — 거주지·희망지역에서 열리는 과정 먼저, 그 안에서 프로필 벡터
+    유사도순(2026-09-11 결정: 훈련은 통학해야 하니 지역이 먼저).
+
+    개인화 재료가 하나도 없으면(지역 속성도 벡터도 없음) 일반 목록 + `no_attributes`.
+    """
+    # rollback이 ORM 객체를 expire시키므로 id를 먼저 잡는다(list_recommended_job_feed 주석).
+    user_id = current_user.id
+    profile = await load_match_profile(db, user_id)
+    vector = await load_profile_vector(db, user_id)
+    if not profile.region_codes and vector is None:
+        return await _build(
+            db, background_tasks, refresher, ranker,
+            feed_kind="policy", category=None, categories=TRAINING_SECTION_CATEGORIES,
+            limit=limit, offset=offset, interleave_categories=True, fallback_reason="no_attributes",
+        )
+
+    is_warming = await _schedule_refresh_if_needed(db, background_tasks, refresher)
+    ranked = await region_ranker(
+        db,
+        feed_kind="policy",
+        categories=TRAINING_SECTION_CATEGORIES,
+        profile=profile,
+        profile_vector=vector,
         limit=limit,
         offset=offset,
     )

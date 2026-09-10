@@ -63,7 +63,8 @@ test.describe("profile attributes and tiered policy matching", () => {
     const feed = await feedResponse.json();
     expect(feed.personalized).toBe(true);
 
-    await expect(page.getByRole("heading", { name: /맞춤 정책/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /맞춤 지원 정책/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /맞춤 직업훈련/ })).toBeVisible();
     // 정책 캐시에 자격조건이 채워져 있으면(수집 이후) 교집합 카드가 맨 앞에 배지와 함께 나온다.
     const tiers: string[] = feed.items.map((item: { match_tier: string }) => item.match_tier);
     if (tiers.includes("all")) {

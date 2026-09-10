@@ -167,6 +167,50 @@ def test_recommended_policies_only_include_youth_policies(feed_client):
         assert "전국 누구나" in titles, path
 
 
+def _add_training(client, title: str, area_code: str | None, category: str = "training_course") -> None:
+    async def _insert():
+        async with client.session_local() as db:
+            db.add(
+                FeedItem(
+                    source="worknet",
+                    category=category,
+                    feed_kind="policy",
+                    dedup_key=f"k:{title}",
+                    title=title,
+                    eligibility={"area_code": area_code} if area_code else None,
+                )
+            )
+            await db.commit()
+
+    asyncio.run(_insert())
+
+
+def test_recommended_trainings_put_courses_near_the_user_first(feed_client):
+    headers = _register_and_login(feed_client)
+    feed_client.post("/api/v1/me/attributes", headers=headers, json={"key": "residence_region", "value": "수원"})
+    _add_training(feed_client, "고양 과정", "41285")
+    _add_training(feed_client, "수원 과정", "41113")
+    _add_policy(feed_client, "청년정책", _OPEN)
+
+    body = feed_client.get("/api/v1/feed/trainings/recommended", headers=headers).json()
+    assert body["personalized"] is True
+    assert [i["title"] for i in body["items"]] == ["수원 과정", "고양 과정"]
+    assert body["items"][0]["matched_labels"] == ["수원 거주지역"]
+    # 티어 배지("조건 N개 모두 일치")는 정책 전용이다.
+    assert body["items"][0]["match_tier"] == "none"
+
+
+def test_recommended_trainings_without_any_signal_fall_back(feed_client):
+    headers = _register_and_login(feed_client)
+    _add_training(feed_client, "아무 과정", "41285")
+
+    body = feed_client.get("/api/v1/feed/trainings/recommended", headers=headers).json()
+    assert body["personalized"] is False
+    assert body["fallback_reason"] == "no_attributes"
+    assert [i["title"] for i in body["items"]] == ["아무 과정"]
+    assert feed_client.get("/api/v1/feed/trainings/recommended").status_code == 401
+
+
 def test_recommended_policies_without_any_attribute_fall_back_to_recency(feed_client):
     headers = _register_and_login(feed_client)
     _add_policy(feed_client, "아무 정책", _OPEN)
