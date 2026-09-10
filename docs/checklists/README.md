@@ -1,6 +1,6 @@
 # 구현 체크리스트 안내
 
-기반 문서: [`docs/specs/annswieoteum_detailed_spec.md`](../specs/annswieoteum_detailed_spec.md)
+기반 문서: [`docs/specs/annswieteom_detailed_spec.md`](../specs/annswieteom_detailed_spec.md)
 마감: 2026-09-20
 
 이 디렉터리는 명세서를 실제 구현 작업 단위로 쪼갠 체크리스트 모음이다. **담당자 기준으로 폴더를 나눴다**:

@@ -32,7 +32,7 @@
 ## 문제가 생겼을 때 (17절 트러블슈팅)
 
 - [ ] **Ollama가 응답하지 않음**: 작업 표시줄에 Ollama 아이콘이 있는지 확인, 없으면 앱 재실행. `ollama list`로 모델이 실제로 받아져 있는지 확인
-- [ ] **PC를 재부팅했더니 서버가 죽은 것 같다**: `localhost:11434`가 안 열리면 Ollama가 꺼진 것 → Ollama 앱 재실행. 외부 접속이 안 되면 터널이 꺼진 것 → `cloudflared.exe tunnel run annswieoteum-llm` 재실행. (서비스로 등록해두면 이 문제 자체가 거의 안 생긴다)
+- [ ] **PC를 재부팅했더니 서버가 죽은 것 같다**: `localhost:11434`가 안 열리면 Ollama가 꺼진 것 → Ollama 앱 재실행. 외부 접속이 안 되면 터널이 꺼진 것 → `cloudflared.exe tunnel run annswieteom-llm` 재실행. (서비스로 등록해두면 이 문제 자체가 거의 안 생긴다)
 - [ ] **Windows 방화벽이 "액세스를 허용하시겠습니까?" 경고**: 정상이다. "액세스 허용" 누르면 된다
 - [ ] **노트북 화면을 덮었더니 서버가 멈췄다**: 전원 설정에서 절전 모드 해제했는지 재확인
 - [ ] **Cloudflare Tunnel 주소가 백엔드에서 안 열림**: `OLLAMA_HOST=0.0.0.0` 환경변수 설정 후 Ollama 재시작

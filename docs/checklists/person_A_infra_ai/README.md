@@ -4,7 +4,7 @@
 
 ## 먼저 읽을 것
 
-**서버가 뭔지, 왜 안전한지 궁금하다면 먼저 명세서 [2-1절](../../specs/annswieoteum_detailed_spec.md)을 읽어라.** 한 문장 요약: 당신의 PC에는 Ollama라는 프로그램 하나만 "서버"로 켜두면 되고, Cloudflare Tunnel은 PC 전체가 아니라 딱 포트 11434(Ollama 전용 문) 하나만 인터넷에 연결해준다.
+**서버가 뭔지, 왜 안전한지 궁금하다면 먼저 명세서 [2-1절](../../specs/annswieteom_detailed_spec.md)을 읽어라.** 한 문장 요약: 당신의 PC에는 Ollama라는 프로그램 하나만 "서버"로 켜두면 되고, Cloudflare Tunnel은 PC 전체가 아니라 딱 포트 11434(Ollama 전용 문) 하나만 인터넷에 연결해준다.
 
 ## 담당 폴더 (5절)
 
