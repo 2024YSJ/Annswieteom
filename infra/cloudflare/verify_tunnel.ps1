@@ -22,7 +22,7 @@ param(
     [string]$AccessClientSecret = "",
 
     # 운영 기본값. 다른 모델을 검증할 때만 넘긴다.
-    [string]$Model = "qwen2.5:72b"
+    [string]$Model = "qwen2.5:32b"
 )
 
 $url = $TunnelUrl.TrimEnd("/")

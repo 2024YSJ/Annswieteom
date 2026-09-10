@@ -62,7 +62,7 @@ npm run lint
 sudo snap set ollama host="0.0.0.0:11434"
 sudo snap restart ollama
 
-ollama pull qwen2.5:72b    # inference (LOCAL_LLM_MODEL_NAME)
+ollama pull qwen2.5:32b    # inference (LOCAL_LLM_MODEL_NAME)
 ollama pull bge-m3         # embeddings — REQUIRED, and not configurable:
                            # the name is hardcoded in services/embedding/local_ollama_embedding.py
                            # and its 1024-dim output is the VECTOR(1024) column type.
@@ -110,7 +110,7 @@ JWT: Access tokens expire in 30 minutes; refresh tokens in 14 days.
 ```
 DATABASE_URL              # Supabase PostgreSQL connection string
 LOCAL_LLM_BASE_URL        # Cloudflare Tunnel URL to Ollama
-LOCAL_LLM_MODEL_NAME      # e.g., qwen2.5:72b (the embedding model is NOT an env var)
+LOCAL_LLM_MODEL_NAME      # e.g., qwen2.5:32b (the embedding model is NOT an env var)
 LLM_ACCESS_CLIENT_ID      # Cloudflare Access service token; empty = send no auth headers
 LLM_ACCESS_CLIENT_SECRET  # never paste this into a chat log or a commit
 JWT_SECRET                # 256-bit hex string
@@ -118,7 +118,7 @@ JWT_SECRET                # 256-bit hex string
 
 ## ⚠️ Local Dev Environment Is Intentionally Isolated From Production
 
-`backend/.env` on this laptop points at a **separate `annswieteom-dev` Supabase project** and a **local Ollama instance (`http://localhost:11434`, model `qwen2.5:3b-instruct`)** instead of the production Supabase project and the DGX Spark tunnel (`https://llm.annswieteom.com`, `qwen2.5:72b`). This is deliberate — full rationale and setup steps are in [docs/checklists/00_shared/04_local_dev_environment.md](docs/checklists/00_shared/04_local_dev_environment.md).
+`backend/.env` on this laptop points at a **separate `annswieteom-dev` Supabase project** and a **local Ollama instance (`http://localhost:11434`, model `qwen2.5:3b-instruct`)** instead of the production Supabase project and the DGX Spark tunnel (`https://llm.annswieteom.com`, `qwen2.5:32b`). This is deliberate — full rationale and setup steps are in [docs/checklists/00_shared/04_local_dev_environment.md](docs/checklists/00_shared/04_local_dev_environment.md).
 
 `backend/.env` is gitignored, so this never reaches `main` through git. The one thing to actively avoid: **never "sync" these local-only values into `backend/.env.example` or the defaults in `backend/app/core/config.py`** — those files are committed and shared, and changing them to match this laptop's local setup would affect production. If `.env`'s local LLM/DB values ever look wrong for a task (e.g. you need to judge real LLM output quality, not just check that a request flow works), that's expected — the small local model is deliberately weaker than production's; point `.env` at the real tunnel temporarily and switch back after.
 

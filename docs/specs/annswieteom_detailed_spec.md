@@ -501,7 +501,7 @@ class LLMProvider(Protocol):
 > **2026-09-09 변경**: `GeminiProvider`와 `FallbackProvider`를 삭제했다. 프로바이더가 하나뿐인 폴백 래퍼는 "나중에 뭔가 붙일 자리"라는 인상만 주면서 예외 이름을 헷갈리게 만들 뿐이었다. 예외도 `ProviderUnavailableError`/`AllProvidersFailedError`/`TimeoutError`를 **`LLMUnavailableError` 하나로** 합쳤다 — 호출부 입장에서 "AI를 못 썼다"는 결과는 동일하고, 잡아야 할 예외가 둘이면 어딘가 한 곳에서 반드시 빠뜨린다.
 
 - `LocalOllamaProvider`: Cloudflare Tunnel + Cloudflare Access 서비스 토큰 뒤의 Ollama HTTP API를 호출하는 **유일한 프로바이더**. `POST /api/chat`을 `format:"json"` + `stream:true`로 쓰고, `health_check()`는 `GET /api/tags`(5초).
-- 타임아웃: 생성 240초, health_check 5초. (원래 20초였고 한동안 45초였다. DGX Spark의 `qwen2.5:72b`는 메모리 대역폭 한계로 decode가 수 tok/s라 45초로는 문서 생성 한 카테고리도 끝나지 않는다.)
+- 타임아웃: 생성 240초, health_check 5초. (원래 20초였고 한동안 45초였다. DGX Spark는 메모리 대역폭(273GB/s)이 decode 벽이라 45초로는 문서 생성 한 카테고리도 끝나지 않는다. 2026-09-10 실측으로 `qwen2.5:72b`는 3.0 tok/s, 문단 3개 문서 하나에 282초가 걸려 이 240초마저 넘겼고 — 그래서 운영 모델을 `qwen2.5:32b`로 내렸다.)
 - **응답을 스트리밍으로 받는 이유는 성능이 아니라 Cloudflare다.** 무료·Pro·Business 플랜의 프록시 read timeout(약 100초)은 **첫 바이트까지의 시간**에 걸리므로, non-streaming으로 72b를 호출하면 완성 전에 524가 난다. 조각을 이어붙이면 첫 토큰만 빨리 나오면 되므로 이 벽을 넘는다.
 - 요청 페이로드에 `keep_alive`를 실어 43GB 모델이 호출마다 재적재되지 않게 한다 — 재적재 시간만으로도 위 100초를 넘긴다.
 - 프로바이더 메서드는 샘플링 모드를 **명시**해야 한다(`TEMPERATURE_DETERMINISTIC` / `TEMPERATURE_CREATIVE`). 기본값을 두지 않은 건 그 결정을 강제하려는 의도다.
@@ -515,7 +515,7 @@ EXAONE 3.5 7.8B-Instruct와 Qwen2.5 14B-Instruct를 4비트 양자화(GGUF Q4_K_
 | 변수명 | 설명 |
 |---|---|
 | `LOCAL_LLM_BASE_URL` | Cloudflare Tunnel로 노출된 Ollama 엔드포인트 |
-| `LOCAL_LLM_MODEL_NAME` | 예: `qwen2.5:72b` |
+| `LOCAL_LLM_MODEL_NAME` | 예: `qwen2.5:32b` |
 | `LLM_ACCESS_CLIENT_ID` | Cloudflare Access 서비스 토큰의 Client ID. 비워두면 인증 헤더를 붙이지 않는다(로컬 Ollama용) |
 | `LLM_ACCESS_CLIENT_SECRET` | 같은 토큰의 Client Secret. 발급 시 한 번만 보이고, 채팅·커밋에 남기지 않는다 |
 | `DATABASE_URL` | Supabase 연결 문자열 |
@@ -739,7 +739,7 @@ React Query로 서버 상태를 관리한다. 예: `['session', sessionId]`, `['
 - **Ollama가 응답하지 않음**: 작업 표시줄에 Ollama 아이콘이 있는지 확인. 없다면 Ollama 앱을 다시 실행한다. `ollama list`로 모델이 실제로 받아져 있는지 확인한다.
 - **Supabase 연결 실패**: `DATABASE_URL`에 비밀번호의 특수문자가 URL 인코딩되지 않은 경우가 흔하다(예: `@`는 `%40`으로).
 - **CORS 에러(프론트에서 백엔드 호출 실패)**: FastAPI에서 `CORSMiddleware`에 프론트엔드 주소(`http://localhost:3000` 등)를 허용 목록에 추가했는지 확인한다.
-- **Cloudflare Tunnel 주소가 백엔드에서 안 열림**: Spark의 Ollama가 `127.0.0.1`에만 바인딩돼 있으면 터널을 통해서도 접근이 안 된다 — `sudo snap set ollama host="0.0.0.0:11434"` 후 `sudo snap restart ollama`. (DGX Spark의 Ollama는 snap이라 `systemctl edit ollama`가 먹지 않는다.)
+- **Cloudflare Tunnel 주소가 백엔드에서 안 열림**: Spark의 Ollama가 `127.0.0.1`에만 바인딩돼 있으면 터널을 통해서도 접근이 안 될 수 있다. 다만 cloudflared는 같은 기계에서 `localhost:11434`로 붙으므로 보통은 문제가 없다 — 실제로 막혔을 때만 바꾼다. Ollama 설치 방식에 따라 방법이 다르다: systemd면 `sudo systemctl edit ollama`에 `Environment="OLLAMA_HOST=0.0.0.0:11434"`를 넣고 `daemon-reload` + 재시작, snap이면 `sudo snap set ollama host="0.0.0.0:11434"` 후 `sudo snap restart ollama`(snap 설치본은 유닛 파일이 없어 `systemctl edit`이 먹지 않는다). NVIDIA 포럼에는 DGX Spark가 snap 사전설치로 적혀 있지만 실제로 우리 기계는 snap이 아니었으므로(2026-09-10) 먼저 확인한다.
 - **터널을 통하면 403 Forbidden인데 `localhost`에서는 200**: 바인딩이 아니라 `Host` 헤더 문제다. cloudflared ingress에 `originRequest.httpHostHeader: localhost:11434`를 넣는다.
 - **터널은 살아 있는데 에러 1033**: DNS가 지금 켜져 있는 터널이 아닌 옛 터널을 가리키고 있다. DNS는 **터널 ID**를 가리켜야 한다(계정 ID·커넥터 ID와 헷갈리기 쉽다).
 - **(서버 처음 운영하는 분을 위한 항목) PC를 재부팅했더니 서버가 죽은 것 같다**: 당황하지 않아도 된다. `http://localhost:11434`가 안 열리면 Ollama가 꺼진 것이니 Ollama 앱을 다시 켜면 되고, 외부에서 접속이 안 되면 터널이 꺼진 것이니 `sudo systemctl restart cloudflared`를 실행하면 된다. 13-3절 6번처럼 서비스로 등록해두면 이 문제 자체가 거의 발생하지 않는다.

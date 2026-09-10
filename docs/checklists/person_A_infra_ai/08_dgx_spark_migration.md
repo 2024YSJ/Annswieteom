@@ -15,9 +15,9 @@
 
 그래서 롤백은 "다른 기계로 DNS를 되돌리는 것"이 아니라 **"같은 Spark 위에서 더 작은 모델로 내려앉는 것"**이다. 이게 성립하려면 작은 모델이 미리 받아져 있어야 한다.
 
-- [ ] 2번에서 `qwen2.5:32b`를 **함께** pull한다 (롤백 전용)
+- [ ] 2번에서 `qwen2.5:14b`를 **함께** pull한다 (롤백 전용)
 - [ ] 롤백 절차 — 데모 중 압박 상황에서 찾아 헤매지 않도록 여기 그대로 적어둔다:
-      Render 환경변수 `LOCAL_LLM_MODEL_NAME`을 `qwen2.5:32b`로 바꾸고 서비스 재시작. 그게 전부다(코드 변경도 재배포도 없다).
+      Render 환경변수 `LOCAL_LLM_MODEL_NAME`을 `qwen2.5:14b`로 바꾸고 서비스 재시작. 그게 전부다(코드 변경도 재배포도 없다).
 - [ ] 4090을 내리기 **전에** `ollama list`와 `ollama show --modelfile qwen2.5:14b`의 출력을 devlog에 적어둔다. 기계를 지운 뒤에는 얻을 수 없는 정보다.
 
 ---
@@ -33,25 +33,28 @@
 
 ## 2. Ollama와 모델
 
-DGX Spark는 Ollama가 **snap으로 사전 설치**돼 있다. 공식 `install.sh`로 갈아엎지 말 것 — GB10(SM121)용 CUDA 설정을 잃을 수 있다.
+Ollama는 이미 설치돼 있다. **설치 방식을 먼저 확인한다.** NVIDIA 포럼에는 snap 사전설치로 적혀 있지만 **우리 기계는 snap이 아니었다** — `sudo snap set ollama host=...`가 "스냅 ollama 을(를) 찾을 수 없습니다"로 실패했다(2026-09-10 실측). 어느 쪽이든 **공식 `install.sh`로 갈아엎지 말 것**: GB10(SM121)용 CUDA 설정을 잃을 수 있다.
 
-- [ ] `snap list ollama`로 사전 설치 확인, `snap get ollama`로 **어떤 설정 키가 있는지 먼저 본다**(문서화가 얇아서 직접 봐야 한다)
-- [ ] cloudflared가 접근할 수 있도록 바인딩 변경:
+- [ ] 설치 방식 확인:
   ```bash
-  sudo snap set ollama host="0.0.0.0:11434"
-  sudo snap restart ollama
-  curl -s http://localhost:11434/          # "Ollama is running"
+  command -v ollama && ollama --version
+  systemctl list-unit-files | grep -i ollama
+  snap list ollama 2>/dev/null
+  docker ps --format '{{.Names}}\t{{.Image}}' 2>/dev/null | grep -i ollama
   ```
-  snap 설치본은 `sudo systemctl edit ollama`가 먹지 않는다(유닛 파일이 없어서 "no files found for ollama.service"가 뜬다) — `snap set`이 유일한 경로다.
+- [ ] `curl -s http://localhost:11434/`가 이미 "Ollama is running"이면 **바인딩은 건드리지 않는다.** cloudflared는 같은 기계에서 `localhost:11434`로 붙으므로 `127.0.0.1` 바인딩이어도 통한다 — `0.0.0.0`은 터널이 안 될 때 꺼내는 카드다(9절 트러블슈팅).
+- [ ] 바꿔야 할 때만, 설치 방식에 맞춰:
+  - **systemd**: `EDITOR=nano sudo -E systemctl edit ollama` → `[Service]` 아래 `Environment="OLLAMA_HOST=0.0.0.0:11434"` → `sudo systemctl daemon-reload && sudo systemctl restart ollama` → `systemctl show ollama -p Environment`로 확인
+  - **snap**: `sudo snap set ollama host="0.0.0.0:11434"` → `sudo snap restart ollama` (snap 설치본은 유닛 파일이 없어 `systemctl edit`이 먹지 않는다)
 - [ ] 모델 받기 — **두 개가 아니라 세 개다**:
   ```bash
-  ollama pull qwen2.5:72b     # 추론
+  ollama pull qwen2.5:32b     # 추론
   ollama pull bge-m3          # 임베딩 (아래 경고 참고)
-  ollama pull qwen2.5:32b     # 0번의 롤백용
+  ollama pull qwen2.5:14b     # 0번의 롤백용
   ollama list
   ```
 - [ ] **`bge-m3`를 빼먹으면 조용히 망한다.** 이 모델 이름은 환경변수가 아니라 코드에 하드코딩돼 있고(`backend/app/services/embedding/local_ollama_embedding.py`), 그 출력 차원 1024는 DB의 `VECTOR(1024)` 컬럼 타입이다. 없으면 기록물 임베딩과 피드 맞춤 정렬이 **예외를 던지지 않고** 실패한다 — "정렬이 좀 이상하다" 정도로만 보인다. 실제로 한 번 당했다(`docs/devlog/Step2/05_local_dev_split_and_the_interview_loop_bugs.md`).
-- [ ] `snap get ollama`에 `max-loaded-models` 계열 키가 있으면 2 이상으로. 없으면 넘어간다 — 백엔드가 요청마다 `keep_alive`를 실어 보내므로 모델이 상주한다.
+- [ ] 추론 모델과 `bge-m3`가 서로를 밀어내지 않게 동시 상주 한도를 2 이상으로 둘 수 있으면 둔다(systemd면 `OLLAMA_MAX_LOADED_MODELS=2`). 안 되면 넘어간다 — 백엔드가 요청마다 `keep_alive`를 실어 보내므로 모델이 상주한다.
 - [ ] `OLLAMA_NUM_PARALLEL`은 **건드리지 않는다.** 1보다 크게 두면 `docs/architecture.md`의 "로컬 Ollama는 요청을 직렬 처리한다"는 전제와 취업정보 검색의 전체 시간 예산이 무효가 되고, 둘 다 재측정해야 한다.
 
 ## 3. GPU가 실제로 쓰이는지 확인 (가장 조용한 실패)
@@ -66,11 +69,11 @@ CPU로 폴백해 도는 것은 에러 없이 그냥 10배 느려지는 형태로
 "Ollama is running"은 데몬이 답한다는 증거일 뿐 **데모가 돌아간다는 증거가 아니다.** 백엔드가 실제로 의존하는 4가지를 확인한다. 저장소 루트의 [`infra/cloudflare/verify_tunnel.sh`](../../../infra/cloudflare/verify_tunnel.sh)가 이 4개를 자동화해 둔 것이니 그걸 써도 된다.
 
 - [ ] `GET /` 에 `Ollama is running`
-- [ ] `GET /api/tags` 에 `qwen2.5:72b`**와 `bge-m3`가 둘 다** 보인다
+- [ ] `GET /api/tags` 에 `qwen2.5:32b`**와 `bge-m3`가 둘 다** 보인다
 - [ ] `POST /api/chat`을 **백엔드와 똑같은 페이로드 형태**로 보내 성공하고, **첫 바이트까지 걸린 시간과 총 시간을 잰다**:
   ```bash
   time curl -sN http://localhost:11434/api/chat -d '{
-    "model":"qwen2.5:72b",
+    "model":"qwen2.5:32b",
     "messages":[{"role":"system","content":"Output JSON only."},{"role":"user","content":"안녕"}],
     "stream":true,"format":"json","keep_alive":-1,
     "options":{"temperature":0.0,"num_ctx":8192}}'
@@ -82,7 +85,16 @@ CPU로 폴백해 도는 것은 에러 없이 그냥 10배 느려지는 형태로
   ```
   1024가 아니면 **여기서 중단한다.** 넘어가면 사용자가 기록물을 올리는 순간 요청 도중에 `EmbeddingDimensionMismatchError`가 터진다.
 - [ ] 가장 큰 프롬프트로 한 번 더 재본다 — 취업정보 후보 40건을 넣는 `select_relevant_job_info_results`가 이 프로젝트에서 제일 긴 프롬프트다. 여기서 나온 시간이 데모 go/no-go와 `num_ctx` 조정 여부를 동시에 결정한다.
-- [ ] 위 측정값(첫 바이트 초 / 총 초 / 대략의 tok/s)을 `docs/devlog/PersonA/08_dgx_spark_migration.md`에 적는다. **72b는 메모리 대역폭(273GB/s) 때문에 대략 2.7~7 tok/s가 천장이다** — 이 수치가 예상보다도 훨씬 낮으면 3번(GPU 미사용)을 다시 본다.
+- [ ] 위 측정값(첫 바이트 초 / 총 초 / 대략의 tok/s)을 `docs/devlog/PersonA/08_dgx_spark_migration.md`에 적는다.
+
+  **2026-09-10 실측 기준값** (같은 기계, 같은 페이로드). 대역폭(273GB/s)이 decode 벽이라 속도가 모델 크기에 거의 반비례한다:
+
+  | 모델 | decode | 문단 3개 문서(844토큰) | 콜드 적재 |
+  |---|---|---|---|
+  | `qwen2.5:72b` | 3.0 tok/s | **4분 42초** — 카테고리 하나가 타임아웃 240초를 넘겼다 | 15.5초 |
+  | `qwen2.5:32b` | (실측 기입) | (기입) | (기입) |
+
+  재본 값이 위 표보다 **한 자리** 낮으면 모델 문제가 아니라 3번(GPU 미사용)이다.
 
 ## 5. cloudflared 설치와 터널 (ARM64 Linux)
 
@@ -157,7 +169,7 @@ Linux의 `service install`은 config를 읽어 인자가 제대로 들어간 유
 ## 9. 백엔드 연동
 
 - [ ] `LOCAL_LLM_BASE_URL`은 **바뀌지 않는다** — 같은 호스트명을 재사용하는 게 이 방식의 요점이다. Render 재배포도 불필요.
-- [ ] Render 환경변수: `LOCAL_LLM_MODEL_NAME=qwen2.5:72b`, `LLM_ACCESS_CLIENT_ID`, `LLM_ACCESS_CLIENT_SECRET`
+- [ ] Render 환경변수: `LOCAL_LLM_MODEL_NAME=qwen2.5:32b`, `LLM_ACCESS_CLIENT_ID`, `LLM_ACCESS_CLIENT_SECRET`
 - [ ] Render에 `GEMINI_API_KEY`나 `LLM_PROVIDER_ORDER`가 **남아 있지 않은지 확인.** 등록하는 항목이 아니라 *삭제됐는지 확인하는* 항목이다 — pydantic-settings가 기본 `extra="forbid"`라 남아 있으면 컨테이너 부팅 자체가 실패한다.
 - [ ] 헬스 엔드포인트로 **Render → Cloudflare → Spark 경로 전체**를 한 번에 확인:
   ```bash

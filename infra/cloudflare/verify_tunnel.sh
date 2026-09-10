@@ -20,7 +20,7 @@ set -u
 URL=""
 CLIENT_ID=""
 CLIENT_SECRET=""
-MODEL="${LOCAL_LLM_MODEL_NAME:-qwen2.5:72b}"
+MODEL="${LOCAL_LLM_MODEL_NAME:-qwen2.5:32b}"
 EMBED_MODEL="bge-m3"   # 하드코딩이 맞다 — 코드도 하드코딩이고 1024차원이 DB 컬럼 타입이다
 EXPECTED_DIM=1024
 

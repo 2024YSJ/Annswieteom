@@ -42,8 +42,10 @@ _jinja_env = Environment(loader=FileSystemLoader(str(_PROMPTS_DIR)), autoescape=
 _NUM_CTX = 8192
 
 # 생성 호출 전체가 쓰는 타임아웃. 원래 20초였고 한동안 45초였다.
-# DGX Spark의 qwen2.5:72b는 메모리 대역폭(273GB/s)이 decode 벽이라 dense 72B Q4는
-# 초당 몇 토큰 수준이고, 문서 생성처럼 긴 JSON은 45초로는 한 카테고리도 못 끝낸다.
+# DGX Spark는 메모리 대역폭(273GB/s)이 decode 벽이라 속도가 모델 크기에 거의
+# 반비례한다. 2026-09-10 실측: qwen2.5:72b는 3.0 tok/s로 문단 3개 문서(844토큰)
+# 하나에 282초가 걸려 이 상수마저 넘겼고, 그래서 운영 모델을 32b로 내렸다.
+# 45초는 어느 모델이든 부족하다.
 _GENERATE_TIMEOUT = 240.0
 
 # 응답을 스트리밍으로 받는 이유는 성능이 아니라 Cloudflare다. 무료·Pro·Business
