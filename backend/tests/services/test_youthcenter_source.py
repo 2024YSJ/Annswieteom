@@ -215,7 +215,7 @@ async def test_reg_date_is_parsed_from_a_datetime_string(monkeypatch):
 @pytest.mark.asyncio
 async def test_error_body_with_http_200_raises(monkeypatch):
     """이 API는 실패해도 HTTP 200으로 오고 본문 resultCode로만 구분된다 —
-    raise_for_status로는 못 잡는다(워크넷과 같은 계열의 함정)."""
+    raise_for_status로는 못 잡는다(고용24과 같은 계열의 함정)."""
     monkeypatch.setattr(settings, "youthcenter_api_key", "some-key")
     _mock_get(monkeypatch, _ERROR_JSON)
 

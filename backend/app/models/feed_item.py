@@ -16,9 +16,9 @@ FEED_SOURCES = ("worknet", "youthcenter")
 #: 보내고 각자 자기 풀 안에서만 정렬되게 하려면 인덱스가 걸린 필터가 필요하다.
 FEED_KINDS = ("job", "policy")
 
-#: 워크넷 6개 카테고리(job_info_client.CATEGORY_LABELS와 같은 키) + 온통청년 1개.
+#: 고용24 6개 카테고리(job_info_client.CATEGORY_LABELS와 같은 키) + 온통청년 1개.
 #: 훈련과정과 구직자취업역량강화프로그램을 "policy"로 보내는 게 중요하다 —
-#: 온통청년 인증키는 담당자 심사를 거쳐야 나오는데(워크넷 키들이 그랬듯) 제때
+#: 온통청년 인증키는 담당자 심사를 거쳐야 나오는데(고용24 키들이 그랬듯) 제때
 #: 안 나올 수 있고, 그때도 지원 정책 섹션이 비지 않아야 한다. 둘 다 실제로
 #: 정부 지원 프로그램이 맞으므로 억지 분류도 아니다.
 FEED_KIND_BY_CATEGORY = {
@@ -67,7 +67,7 @@ class FeedItem(Base):
     # 같은 이유로 JSONB가 아닌 제네릭 JSON.
     meta_lines: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     detail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 소스가 등록일/게시일을 주는 경우에만 채워진다. 워크넷 6개 중 대부분은 안 준다.
+    # 소스가 등록일/게시일을 주는 경우에만 채워진다. 고용24 6개 중 대부분은 안 준다.
     source_published_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     # 실제로 임베딩에 넣은 문자열을 그대로 보관한다 — 다음 수집 때 "이 항목을 다시
     # 임베딩해야 하나"를 문자열 비교 한 번으로 끝내기 위해서.

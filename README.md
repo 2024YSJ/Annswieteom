@@ -49,4 +49,9 @@ cd frontend && python logo/generate_icons.py
 라이선스를 먼저 확인할 것.
 
 - 원본 파일: `frontend/logo/free-icon-no-bed-13322151.png` (투명 배경 512×512)
-- <a href="https://www.flaticon.com/kr/free-icons/-" title="침대가 없다 아이콘">침대가 없다 아이콘 제작자: juicy_fish - Flaticon</a>
+- 제작자: [juicy_fish · Flaticon](https://www.flaticon.com/free-icon/no-bed_13322151)
+
+표기 문구를 Flaticon이 만들어주는 크레딧 조각에서 그대로 가져오지 말 것. 그건
+검색 결과 문구라 검색어("침대가 없다")가 섞여 들어오고, 한국어 페이지 링크는
+슬러그가 비어 죽은 주소(`/kr/free-icons/-`)가 된다. 라이선스가 요구하는 건
+제작자 이름과 Flaticon 링크뿐이다.

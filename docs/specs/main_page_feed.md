@@ -34,14 +34,14 @@ pgvector의 `Vector`는 SQLite 컴파일러가 없다. `feed_items`에 벡터를
 
 id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강소기업)는 소스가 문구를 한 줄만 고쳐도 새 항목으로 들어온다. 반대로 키를 느슨하게 잡으면 진짜 새 공고를 조용히 삼킨다. **중복 카드는 보이는 실패, 누락은 안 보이는 실패**라 보이는 쪽을 택했다. 그래서 옛 행은 삭제가 아니라 `is_active=False`로 내려가고 14일 뒤에 정리된다.
 
-워크넷 응답에는 채용행사의 `eventNo`, 공채속보의 `empSeqno`가 실제로 들어 있다. 지금 `JobInfoResult`가 그 필드를 안 들고 있어서 못 쓰고 있고, 그 파일을 동시에 크게 고치는 작업이 있어 병합 후로 미뤘다. **후속 작업 1순위.**
+~~고용24 응답에는 채용행사의 `eventNo`, 공채속보의 `empSeqno`가 실제로 들어 있다. 지금 `JobInfoResult`가 그 필드를 안 들고 있어서 못 쓰고 있다. **후속 작업 1순위.**~~ 2026-09-10 해소([devlog 30](../devlog/PersonB/30_feed_links_pagination_and_naming.md)). `JobInfoResult.source_key`로 4개 카테고리가 안정 id를 싣는다 — 채용행사 `eventNo`, 공채속보 `empSeqno`, 공채기업정보 `empCoNo`, 강소기업 `busiNo`. 구직자프로그램과 훈련과정은 응답에 id 자체가 없어 여전히 해시로 갈음한다.
 
 ## 소스 계약
 
 | 소스 | 카테고리 | feed_kind | 상태 |
 |---|---|---|---|
-| 워크넷/고용24 | job_fair, public_recruitment, public_recruitment_company, promising_sme | job | 동작 |
-| 워크넷/고용24 | training_course, job_seeker_program | **policy** | 동작 |
+| 고용24 | job_fair, public_recruitment, public_recruitment_company, promising_sme | job | 동작 |
+| 고용24 | training_course, job_seeker_program | **policy** | 동작 |
 | 온통청년 | youth_policy | policy | **동작**(2026-09-09 인증키 발급, 30건 수집 확인) |
 
 **훈련과정과 구직자취업역량강화프로그램을 `policy`로 보낸 게 이 표에서 가장 중요한 두 줄이다.** 온통청년 키가 9/16까지 안 나와도 지원 정책 섹션이 비지 않는다. 실측으로 정책 피드 59건이 채워지는 것을 확인했다.
@@ -55,7 +55,7 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 | 엔드포인트 | `/opi/youthPlcyList.do` | **`/go/ythip/getPlcy`** — 옛 경로는 같은 호스트인데 이 경로만 연결이 타임아웃된다(죽어 있다) |
 | 파라미터 | `openApiVlak`/`pageIndex`/`display` | **`apiKeyNm`/`pageNum`/`pageSize`/`rtnType`** |
 | 응답 포맷 | XML | **JSON** (`rtnType=xml`도 되지만 JSON을 쓴다) |
-| 오류 표시 | `<errMsg>` 등 | **HTTP 200 + 본문 `resultCode`** (워크넷과 같은 계열의 함정) |
+| 오류 표시 | `<errMsg>` 등 | **HTTP 200 + 본문 `resultCode`** (고용24과 같은 계열의 함정) |
 | 정책 id | 있는지 불명 | **`plcyNo` 있음** — 안정적인 중복 제거 키 |
 | 등록일 | 불명 | **`frstRegDt`**, `"2026-09-08 09:13:11"` 형태(YYYYMMDD 아님) |
 
@@ -108,7 +108,7 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 | 엔드포인트 | 인증 | 정렬 |
 |---|---|---|
 | `GET /api/v1/feed/policies` | 익명 허용 | `coalesce(source_published_at, first_seen_at)` desc |
-| `GET /api/v1/feed/jobs` | 익명 허용 | `first_seen_at` desc |
+| `GET /api/v1/feed/jobs` | 익명 허용 | 카테고리 라운드로빈(`ROW_NUMBER() OVER (PARTITION BY category ...)`) 후 `first_seen_at` desc |
 | `GET /api/v1/feed/jobs/recommended` | 인증 필요(게스트 포함) | 코사인, 불가 시 최신순 |
 | `GET /api/v1/feed/sources` | 인증 필요 | 정렬 없음 — 소스별 설정/수집 상태(진단용) |
 
@@ -130,8 +130,8 @@ id 없는 카테고리(채용행사/공채기업정보/구직자프로그램/강
 
 ## 범위 밖 / 후속
 
-- `JobInfoResult.source_key`(`eventNo`/`empSeqno`) — 병합 후 1순위.
+- ~~`JobInfoResult.source_key`(`eventNo`/`empSeqno`)~~ — 2026-09-10 완료. 상세 링크도 같이 붙었다(채용행사는 고용24 상세 페이지, 공채속보·공채기업정보는 기업이 직접 운영하는 페이지). **강소기업·구직자프로그램은 고용24가 항목별 공개 상세를 주지 않아 링크가 없다** — 추측한 주소로 보내지 않는다.
 - ~~`GET /feed/sources`~~ — 2026-09-09 추가했다. 처음엔 "자를 순서 1번"으로 잘랐는데, 실제로 피드가 비었을 때 원인을 못 찾아 프로덕션 API를 손으로 쳐야 했다.
 - ivfflat 인덱스 — 수백 행 규모에서는 seq scan이 더 빠르다. 데이터가 쌓이면 init 마이그레이션과 같은 raw SQL 형태로 추가.
-- 프론트 연동 전체(`lib/api/feed.ts`, 메인 화면 섹션). ⚠️ `app/page.tsx`가 **세션이 1개 이상인 로그인 사용자를 곧바로 최근 세션으로 리다이렉트**한다 — 즉 프로필이 쌓인 바로 그 사용자가 랜딩을 못 본다. 피드를 어디에 놓을지부터 정해야 한다.
+- ~~프론트 연동 전체(`lib/api/feed.ts`, 메인 화면 섹션)~~ — devlog 26에서 완료(리다이렉트도 같이 걷어냄). 페이지네이션은 2026-09-10에 `useInfiniteQuery` + "더보기"로 붙였다.
 - `GET /feed/*`는 이 앱 최초의 무인증 데이터 엔드포인트다. `limit ≤ 50` 인덱스 조회에 공개 데이터뿐이라 괜찮다고 판단했지만, 실수가 아니라 결정이었음을 남겨둔다.

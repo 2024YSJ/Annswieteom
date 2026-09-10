@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     supabase_service_key: str = ""
     supabase_storage_bucket: str = "records"
 
-    # 워크넷(고용24) Open API — 무료, 조회 전용. https://www.work24.go.kr 회원가입
+    # 고용24 Open API — 무료, 조회 전용. https://www.work24.go.kr 회원가입
     # 후 카테고리별로 각각 신청하면 담당자 심사를 거쳐 발급된다(신청 즉시
     # 발급이 아니고, 카테고리마다 별도 키 — 2026-09-08 devlog 15/16 참고).
     # "채용정보"(구인정보 검색) 자체는 개인회원 계정을 차단해서(devlog 15) 못
@@ -43,9 +43,9 @@ class Settings(BaseSettings):
     worknet_promising_sme_api_key: str = ""  # 강소기업
 
     # 온통청년(youthcenter.go.kr) 청년정책 통합 Open API - 무료, 조회 전용.
-    # 회원가입 후 [마이페이지 - OPEN API]에서 신청하면 워크넷과 마찬가지로
+    # 회원가입 후 [마이페이지 - OPEN API]에서 신청하면 고용24과 마찬가지로
     # 담당자 심사를 거쳐 발급된다. 비어 있으면 이 소스는 오류가 아니라 그냥
-    # 수집 대상에서 빠지고, 지원 정책 피드는 워크넷의 직업훈련과정/구직자
+    # 수집 대상에서 빠지고, 지원 정책 피드는 고용24의 직업훈련과정/구직자
     # 취업역량강화프로그램으로 채워진다(services/feed/sources/__init__.py).
     youthcenter_api_key: str = ""
 

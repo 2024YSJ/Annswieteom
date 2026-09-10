@@ -138,7 +138,7 @@ class InterviewContext:
     asked_questions: list[str] = field(default_factory=list)
 
 
-#: 취업 정보 종합 검색이 다루는 6개 카테고리 — 9개 워크넷/고용24 엔드포인트를
+#: 취업 정보 종합 검색이 다루는 6개 카테고리 — 9개 고용24 엔드포인트를
 #: 사용자 개념 단위로 묶은 것(직업훈련과정 하나가 실제로는 4개 엔드포인트를
 #: 가리킴). classify_job_info_query가 이 중에서 고른다.
 JOB_INFO_CATEGORIES = (
@@ -175,7 +175,7 @@ class JobInfoCandidate:
 
 @dataclass
 class JobInfoQueryParams:
-    """사용자 질문에서 뽑아낸 조회 조건 — 워크넷 호출에 그대로 실린다.
+    """사용자 질문에서 뽑아낸 조회 조건 — 고용24 호출에 그대로 실린다.
 
     예전에는 이런 게 아예 없어서, 카테고리(=엔드포인트)만 고르고 조회는
     전국 첫 20건을 무조건 받아왔다. "경기 북부 백엔드"라고 물어도 후보에

@@ -510,8 +510,13 @@ textarea:focus {
   gap: 14px;
 }
 
+/* flex column인 이유: 카드 아래에 보조 버튼(.flow-aside-btn)이 형제로 붙는다.
+   예전처럼 .flow가 height:100%로 그리드 행 전체를 먹으면 그 버튼이 래퍼 밖으로
+   밀려나 아래 문단 위에 겹쳐 그려진다. */
 .flow-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .flow {
@@ -520,7 +525,7 @@ textarea:focus {
   align-items: flex-start;
   gap: 6px;
   width: 100%;
-  height: 100%;
+  flex: 1;
   text-align: left;
   padding: 24px 22px 20px;
   background: var(--surface-strong);
@@ -1044,4 +1049,112 @@ button.flow:active:not(:disabled) {
     background: rgba(26, 26, 24, 0.35);
     z-index: 29;
   }
+}
+
+/* ── 결과물 예시 트리거 + 첫 모달 ────────────────────────────────────────
+   `.flow` 카드 자체가 button이라 예시 버튼을 안에 중첩할 수 없다. .bubble-tip과
+   같이 `.flow-wrap`의 형제로 두고, 카드 바로 아래에 붙는 보조 버튼처럼 보이게
+   한다. */
+.flow-aside-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 14px;
+  font-size: 13px;
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--border);
+  box-shadow: none;
+  color: var(--muted-text);
+}
+
+.flow-aside-btn:hover:not(:disabled) {
+  border-style: solid;
+  color: var(--surface-text);
+}
+
+/* 이 앱의 유일한 중앙 모달. 모바일 사이드바의 .sidebar-backdrop(z-index 29~31)
+   위에 오도록 40번대를 쓴다. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(26, 26, 24, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+}
+
+.modal-panel {
+  position: relative;
+  width: min(760px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--surface-text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+}
+
+/* 패널 자체는 프로그램적으로만 포커스를 받으므로(tabIndex=-1) 외곽선을 지운다 —
+   마우스로 연 사용자에게 링이 뜨면 오해를 부른다. */
+.modal-panel:focus {
+  outline: none;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-head h2 {
+  margin: 0;
+  font-size: 17px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  font-size: 15px;
+  color: var(--muted-text);
+}
+
+.modal-body {
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+}
+
+.modal-lead {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+/* ── 피드 더보기 ──────────────────────────────────────────────────────── */
+.feed-more {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.feed-more button {
+  min-width: 140px;
 }

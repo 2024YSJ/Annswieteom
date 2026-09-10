@@ -51,19 +51,30 @@ export function SiteFooter() {
   );
 }
 
-/** 세션 사이드바에서도 같은 표기를 쓰기 때문에 따로 빼뒀다. */
+/** 세션 사이드바에서도 같은 표기를 쓰기 때문에 따로 빼뒀다.
+ *
+ * 예전에는 Flaticon이 만들어주는 크레딧 조각을 그대로 붙여넣었는데, 그건
+ * **표기가 아니라 검색 결과 문구**였다. 화면에 "아이콘 제작: 침대가 없다 아이콘
+ * 제작자: juicy_fish - Flaticon"으로 나와서 "아이콘"과 "제작"이 두 번씩 겹쳤고,
+ * 검색어였던 "침대가 없다"가 공백기 서비스 화면에 아무 맥락 없이 떠 있었다.
+ * 링크도 한국어 검색어가 슬러그로 변환되지 않아 `/kr/free-icons/-`라는 죽은
+ * 주소였다.
+ *
+ * 라이선스가 요구하는 건 제작자 이름과 Flaticon 링크 둘뿐이므로 그것만 남기고,
+ * 링크는 검색 페이지 대신 **이 아이콘 자체의 페이지**로 건다(파일명
+ * `logo/free-icon-no-bed-13322151.png`의 id가 그 주소다). */
 export function IconAttribution() {
   return (
     <span>
       아이콘 제작:{" "}
       <a
-        href="https://www.flaticon.com/kr/free-icons/-"
-        title="침대가 없다 아이콘"
+        href="https://www.flaticon.com/free-icon/no-bed_13322151"
+        title="juicy_fish의 아이콘 (Flaticon)"
         target="_blank"
         rel="noopener noreferrer"
         style={{ textDecoration: "underline", textUnderlineOffset: 3 }}
       >
-        침대가 없다 아이콘 제작자: juicy_fish - Flaticon
+        juicy_fish · Flaticon
       </a>
     </span>
   );

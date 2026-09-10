@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
@@ -8,6 +8,7 @@ import { sessionApi, type SessionKind, type SessionRead } from "@/lib/api-client
 import { errorMessage } from "@/lib/error-messages";
 import { sessionStatusLabel } from "@/lib/session-routes";
 import { useSessionsList } from "@/lib/use-sessions-list";
+import { ExampleDocumentModal } from "@/components/ExampleDocumentModal";
 import { FeedSection } from "@/components/FeedSection";
 import { LoadingNotice } from "@/components/LoadingNotice";
 
@@ -24,9 +25,17 @@ import { LoadingNotice } from "@/components/LoadingNotice";
 export default function Home() {
   const router = useRouter();
   const { user, accessToken, isLoading, guestLogin } = useAuth();
-  const { data: sessions, isLoading: sessionsLoading, error: sessionsError, refetch: refetchSessions } = useSessionsList();
+  const { data: sessions, error: sessionsError, refetch: refetchSessions } = useSessionsList();
   const [error, setError] = useState<string | null>(null);
   const [pendingKind, setPendingKind] = useState<SessionKind | null>(null);
+  const [isExampleOpen, setIsExampleOpen] = useState(false);
+  // 모달을 닫을 때 포커스를 열었던 버튼으로 되돌리기 위해 붙잡아둔다.
+  const exampleTriggerRef = useRef<HTMLButtonElement>(null);
+
+  function closeExample() {
+    setIsExampleOpen(false);
+    exampleTriggerRef.current?.focus();
+  }
 
   // 첫 화면에서 곧바로 서비스로 들어가는 경로. 로그인 여부와 무관하게 카드 한
   // 번 누르면 (필요하면 게스트 로그인까지 해서) 세션을 만들고 대화 화면으로
@@ -98,6 +107,16 @@ export default function Home() {
                 {pendingKind === "gap_fill" ? "시작하는 중..." : hasSessions ? "새로 시작하기" : "시작하기"}{" "}
                 <span aria-hidden>→</span>
               </span>
+            </button>
+            {/* `.flow` 자체가 button이라 안에 중첩할 수 없다 — .bubble-tip과
+             * 같은 방식으로 `.flow-wrap`의 형제로 둔다. */}
+            <button
+              ref={exampleTriggerRef}
+              type="button"
+              className="flow-aside-btn"
+              onClick={() => setIsExampleOpen(true)}
+            >
+              결과물 예시 보기
             </button>
           </div>
 
@@ -173,7 +192,7 @@ export default function Home() {
         </section>
       )}
 
-      <FeedSection scope="jobs" icon="🧭" title="최신 공고" aside="워크넷에서 모아왔어요" accessToken={accessToken} />
+      <FeedSection scope="jobs" icon="🧭" title="최신 공고" aside="고용24에서 모아왔어요" accessToken={accessToken} />
 
       <FeedSection
         scope="policies"
@@ -196,9 +215,7 @@ export default function Home() {
         </section>
       )}
 
-      {/* 결과물이 뭔지 아직 모르는 사람에게만 보여준다. 이미 세션이 있는
-       * 사용자에게는 자기 문서가 있으므로 예시가 자리만 차지한다. */}
-      {!hasSessions && !sessionsLoading && <ExampleDocument />}
+      {isExampleOpen && <ExampleDocumentModal onClose={closeExample} />}
     </main>
   );
 }
@@ -233,87 +250,6 @@ function ResumeSection({ sessions }: { sessions: SessionRead[] }) {
     </section>
   );
 }
-
-/** 결과물이 어떻게 생겼는지 먼저 보여주는 섹션. 실제 생성 문서를 그대로 옮긴 게
- * 아니라 예시 텍스트지만, 구조(STAR 4단락 + 문장별 근거 태그)와 근거 태그의
- * 종류는 실제 confirmed_facts.source_type 세 가지와 일치시켰다. */
-function ExampleDocument() {
-  return (
-    <section className="landing-section">
-      <div className="landing-wrap">
-        <div className="section-head">
-          <h2>
-            <span aria-hidden>📄</span> 이렇게 만들어집니다
-          </h2>
-          <span className="section-aside">모든 문장에 근거가 붙습니다</span>
-        </div>
-
-        <article className="doc-preview">
-          <div className="doc-bar">
-            <span className="doc-bar-title">데이터 분석 직무 경력기술서 — 2025.03 ~ 2025.09</span>
-            <span className="doc-bar-meta">TONE: 담백 · v2</span>
-          </div>
-
-          <div className="doc-body">
-            {EXAMPLE_STAR.map((block) => (
-              <div key={block.label} className="doc-star">
-                <span className="doc-star-label">{block.label}</span>
-                <p>{block.text}</p>
-                <div className="doc-evidence">
-                  {block.evidence.map((e) => (
-                    <span key={e.text} className={e.cited ? "chip chip-cite" : "chip"}>
-                      {e.text}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="doc-foot">
-            <span aria-hidden>🔒</span>
-            <span>
-              <b>없는 경력은 만들지 않습니다.</b> 직접 &ldquo;맞다&rdquo;고 확인한 사실에만 문장이 붙습니다.
-            </span>
-          </div>
-        </article>
-      </div>
-    </section>
-  );
-}
-
-const EXAMPLE_STAR = [
-  {
-    label: "Situation",
-    text: "퇴사 후 6개월간 데이터 분석 직무로의 전환을 준비하며, 통계와 SQL 기초를 처음부터 다시 쌓아야 하는 상황이었습니다.",
-    evidence: [
-      { text: "사용자 확인 · 공백기 6개월", cited: false },
-      { text: "사용자 확인 · 직무 전환 목표", cited: false },
-    ],
-  },
-  {
-    label: "Task",
-    text: "실무에서 바로 쓸 수 있는 수준까지 SQL·Python 분석 역량을 끌어올리고, 결과물을 외부에 공개해 검증받는 것을 목표로 삼았습니다.",
-    evidence: [{ text: "사용자 확인 · 학습 목표", cited: false }],
-  },
-  {
-    label: "Action",
-    text: "매주 공공데이터를 하나씩 골라 분석 노트를 작성해 블로그에 21편을 연재했고, SQLD 자격증을 취득했으며, 스터디 5인의 코드 리뷰를 진행했습니다.",
-    evidence: [
-      { text: "기록물 인용 · 블로그 21편", cited: true },
-      { text: "기록물 인용 · SQLD 합격증", cited: true },
-      { text: "사용자 확인 · 스터디 운영", cited: false },
-    ],
-  },
-  {
-    label: "Result",
-    text: "연재 글의 누적 조회수는 1만 2천 회를 넘었고, 마지막 프로젝트는 실제 지원 포트폴리오로 제출해 서류 전형을 통과했습니다.",
-    evidence: [
-      { text: "기록물 인용 · 블로그 통계", cited: true },
-      { text: "사용자 수정 · 서류 통과", cited: false },
-    ],
-  },
-];
 
 const NOTICE_MAIN_STYLE = {
   maxWidth: 480,

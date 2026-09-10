@@ -16,7 +16,7 @@ from app.services.llm.base import JobInfoQueryParams
 # 고정한다 — 곧 시작하는/모집 중인 과정 위주로 보여주는 셈이라 실용적인 기본값.
 _TRAINING_WINDOW_DAYS = 90
 
-# 카테고리당 워크넷에서 받아오는 원본 건수 상한 — 이 목록 전체가 그대로
+# 카테고리당 고용24에서 받아오는 원본 건수 상한 — 이 목록 전체가 그대로
 # select_relevant_job_info_results 프롬프트에 들어가므로(devlog 18: 문자열
 # 부분일치 대신 LLM이 실제로 관련 있는 항목을 골라내는 방식으로 교체), 로컬
 # LLM 호출 하나에 무리 없이 들어갈 만큼만 가져온다.
@@ -49,7 +49,7 @@ _FILTERABLE_CATEGORIES = frozenset({"training_course"})
 
 
 class WorknetApiError(Exception):
-    """워크넷/고용24가 정상 목록 대신 오류 응답을 돌려준 경우(인증키 미승인,
+    """고용24가 정상 목록 대신 오류 응답을 돌려준 경우(인증키 미승인,
     개인회원 계정 차단 등). 이 API들은 오류일 때도 HTTP 200을 주고 본문에만
     오류 내용을 담아 보내므로 `resp.raise_for_status()`로는 못 잡는다 — 이걸
     구분 안 하면 "검색 결과 없음"과 "API 자체가 실패함"이 똑같이 보인다(실제로
@@ -63,15 +63,25 @@ class WorknetApiError(Exception):
         super().__init__(f"worknet_api_error({category}): {message}")
 
 
+#: 고용24 채용행사 상세 페이지. 파라미터 이름이 API 필드명과 다르다 —
+#: API가 주는 eventNo/areaCd가 화면에서는 newsDataSeqno/eventMegaRegionCd다
+#: (2026-09-10 실제 행사 두 건으로 확인).
+_EMP_EVENT_DETAIL_URL = "https://www.work24.go.kr/wk/a/f/1100/retrieveEmpEventDtl.do"
+
+
 @dataclass
 class JobInfoResult:
-    """6개 카테고리 전부가 공유하는 결과 모양 — 각 워크넷 API의 XML 필드가
+    """6개 카테고리 전부가 공유하는 결과 모양 — 각 고용24 API의 XML 필드가
     전부 다르므로(카테고리별 파서 참고) 프론트가 카테고리 상관없이 카드 하나로
     그릴 수 있게 여기서 정규화한다."""
     title: str
     subtitle: str
     meta_lines: list[str]
     detail_url: str | None = None
+    #: 소스가 주는 항목 고유 id. 피드의 중복 제거 키로 쓰인다(feed/dedup.py) —
+    #: 없으면 내용 해시로 갈음하는데, 그러면 소스가 문구를 한 글자만 고쳐도
+    #: 새 항목으로 들어온다. 카테고리마다 id 필드 이름이 다르므로 파서에서 채운다.
+    source_key: str | None = None
 
 
 def _text(item: ET.Element, tag: str) -> str:
@@ -107,8 +117,23 @@ async def search_job_fairs(limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
     results = []
     for item in root.findall(".//empEvent"):
         term = _text(item, "eventTerm")
+        event_no = _text(item, "eventNo")
+        area_cd = _text(item, "areaCd")
+        # 상세 페이지가 지역 코드까지 요구한다. 둘 중 하나라도 없으면 링크를
+        # 만들지 않는다 — 안 열리는 링크는 링크가 없는 것보다 나쁘다.
+        detail_url = (
+            f"{_EMP_EVENT_DETAIL_URL}?newsDataSeqno={event_no}&eventMegaRegionCd={area_cd}"
+            if event_no and area_cd
+            else None
+        )
         results.append(
-            JobInfoResult(title=_text(item, "eventNm"), subtitle=_text(item, "area"), meta_lines=[f"기간: {term}"] if term else [])
+            JobInfoResult(
+                title=_text(item, "eventNm"),
+                subtitle=_text(item, "area"),
+                meta_lines=[f"기간: {term}"] if term else [],
+                detail_url=detail_url,
+                source_key=event_no or None,
+            )
         )
     return results
 
@@ -131,7 +156,11 @@ async def search_public_recruitment(limit: int = _FETCH_LIMIT) -> list[JobInfoRe
                 title=_text(item, "empWantedTitle"),
                 subtitle=_text(item, "empBusiNm"),
                 meta_lines=meta,
-                detail_url=_text(item, "empWantedHomepgDetail") or None,
+                # 이 카테고리는 고용24 상세 페이지가 아니라 기업이 직접 올린
+                # 채용 페이지 주소를 준다. 모바일 주소는 비어 있는 경우가 많아
+                # 보조로만 쓴다.
+                detail_url=_text(item, "empWantedHomepgDetail") or _text(item, "empWantedMobileUrl") or None,
+                source_key=_text(item, "empSeqno") or None,
             )
         )
     return results
@@ -148,7 +177,18 @@ async def search_public_recruitment_companies(limit: int = _FETCH_LIMIT) -> list
         co_size = _text(item, "coClcdNm")
         intro = _text(item, "coIntroSummaryCont")
         meta = [m for m in [f"규모: {co_size}" if co_size else "", intro] if m]
-        results.append(JobInfoResult(title=_text(item, "coNm"), subtitle=co_size, meta_lines=meta))
+        results.append(
+            JobInfoResult(
+                title=_text(item, "coNm"),
+                subtitle=co_size,
+                meta_lines=meta,
+                # 고용24에는 이 카테고리의 공개 상세 페이지가 없다(기업정보
+                # 상세는 로그인 + 내부 코드가 필요하다). 대신 응답이 기업이
+                # 직접 운영하는 채용 홈페이지를 주므로 그리로 보낸다.
+                detail_url=_text(item, "homepg") or None,
+                source_key=_text(item, "empCoNo") or None,
+            )
+        )
     return results
 
 
@@ -183,7 +223,17 @@ async def search_promising_smes(limit: int = _FETCH_LIMIT) -> list[JobInfoResult
         region = _text(item, "regionNm")
         product = _text(item, "coMainProd")
         meta = [m for m in [f"업종: {industry}" if industry else "", f"지역: {region}" if region else "", f"주요생산품: {product}" if product else ""] if m]
-        results.append(JobInfoResult(title=_text(item, "coNm"), subtitle=industry, meta_lines=meta))
+        results.append(
+            JobInfoResult(
+                title=_text(item, "coNm"),
+                subtitle=industry,
+                meta_lines=meta,
+                # 상세 URL 없음 — 응답에 링크 필드가 없고, 고용24의 강소기업
+                # 페이지는 제도 안내일 뿐 기업별 상세가 없다(2026-09-10 확인).
+                # 추측해서 만든 링크로 보내느니 안 눌리는 카드로 둔다.
+                source_key=_text(item, "busiNo") or None,
+            )
+        )
     return results
 
 
@@ -315,7 +365,7 @@ async def search_training_courses(params: JobInfoQueryParams | None = None) -> l
         if merged:
             return list(merged.values())
 
-    # 그래도 0건이면 조건을 다 뗀다. 워크넷은 유효하지 않은 코드에도 에러가
+    # 그래도 0건이면 조건을 다 뗀다. 고용24은 유효하지 않은 코드에도 에러가
     # 아니라 빈 목록을 주기 때문에(실측: 광주 29는 두 엔드포인트 모두 0건)
     # "코드가 틀렸다"와 "그 지역에 과정이 없다"를 구분할 수 없다 — 조용히 빈
     # 화면을 주는 것보다 넓은 결과를 주고 관련성 판단에 맡기는 쪽이 낫다.
@@ -344,7 +394,7 @@ CATEGORY_LABELS = {
 class JobInfoClient:
     """카테고리 검색 함수들을 한데 묶는 얇은 래퍼 — FastAPI DI로 라우트에
     주입돼서 테스트가 가짜 구현으로 오버라이드할 수 있게 한다(get_llm_provider/
-    get_storage와 같은 패턴). 여기서 돌려주는 건 워크넷 원본 목록 그대로다 —
+    get_storage와 같은 패턴). 여기서 돌려주는 건 고용24 원본 목록 그대로다 —
     실제 사용자 질문과 관련 있는 항목만 고르는 건 LLM의
     select_relevant_job_info_results가 한다(app/api/job_search.py)."""
 
