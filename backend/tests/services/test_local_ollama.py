@@ -333,3 +333,52 @@ async def test_generate_timeout_is_the_shared_constant(ollama_calls):
     source = inspect.getsource(mod)
     assert "timeout=45.0" not in source
     assert mod._GENERATE_TIMEOUT == 240.0
+
+
+@pytest.mark.asyncio
+async def test_extract_activity_period_sends_a_temperature(ollama_calls):
+    # temperature 누락으로 이 호출이 매번 TypeError를 냈고, 호출부가 삼켜서
+    # 활동기간 AI 추론이 조용히 죽어 있었다. 요청이 실제로 나가는지까지 본다.
+    from datetime import date
+
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps({"start_date": "2026-03-01", "end_date": "2026-05-31"})
+    result = await LocalOllamaProvider().extract_activity_period(
+        "카페 아르바이트", [], date(2026, 1, 1), date(2026, 8, 31)
+    )
+
+    assert calls[0]["options"]["temperature"] == 0.0
+    assert result is not None and result.start_date == date(2026, 3, 1)
+
+
+@pytest.mark.asyncio
+async def test_generate_document_converts_prompt_numbers_to_zero_based_indices(ollama_calls):
+    # 프롬프트는 사실을 [1]부터 보여준다. 모델이 "[1]번 사실"이라 답하면 그건
+    # facts[0]이어야 한다 — 변환이 없던 동안 인용이 한 칸씩 밀려 저장됐다.
+    from app.services.llm.base import ConfirmedFact
+
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps(
+        {
+            "paragraphs": [
+                {
+                    "topic": "주제",
+                    "sentences": [
+                        {"text": "첫 문장", "fact_indices": [1]},
+                        {"text": "둘째 문장", "fact_indices": [1, 2]},
+                        # 0번은 프롬프트에 없는 번호다 — 범위 밖(-1)으로 떨어져 호출부에서 버려진다.
+                        {"text": "셋째 문장", "fact_indices": [0, 2, "x"]},
+                    ],
+                }
+            ]
+        }
+    )
+    facts = [
+        ConfirmedFact(id="a", content="사실 A", source_type="user_confirmed", fact_type="task"),
+        ConfirmedFact(id="b", content="사실 B", source_type="user_confirmed", fact_type="achievement"),
+    ]
+    draft = await LocalOllamaProvider().generate_document(facts, "neutral", "카페 아르바이트")
+
+    prompt = calls[0]["messages"][1]["content"]
+    assert "[1] (user_confirmed) 사실 A" in prompt
+    assert [s.fact_indices for s in draft.paragraphs[0].sentences] == [[0], [0, 1], [-1, 1]]

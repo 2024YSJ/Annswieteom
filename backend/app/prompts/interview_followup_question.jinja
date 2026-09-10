@@ -23,6 +23,12 @@
 - ({{ excerpt.published_at }}) {{ excerpt.text }}
 {% endfor %}
 {% endif %}
+{% if profile_summary %}
+[참고용 사용자 프로필 — 이미 아는 정보다. 다시 묻지 말고, 질문을 이 사람에게 맞게 다듬는 데만 참고해라]
+{% for line in profile_summary %}
+- {{ line }}
+{% endfor %}
+{% endif %}
 
 [출력 형식]
 반드시 아래 JSON 형식만 출력해라. 설명이나 다른 텍스트는 절대 추가하지 마라.

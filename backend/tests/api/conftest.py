@@ -26,8 +26,11 @@ from app.models.record_chunk import RecordChunk
 from app.models.refresh_token import RefreshToken
 from app.models.session import Session as SessionModel
 from app.models.user import User
+from app.models.user_attribute import UserAttribute
+from app.models.user_consent import UserConsent
 from app.models.user_preference import UserPreference
 from app.services.embedding import get_embedding_provider
+from app.services.profile.attributes import get_profile_extractor
 from app.services.feed.ingest import get_feed_refresher
 from app.services.feed.profile_adapter import get_profile_embedder
 from app.services.llm.base import (
@@ -111,7 +114,10 @@ class FakeLLMProvider:
         draft_job_info_query: str | None = None,
         activity_period=None,
         probe_question: str | None = None,
+        profile_attributes: list[list] | None = None,
     ):
+        self._profile_attributes_queue = list(profile_attributes) if profile_attributes else None
+        self.profile_attribute_calls: list[tuple[str, list[str], bool]] = []
         self._facts_queue = list(fact_candidates) if fact_candidates else None
         self._followup_queue = list(followup_questions) if followup_questions else None
         self._sufficiency_queue = list(sufficiency_results) if sufficiency_results else None
@@ -258,6 +264,12 @@ class FakeLLMProvider:
             return self._draft_job_info_query
         return ""
 
+    async def extract_profile_attributes(self, text, known, allow_sensitive):
+        self.profile_attribute_calls.append((text, list(known), allow_sensitive))
+        if self._profile_attributes_queue:
+            return self._profile_attributes_queue.pop(0)
+        return []
+
     async def health_check(self) -> bool:
         return True
 
@@ -305,6 +317,17 @@ class FakeProfileEmbedder:
         self.calls.append(user_id)
 
 
+class FakeProfileExtractor:
+    """속성 추출 워커 대역. 진짜 워커는 자기 DB 세션(AsyncSessionLocal)을 열어
+    get_db 오버라이드를 우회하므로, 테스트에서는 호출만 기록한다."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    async def __call__(self, user_id, source_kind, text, source_answer_id=None):
+        self.calls.append((user_id, source_kind, text, source_answer_id))
+
+
 @pytest.fixture
 def feed_client():
     """피드 API용. 벡터 테이블 두 개(feed_item_embeddings /
@@ -327,6 +350,8 @@ def feed_client():
         SessionModel.__table__,
         InterviewAnswer.__table__,
         UserPreference.__table__,
+        UserAttribute.__table__,
+        UserConsent.__table__,
         FeedItem.__table__,
         FeedRefreshState.__table__,
     ]
@@ -345,15 +370,18 @@ def feed_client():
 
     fake_refresher = FakeFeedRefresher()
     fake_embedder = FakeProfileEmbedder()
+    fake_extractor = FakeProfileExtractor()
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_feed_refresher] = lambda: fake_refresher
     app.dependency_overrides[get_profile_embedder] = lambda: fake_embedder
+    app.dependency_overrides[get_profile_extractor] = lambda: fake_extractor
     try:
         with TestClient(app) as test_client:
             test_client.session_local = test_session_local
             test_client.fake_refresher = fake_refresher
             test_client.fake_embedder = fake_embedder
+            test_client.fake_extractor = fake_extractor
             yield test_client
     finally:
         app.dependency_overrides.clear()
@@ -381,6 +409,8 @@ def session_client():
         ConfirmedFact.__table__,
         InterviewAnswer.__table__,
         UserPreference.__table__,
+        UserAttribute.__table__,
+        UserConsent.__table__,
         # Empty but must exist: deleting a Session lazy-loads these
         # cascade="all, delete-orphan" relationships even with zero rows.
         Record.__table__,
@@ -410,11 +440,16 @@ def session_client():
         return []
 
     app.dependency_overrides[get_db] = override_get_db
+    fake_extractor = FakeProfileExtractor()
+
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
     app.dependency_overrides[get_chunk_search] = lambda: override_chunk_search
+    app.dependency_overrides[get_profile_extractor] = lambda: fake_extractor
     try:
         with TestClient(app) as test_client:
             test_client.fake_llm = fake_llm
+            test_client.fake_extractor = fake_extractor
+            test_client.session_local = test_session_local
             yield test_client
     finally:
         app.dependency_overrides.clear()
@@ -464,6 +499,8 @@ def records_client():
         ConfirmedFact.__table__,
         InterviewAnswer.__table__,
         UserPreference.__table__,
+        UserAttribute.__table__,
+        UserConsent.__table__,
         Record.__table__,
         # Empty but must exist: deleting a Record lazy-loads this
         # cascade="all, delete-orphan" relationship even with zero rows.
@@ -511,6 +548,7 @@ def records_client():
     app.dependency_overrides[get_process_record] = lambda: fake_process_record
     app.dependency_overrides[get_process_document_record] = lambda: fake_process_document_record
     app.dependency_overrides[get_storage] = lambda: fake_storage
+    app.dependency_overrides[get_profile_extractor] = lambda: FakeProfileExtractor()
     try:
         with TestClient(app) as test_client:
             test_client.fake_storage = fake_storage
@@ -544,6 +582,8 @@ def document_client():
         ConfirmedFact.__table__,
         InterviewAnswer.__table__,
         UserPreference.__table__,
+        UserAttribute.__table__,
+        UserConsent.__table__,
         Record.__table__,
         RecordChunk.__table__,
         GeneratedDocument.__table__,
@@ -577,6 +617,7 @@ def document_client():
     app.dependency_overrides[get_embedding_provider] = lambda: fake_embedding
     app.dependency_overrides[get_chunk_search] = lambda: override_chunk_search
     app.dependency_overrides[get_fact_citations] = lambda: override_fact_citations
+    app.dependency_overrides[get_profile_extractor] = lambda: FakeProfileExtractor()
     try:
         with TestClient(app) as test_client:
             test_client.fake_llm = fake_llm

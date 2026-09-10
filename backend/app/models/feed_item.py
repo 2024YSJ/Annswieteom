@@ -67,6 +67,11 @@ class FeedItem(Base):
     # 같은 이유로 JSONB가 아닌 제네릭 JSON.
     meta_lines: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     detail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 구조화된 자격조건(연령·지역·학력·전공·취업상태·특화분야·혼인·소득 코드).
+    # 온통청년만 채운다 — services/feed/sources/youthcenter_source.py
+    # _parse_eligibility. 티어 매칭(services/feed/matching.py)의 입력이다.
+    # None = 조건 정보 없음(고용24 항목 전부, 또는 이 컬럼 이전에 수집된 행).
+    eligibility: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 소스가 등록일/게시일을 주는 경우에만 채워진다. 고용24 6개 중 대부분은 안 준다.
     source_published_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     # 실제로 임베딩에 넣은 문자열을 그대로 보관한다 — 다음 수집 때 "이 항목을 다시

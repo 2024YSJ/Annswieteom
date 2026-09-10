@@ -90,8 +90,12 @@ journalctl -u cloudflared -n 50 --no-pager     # "active" alone is not evidence 
 | `generated_documents` | Final output with tone/version metadata |
 | `generated_sentences` | Individual sentences with `evidence_fact_ids[]` |
 | `refresh_tokens` | SHA-256 hashed refresh tokens |
+| `user_attributes` | Person-level profile (age, region, education, desired job…) extracted from conversation; `inferred`/`confirmed`/`user_edited`/`rejected`. Feeds recommendations and interview follow-ups **only** — never document generation |
+| `user_consents` | `sensitive_profiling` consent; sensitive attributes (income, special groups, marital) are stored only while granted |
 
 `confirmed_facts.source_type` must be one of: `user_confirmed`, `user_edited`, `record_cited`. Never insert with a synthetic or AI-generated source type.
+
+`user_attributes` values must never reach `generate_document` or the `draft_answer` prompt — an inferred attribute in an AI draft becomes a confirmed fact the moment the user clicks confirm. Spec: [docs/specs/profiling_and_matching.md](docs/specs/profiling_and_matching.md).
 
 ## API Structure
 

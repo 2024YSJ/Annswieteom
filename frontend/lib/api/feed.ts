@@ -15,12 +15,17 @@ export interface FeedItemRead {
   /** 소스가 등록일을 주는 카테고리에서만 채워진다(대부분은 null). */
   source_published_at: string | null;
   first_seen_at: string;
+  /** 맞춤 정책에서만 온다. all = 걸린 조건이 모두 맞음(교집합), some = 일부 맞음,
+   * none = 명시적으로 맞는 조건 없음. */
+  match_tier?: "all" | "some" | "none" | "excluded" | null;
+  matched_labels?: string[];
+  unmet_labels?: string[];
 }
 
 /** 왜 개인화가 아닌지. 셋을 구분하지 않으면 신규 사용자에게 고장 안내를 띄우거나
  * 실제 고장을 "정보 부족"으로 숨기게 된다 — 서버 스키마(schemas/feed.py)의
- * 주석과 같은 이유다. */
-export type FeedFallbackReason = "no_profile" | "preparing" | "ai_unavailable";
+ * 주석과 같은 이유다. `no_attributes`는 맞춤 정책 전용(알게 된 속성이 아직 없음). */
+export type FeedFallbackReason = "no_profile" | "preparing" | "ai_unavailable" | "no_attributes";
 
 export interface FeedRead {
   items: FeedItemRead[];
@@ -69,6 +74,13 @@ export const feedApi = {
    * 내려온다. */
   recommendedJobs: (options: Omit<FeedQuery, "category"> = {}, accessToken: string) =>
     request<FeedRead>(`/api/v1/feed/jobs/recommended${queryString(options)}`, {
+      headers: authHeaders(accessToken),
+    }),
+
+  /** 맞춤 정책 — 조건이 모두 맞는 정책(교집합) 먼저, 일부 맞는 정책 다음. 나이·거주지가
+   * 안 맞는 정책은 서버가 뺀다. 알게 된 속성이 없으면 최신순 + `no_attributes`. */
+  recommendedPolicies: (options: Omit<FeedQuery, "category"> = {}, accessToken: string) =>
+    request<FeedRead>(`/api/v1/feed/policies/recommended${queryString(options)}`, {
       headers: authHeaders(accessToken),
     }),
 };

@@ -136,6 +136,25 @@ class InterviewContext:
     confirmed_facts_so_far: list[ConfirmedFact]
     record_excerpts: list[RecordExcerpt] = field(default_factory=list)
     asked_questions: list[str] = field(default_factory=list)
+    #: 이 사용자에 대해 이미 아는 속성(비민감만) — "거주: 경기 수원" 같은 줄.
+    #: followup_question / judge_drilldown 프롬프트에만 넣는다. draft_answer에
+    #: 넣으면 추정 속성이 AI 초안에 섞이고, 사용자가 무심코 확인하는 순간
+    #: confirmed_fact로 세탁된다(정직성 가드레일).
+    profile_summary: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AttributeCandidate:
+    """사용자 발화에서 뽑은 속성 후보 하나.
+
+    `value_label`은 프롬프트가 보여준 어휘 안의 라벨이다 — 코드는 서버가 붙인다
+    (regions.py와 같은 원칙: LLM에게 코드를 외우게 하지 않는다). `evidence`는
+    사용자가 실제로 한 말 그대로여야 하고, 원문에 없으면 서버가 버린다.
+    """
+
+    key: str
+    value_label: str
+    evidence: str
 
 
 #: 취업 정보 종합 검색이 다루는 6개 카테고리 — 9개 고용24 엔드포인트를
@@ -251,4 +270,12 @@ class LLMProvider(Protocol):
         self, query: str, category_label: str, candidates: list[JobInfoCandidate]
     ) -> list[int]: ...
     async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str: ...
+    #: 사람 단위 속성 추출(나이·거주지·학력·희망직무 …). 백그라운드에서만 부른다 —
+    #: 요청 경로의 LLM 호출 수를 늘리지 않는다. 프롬프트는 `allow_sensitive`와
+    #: 무관하게 민감 키도 보여준다 — 동의 없는 사용자가 스스로 말한 경우를 알아야
+    #: "저장하려면 동의가 필요해요"를 띄울 수 있기 때문이다. 값을 버리는 최종
+    #: 차단은 서버(services/profile/attributes.validate_candidates)가 한다.
+    async def extract_profile_attributes(
+        self, text: str, known: list[str], allow_sensitive: bool
+    ) -> list[AttributeCandidate]: ...
     async def health_check(self) -> bool: ...

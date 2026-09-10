@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,9 @@ class RankedFeed:
     #: 세 가지가 구분되지 않는다 — 프로필이 없거나, 아직 임베딩이 안 채워졌거나,
     #: 정말 고장났거나. 라우터가 "AI 서버가 수리 중" 안내를 띄울지 정하는 데 쓴다.
     vector_ranking_failed: bool = False
+    #: 티어 매칭(services/feed/matching.py)이 채운다 — 항목 id → ItemMatch.
+    #: 벡터/최신순 경로에서는 비어 있다.
+    matches: dict = field(default_factory=dict)
 
 
 def _base(feed_kind: str, category: str | None) -> Select:
