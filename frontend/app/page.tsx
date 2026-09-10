@@ -192,6 +192,23 @@ export default function Home() {
         </section>
       )}
 
+      {/* 맞춤 정책 — 대화로 알게 된 나이·거주지·학력 등과 정책 자격조건을 필드별로
+       * 대조해, 조건이 모두 맞는 정책(교집합)을 먼저 올린다. 게스트도 속성이 쌓이고
+       * /archive에서 고칠 수 있으므로 같은 링크를 준다. */}
+      {user && (
+        <FeedSection
+          scope="recommended_policies"
+          icon="🧩"
+          title="맞춤 정책"
+          accessToken={accessToken}
+          action={
+            <Link href="/archive" className="section-aside">
+              알게 된 정보 확인 →
+            </Link>
+          }
+        />
+      )}
+
       <FeedSection scope="jobs" icon="🧭" title="최신 공고" aside="고용24에서 모아왔어요" accessToken={accessToken} />
 
       <FeedSection

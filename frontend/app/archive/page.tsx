@@ -9,6 +9,7 @@ import { queryKeys } from "@/lib/query-keys";
 import { useAuth } from "@/lib/auth-context";
 import { LoadingNotice } from "@/components/LoadingNotice";
 import { PreferenceEditor } from "@/components/PreferenceEditor";
+import { ProfileAttributesEditor } from "@/components/ProfileAttributesEditor";
 
 /** 계정에 쌓인 문답 기록.
  *
@@ -93,6 +94,8 @@ export default function ArchivePage() {
     try {
       await profileApi.deleteAnswer(answerId, accessToken!);
       await queryClient.invalidateQueries({ queryKey: queryKeys.archive() });
+      // 그 답변에서 추정한 정보도 서버가 같이 지운다(attributes.forget_answer).
+      await queryClient.invalidateQueries({ queryKey: queryKeys.attributes() });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -121,12 +124,15 @@ export default function ArchivePage() {
   }
 
   if (user.is_guest) {
+    // 대화로 알게 된 정보는 게스트 계정에도 쌓이므로 보고 고칠 수단은 게스트에게도
+    // 있어야 한다. 희망사항·문답 기록은 여전히 가입 계정 전용이다.
     return (
       <main style={PAGE_STYLE}>
         <h1>맞춤 정보</h1>
+        <ProfileAttributesEditor accessToken={accessToken!} isGuest />
         <p style={{ color: "var(--body-text)" }}>
-          맞춤 정보와 문답 기록은 이메일로 회원가입한 계정에 쌓여요. 지금 가입하면 비회원으로 남긴
-          답변도 그대로 이어집니다. <Link href="/register">회원가입하기</Link>
+          희망사항과 문답 기록은 이메일로 회원가입한 계정에 쌓여요. 지금 가입하면 비회원으로 남긴
+          답변과 위 정보도 그대로 이어집니다. <Link href="/register">회원가입하기</Link>
         </p>
       </main>
     );
@@ -146,6 +152,9 @@ export default function ArchivePage() {
           </p>
         )}
       </header>
+
+      {/* 맞춤 정책의 조건 매칭 입력. 대화에서 자동으로 채워지고 여기서 고친다. */}
+      <ProfileAttributesEditor accessToken={accessToken!} isGuest={false} />
 
       {/* 맞춤 공고 정렬의 조종간. 문답이 하나도 없어도 이것만으로 개인화가 켜진다. */}
       <PreferenceEditor accessToken={accessToken!} />
