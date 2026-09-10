@@ -6,12 +6,28 @@ import { TypingDots } from "@/components/TypingDots";
 
 const COLD_START_DELAY_MS = 4000;
 
+const COLD_START_NOTICE =
+  "서버가 잠시 쉬고 있다가 깨어나는 중일 수 있어요. 최대 1분 정도 걸릴 수 있으니 조금만 기다려주세요 🙏";
+
 /** Render's free tier spins the backend down after ~15 minutes idle, and the
  * next request can take up to a minute while it wakes back up. A plain
  * "불러오는 중..." looks stuck/broken during that wait, so once loading has
  * dragged on a few seconds, add a note asking the user to hang on instead of
- * leaving them guessing whether something's wrong. */
-export function LoadingNotice({ label = "불러오는 중..." }: { label?: string }) {
+ * leaving them guessing whether something's wrong.
+ *
+ * `notice` exists because one caller waits for something else entirely.
+ * Document generation calls the LLM once per activity category, and on the
+ * DGX Spark one category measured 83s through the tunnel — so a few
+ * categories run to several minutes. Telling that user "최대 1분" would be a
+ * promise we break every time. The default stays as-is for the other callers,
+ * whose wait really is a Render cold start. */
+export function LoadingNotice({
+  label = "불러오는 중...",
+  notice = COLD_START_NOTICE,
+}: {
+  label?: string;
+  notice?: string;
+}) {
   const [showColdStartNotice, setShowColdStartNotice] = useState(false);
 
   useEffect(() => {
@@ -29,7 +45,7 @@ export function LoadingNotice({ label = "불러오는 중..." }: { label?: strin
       </p>
       {showColdStartNotice && (
         <p style={{ fontSize: 13, color: "var(--muted-text)", marginTop: 8 }}>
-          서버가 잠시 쉬고 있다가 깨어나는 중일 수 있어요. 최대 1분 정도 걸릴 수 있으니 조금만 기다려주세요 🙏
+          {notice}
         </p>
       )}
     </div>
