@@ -148,6 +148,25 @@ def test_recommended_policies_put_the_intersection_first_and_label_it(feed_clien
     assert first["matched_labels"] == ["수원 거주", "미취업자"]
 
 
+def test_recommended_policies_only_include_youth_policies(feed_client):
+    """고용24 훈련·프로그램은 자격조건이 없어 매칭이 안 된다 — 맞춤 정책에서 뺀다."""
+    headers = _register_and_login(feed_client)
+    feed_client.post("/api/v1/me/attributes", headers=headers, json={"key": "residence_region", "value": "수원"})
+    _add_policy(feed_client, "전국 누구나", _OPEN)
+
+    async def _insert_training():
+        async with feed_client.session_local() as db:
+            db.add(FeedItem(source="worknet", category="training_course", feed_kind="policy", dedup_key="k:t", title="훈련과정"))
+            await db.commit()
+
+    asyncio.run(_insert_training())
+
+    for path in ("/api/v1/feed/policies/recommended", "/api/v1/feed/policies"):
+        titles = [i["title"] for i in feed_client.get(path, headers=headers).json()["items"]]
+        assert "훈련과정" not in titles, path
+        assert "전국 누구나" in titles, path
+
+
 def test_recommended_policies_without_any_attribute_fall_back_to_recency(feed_client):
     headers = _register_and_login(feed_client)
     _add_policy(feed_client, "아무 정책", _OPEN)

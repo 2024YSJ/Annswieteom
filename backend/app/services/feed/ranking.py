@@ -27,23 +27,36 @@ class RankedFeed:
     matches: dict = field(default_factory=dict)
 
 
-def _base(feed_kind: str, category: str | None) -> Select:
-    stmt = select(FeedItem).where(FeedItem.is_active.is_(True), FeedItem.feed_kind == feed_kind)
+def _scope(stmt: Select, category: str | None, categories: tuple[str, ...] | None) -> Select:
+    """카테고리 하나(사용자가 고른 필터) 또는 섹션의 카테고리 묶음으로 좁힌다.
+
+    같은 feed_kind 안에서도 섹션이 갈린다 — "policy"에는 온통청년 정책과 고용24
+    훈련과정·구직자프로그램이 함께 저장돼 있다(models/feed_item.py 섹션 상수 참고).
+    """
     if category is not None:
-        stmt = stmt.where(FeedItem.category == category)
+        return stmt.where(FeedItem.category == category)
+    if categories is not None:
+        return stmt.where(FeedItem.category.in_(categories))
     return stmt
 
 
-async def _count(db: AsyncSession, feed_kind: str, category: str | None) -> int:
+def _base(feed_kind: str, category: str | None, categories: tuple[str, ...] | None = None) -> Select:
+    stmt = select(FeedItem).where(FeedItem.is_active.is_(True), FeedItem.feed_kind == feed_kind)
+    return _scope(stmt, category, categories)
+
+
+async def _count(
+    db: AsyncSession, feed_kind: str, category: str | None, categories: tuple[str, ...] | None = None
+) -> int:
     stmt = select(func.count(FeedItem.id)).where(
         FeedItem.is_active.is_(True), FeedItem.feed_kind == feed_kind
     )
-    if category is not None:
-        stmt = stmt.where(FeedItem.category == category)
-    return int(await db.scalar(stmt) or 0)
+    return int(await db.scalar(_scope(stmt, category, categories)) or 0)
 
 
-async def _count_embedded(db: AsyncSession, feed_kind: str, category: str | None) -> int:
+async def _count_embedded(
+    db: AsyncSession, feed_kind: str, category: str | None, categories: tuple[str, ...] | None = None
+) -> int:
     """개인화 정렬로 실제 도달 가능한 행 수.
 
     전체 활성 행 수를 그대로 `total`로 내보내면 벡터가 아직 없는 행까지 세는
@@ -58,9 +71,7 @@ async def _count_embedded(db: AsyncSession, feed_kind: str, category: str | None
             FeedItemEmbedding.embedding.is_not(None),
         )
     )
-    if category is not None:
-        stmt = stmt.where(FeedItem.category == category)
-    return int(await db.scalar(stmt) or 0)
+    return int(await db.scalar(_scope(stmt, category, categories)) or 0)
 
 
 def _recent_order(stmt: Select, by_published: bool) -> Select:
@@ -110,6 +121,7 @@ async def rank_feed_items(
     *,
     feed_kind: str,
     category: str | None = None,
+    categories: tuple[str, ...] | None = None,
     profile_vector: list[float] | None = None,
     prefer_published_date: bool = False,
     interleave_categories: bool = False,
@@ -124,12 +136,12 @@ async def rank_feed_items(
     사용자가 잃는 건 정렬 품질이지 피드 자체가 아니어야 한다.
     피드 읽기는 아무것도 쓰지 않으므로 요청 세션에서 rollback을 불러도 안전하다.
     """
-    total = await _count(db, feed_kind, category)
+    total = await _count(db, feed_kind, category, categories)
     vector_failed = False
 
     if profile_vector is not None:
         stmt = (
-            _base(feed_kind, category)
+            _base(feed_kind, category, categories)
             .join(FeedItemEmbedding, FeedItemEmbedding.feed_item_id == FeedItem.id)
             .where(FeedItemEmbedding.embedding.is_not(None))
             .order_by(FeedItemEmbedding.embedding.cosine_distance(profile_vector), FeedItem.id)
@@ -137,7 +149,7 @@ async def rank_feed_items(
             .offset(offset)
         )
         try:
-            embedded_total = await _count_embedded(db, feed_kind, category)
+            embedded_total = await _count_embedded(db, feed_kind, category, categories)
             rows = (await db.execute(stmt)).scalars().all() if embedded_total else None
         except Exception:
             await db.rollback()
@@ -152,7 +164,7 @@ async def rank_feed_items(
         if rows is not None:
             return RankedFeed(items=list(rows), total=embedded_total, personalized=True)
 
-    base = _base(feed_kind, category)
+    base = _base(feed_kind, category, categories)
     # 카테고리를 하나만 골라 본다면 섞을 게 없다.
     ordered = (
         _interleaved_order(base)

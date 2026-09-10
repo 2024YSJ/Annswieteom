@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_current_user_optional
 from app.db.session import get_db
-from app.models.feed_item import FEED_CATEGORIES, FEED_KIND_BY_CATEGORY, FeedItem
+from app.models.feed_item import (
+    JOB_SECTION_CATEGORIES,
+    POLICY_SECTION_CATEGORIES,
+    TRAINING_SECTION_CATEGORIES,
+    FeedItem,
+)
 from app.models.feed_refresh_state import FeedRefreshState
 from app.models.user import User
 from app.schemas.feed import FeedItemRead, FeedRead, FeedSourceStatusRead
@@ -55,10 +60,9 @@ def _to_read(item: FeedItem, match: ItemMatch | None = None) -> FeedItemRead:
     )
 
 
-def _validate_category(category: str | None, feed_kind: str) -> None:
-    if category is None:
-        return
-    if category not in FEED_CATEGORIES or FEED_KIND_BY_CATEGORY[category] != feed_kind:
+def _validate_category(category: str | None, allowed: tuple[str, ...]) -> None:
+    """섹션 밖의 카테고리를 고르면 422 — 예: 정책 섹션에서 훈련과정을 요청."""
+    if category is not None and category not in allowed:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_feed_category")
 
 
@@ -86,6 +90,7 @@ async def _build(
     category: str | None,
     limit: int,
     offset: int,
+    categories: tuple[str, ...] | None = None,
     profile_vector: list[float] | None = None,
     fallback_reason: str | None = None,
     prefer_published_date: bool = False,
@@ -96,6 +101,7 @@ async def _build(
         db,
         feed_kind=feed_kind,
         category=category,
+        categories=categories,
         profile_vector=profile_vector,
         prefer_published_date=prefer_published_date,
         interleave_categories=interleave_categories,
@@ -130,16 +136,41 @@ async def list_policy_feed(
     refresher=Depends(get_feed_refresher),
     ranker=Depends(get_feed_ranker),
 ) -> FeedRead:
-    """청년 지원 정책 — 최신 등록순.
+    """청년 지원 정책(온통청년) — 최신 등록순.
 
     소스가 등록일을 주면 그 순서, 안 주면 우리가 처음 본 순서다. 로그인
-    여부와 무관하게 같은 목록이 나간다(개인화 없음).
+    여부와 무관하게 같은 목록이 나간다(개인화 없음). 고용24 훈련과정·구직자
+    프로그램은 같은 "policy"로 저장돼 있지만 /feed/trainings로 따로 나간다.
     """
-    _validate_category(category, "policy")
+    _validate_category(category, POLICY_SECTION_CATEGORIES)
     return await _build(
         db, background_tasks, refresher, ranker,
-        feed_kind="policy", category=category, limit=limit, offset=offset,
-        prefer_published_date=True,
+        feed_kind="policy", category=category, categories=POLICY_SECTION_CATEGORIES,
+        limit=limit, offset=offset, prefer_published_date=True,
+    )
+
+
+@router.get("/trainings", response_model=FeedRead)
+async def list_training_feed(
+    background_tasks: BackgroundTasks,
+    category: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    current_user: User | None = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_db),
+    refresher=Depends(get_feed_refresher),
+    ranker=Depends(get_feed_ranker),
+) -> FeedRead:
+    """직업훈련·취업 프로그램(고용24 훈련과정 + 구직자취업역량 강화프로그램).
+
+    두 카테고리를 라운드로빈으로 섞는다 — 최신순만 쓰면 한 번의 수집에서 마지막에
+    들어간 카테고리가 통째로 앞을 차지한다(ranking._interleaved_order 주석).
+    """
+    _validate_category(category, TRAINING_SECTION_CATEGORIES)
+    return await _build(
+        db, background_tasks, refresher, ranker,
+        feed_kind="policy", category=category, categories=TRAINING_SECTION_CATEGORIES,
+        limit=limit, offset=offset, interleave_categories=True,
     )
 
 
@@ -160,7 +191,7 @@ async def list_job_feed(
     방문자와 세션이 없는 사용자뿐이라, 여기서 401을 내면 기능이 사실상
     안 보인다.
     """
-    _validate_category(category, "job")
+    _validate_category(category, JOB_SECTION_CATEGORIES)
     return await _build(
         db, background_tasks, refresher, ranker,
         feed_kind="job", category=category, limit=limit, offset=offset,
@@ -252,16 +283,19 @@ async def list_recommended_policy_feed(
     if profile.is_empty:
         return await _build(
             db, background_tasks, refresher, ranker,
-            feed_kind="policy", category=None, limit=limit, offset=offset,
-            prefer_published_date=True, fallback_reason="no_attributes",
+            feed_kind="policy", category=None, categories=POLICY_SECTION_CATEGORIES,
+            limit=limit, offset=offset, prefer_published_date=True, fallback_reason="no_attributes",
         )
 
     is_warming = await _schedule_refresh_if_needed(db, background_tasks, refresher)
     # 벡터는 티어 안에서의 2차 정렬에만 쓴다. 없어도(아직 계산 전, SQLite) 티어는 그대로다.
     vector = await load_profile_vector(db, user_id)
+    # 온통청년만 — 고용24 훈련·프로그램은 자격조건 정보가 없어 매칭이 안 되고
+    # "조건 없음"으로 뒤에 섞일 뿐이다(2026-09-11 결정).
     ranked = await tiered_ranker(
         db,
         feed_kind="policy",
+        category="youth_policy",
         profile=profile,
         profile_vector=vector,
         include_excluded=include_excluded,
