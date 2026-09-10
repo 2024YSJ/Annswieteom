@@ -20,9 +20,9 @@
   ```sql
   create extension if not exists vector;
   ```
-- [ ] Google AI Studio에서 Gemini API 키 발급 (4-9) — 로컬 LLM 준비 전 개발용 겸 이후 폴백용 — `GEMINI_API_KEY`가 아직 로컬 `.env`에 비어 있음
+- [x] ~~Google AI Studio에서 Gemini API 키 발급~~ — **2026-09-09에 폐기.** Gemini를 추론·임베딩·OCR 세 군데에서 모두 제거했으므로 이 키는 발급할 필요가 없다. 오히려 `GEMINI_API_KEY`가 `.env`나 배포 환경변수에 **남아 있으면 백엔드 부팅이 실패한다**(pydantic-settings 기본 `extra="forbid"`)
 - [ ] Supabase Storage에 이미지 기록물 업로드용 버킷 하나를 **비공개(private)**로 생성 (2절 아키텍처의 "오브젝트 스토리지", `records.storage_path`가 가리킬 위치 — 사용자별 접근 격리는 [person_B_frontend_backend/03_records_feature.md](../person_B_frontend_backend/03_records_feature.md) 1-1절 참고) — 아직 안 함, 코드는 준비돼 있음(`app/services/storage.py`)
-- [ ] 위에서 얻은 `DATABASE_URL`, `GEMINI_API_KEY`, Supabase Storage 접근 키를 A·B 둘 다 접근 가능한 안전한 채널(예: 팀 전용 비밀 채널)로 공유 — **절대 GitHub 공개 저장소에 커밋하지 않는다**
+- [ ] 위에서 얻은 `DATABASE_URL`, Cloudflare Access 서비스 토큰(`LLM_ACCESS_CLIENT_ID`/`LLM_ACCESS_CLIENT_SECRET`), Supabase Storage 접근 키를 A·B 둘 다 접근 가능한 안전한 채널(예: 팀 전용 비밀 채널)로 공유 — **절대 GitHub 공개 저장소에 커밋하지 않는다**
 
 ## 3. 모노레포 폴더 스캐폴딩 (5절 구조 그대로)
 
@@ -52,7 +52,7 @@
 - [x] `backend/app/db/session.py`에 SQLAlchemy 엔진/세션 팩토리 작성 (`DATABASE_URL` 사용)
 - [x] `backend/tests/` 빈 폴더만 우선 생성 (5절 구조에 포함 — 이번 3주 범위에서 테스트 작성은 필수는 아니지만 폴더 위치는 맞춰둔다) → 실제로는 69개 테스트까지 채워짐
 - [x] `.gitignore`에 `.env`, `node_modules/`, `__pycache__/`, `.venv/` 등 추가
-- [x] `backend/.env.example` 생성 (10-4절 환경변수 목록 전체: `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL_NAME`, `GEMINI_API_KEY`, `LLM_PROVIDER_ORDER`, `DATABASE_URL`, `JWT_SECRET`). ⚠️ 10-4절 표에는 없지만 이미지 업로드([person_B_frontend_backend/03_records_feature.md](../person_B_frontend_backend/03_records_feature.md))에 Supabase Storage 접속 정보(`SUPABASE_URL`, `SUPABASE_SERVICE_KEY` 등, Supabase 클라이언트 라이브러리 문서의 정확한 변수명 확인)가 추가로 필요하다 — 여기에 함께 추가
+- [x] `backend/.env.example` 생성 (10-4절 환경변수 목록 전체. 당시엔 `GEMINI_API_KEY`/`LLM_PROVIDER_ORDER`도 포함했지만 2026-09-09에 두 줄을 제거했다 — 지금 목록은 `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL_NAME`, `LLM_ACCESS_CLIENT_ID`, `LLM_ACCESS_CLIENT_SECRET`, `DATABASE_URL`, `JWT_SECRET`). ⚠️ 10-4절 표에는 없지만 이미지 업로드([person_B_frontend_backend/03_records_feature.md](../person_B_frontend_backend/03_records_feature.md))에 Supabase Storage 접속 정보(`SUPABASE_URL`, `SUPABASE_SERVICE_KEY` 등, Supabase 클라이언트 라이브러리 문서의 정확한 변수명 확인)가 추가로 필요하다 — 여기에 함께 추가
 - [x] `frontend/.env.local.example` 생성 (`NEXT_PUBLIC_API_BASE_URL` — [person_B_frontend_backend/05_frontend_routes_components.md](../person_B_frontend_backend/05_frontend_routes_components.md)의 `lib/api-client.ts`가 백엔드 주소를 찾을 때 사용, 로컬 개발 시 `http://localhost:8000`)
 - [x] 루트 `README.md`에 프로젝트 한 줄 소개 + 로컬 실행 방법 작성
 

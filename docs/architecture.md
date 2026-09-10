@@ -7,7 +7,7 @@
 - **프론트엔드**: Next.js 14+ (TypeScript, App Router) — `frontend/`
 - **백엔드**: FastAPI (Python 3.11+) — `backend/`
 - **DB**: PostgreSQL + pgvector (Supabase)
-- **LLM**: 로컬 Ollama 전용 — **폴백 없음**(2026-09-09 Gemini 제거). 추론도 임베딩도 이 서버 하나에 달려 있고, 닿지 않으면 AI 경로는 전부 503 `llm_unavailable`로 끝난다
+- **LLM**: 로컬 Ollama 전용 — **폴백 없음**(2026-09-09 Gemini 제거). 추론도 임베딩도 이 서버 하나에 달려 있고, 닿지 않으면 AI 경로는 전부 503 `llm_unavailable`로 끝난다. 추론 호스트는 **DGX Spark**(GB10, aarch64, DGX OS)이고 Cloudflare Tunnel + Access 서비스 토큰 뒤의 `llm.annswieteom.com`으로 노출된다 — 이관 절차는 [docs/checklists/person_A_infra_ai/08_dgx_spark_migration.md](checklists/person_A_infra_ai/08_dgx_spark_migration.md)
 - **핵심 제약(정직성 가드레일)**: 생성된 모든 문장은 `confirmed_facts` 테이블의 행을 최소 1개 이상 인용해야 한다. 이 제약은 특정 함수 하나가 아니라 여러 계층에 걸쳐 강제된다 — 자세한 내용은 6절.
 
 백엔드는 `api/ → schemas/ + services/ → models/ → db` 방향으로 의존한다:
