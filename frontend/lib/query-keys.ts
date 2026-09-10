@@ -4,7 +4,6 @@ export const queryKeys = {
   record: (sessionId: string, recordId: string) => ["session", sessionId, "record", recordId] as const,
   document: (sessionId: string) => ["session", sessionId, "document"] as const,
   jobSearch: (sessionId: string) => ["session", sessionId, "job-search"] as const,
-  coverage: (sessionId: string) => ["session", sessionId, "coverage"] as const,
   archive: () => ["me", "answers"] as const,
   preferences: () => ["me", "preferences"] as const,
   attributes: () => ["me", "attributes"] as const,

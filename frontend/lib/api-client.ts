@@ -6,7 +6,6 @@ export * from "./api/auth";
 export * from "./api/sessions";
 export * from "./api/records";
 export * from "./api/document";
-export * from "./api/coverage";
 export * from "./api/feed";
 export * from "./api/profile";
 export * from "./api/job-search";
