@@ -14,7 +14,7 @@
 #   4. sudo mkdir -p /etc/cloudflared
 #      sudo cp ~/.cloudflared/<TUNNEL_ID>.json /etc/cloudflared/
 #   5. 이 내용을 /etc/cloudflared/config.yml 로 저장하고 <TUNNEL_ID>를 실제 값으로 교체
-#   6. cloudflared tunnel route dns annswieteom-llm-spark llm.annswieteom.com --overwrite-dns
+#   6. cloudflared tunnel route dns --overwrite-dns annswieteom-llm-spark llm.annswieteom.com
 #      ^ 이 호스트명은 이미 옛 터널을 가리키고 있으므로 --overwrite-dns 가 필요하다.
 #        그리고 DNS는 반드시 "터널 ID"를 가리켜야 한다 — 대시보드의 계정 ID나
 #        커넥터 ID와 생김새가 비슷해서 실제로 두 번 헷갈렸고 에러 1033을 봤다.

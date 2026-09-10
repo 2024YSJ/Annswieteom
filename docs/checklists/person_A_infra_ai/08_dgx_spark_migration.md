@@ -125,9 +125,9 @@ CPU로 폴백해 도는 것은 에러 없이 그냥 10배 느려지는 형태로
         httpHostHeader: localhost:11434
     - service: http_status:404
   ```
-- [ ] DNS를 새 터널로 덮어쓴다 — `llm.annswieteom.com`은 지금 옛 터널을 가리키므로 `--overwrite-dns`가 필요하다:
+- [ ] DNS를 새 터널로 덮어쓴다 — `llm.annswieteom.com`은 지금 옛 터널을 가리키므로 `--overwrite-dns`가 필요하다. **플래그를 호스트명 뒤에 두면 안 된다** — cloudflared는 위치 인자 뒤의 플래그를 읽지 않아서 사용법 에러만 뱉는다(2026-09-10에 겪음):
   ```bash
-  cloudflared tunnel route dns annswieteom-llm-spark llm.annswieteom.com --overwrite-dns
+  cloudflared tunnel route dns --overwrite-dns annswieteom-llm-spark llm.annswieteom.com
   ```
 - [ ] DNS는 **터널 ID**를 가리켜야 한다. Cloudflare 화면에는 계정 ID / 터널 ID / 커넥터 ID 세 개의 비슷하게 생긴 문자열이 있고, 이걸 헷갈려 1033 에러로 두 번 헤맨 적이 있다(`docs/devlog/Step2/01_from_engine_to_the_real_world.md`).
 

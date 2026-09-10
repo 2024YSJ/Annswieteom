@@ -52,7 +52,7 @@ function Show-Hints {
     Write-Host "       journalctl -u cloudflared -n 50 --no-pager   # active 표시만으로는 증거가 안 된다"
     Write-Host "  3. Ollama가 안 뜬 것 같다 -> 서버에서 snap services ollama / sudo snap restart ollama"
     Write-Host "  4. 127.0.0.1에만 바인딩됐다 -> sudo snap set ollama host=`"0.0.0.0:11434`" 후 재시작"
-    Write-Host "  5. DNS가 옛 터널을 가리킨다 -> cloudflared tunnel route dns annswieteom-llm-spark llm.annswieteom.com --overwrite-dns"
+    Write-Host "  5. DNS가 옛 터널을 가리킨다 -> cloudflared tunnel route dns --overwrite-dns annswieteom-llm-spark llm.annswieteom.com"
     Write-Host "     (DNS는 '터널 ID'를 가리켜야 한다 - 계정 ID/커넥터 ID와 생김새가 비슷하다)"
 }
 

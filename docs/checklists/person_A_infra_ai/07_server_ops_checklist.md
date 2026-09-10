@@ -44,7 +44,7 @@
 - [ ] **터널을 통한 접속이 403 Forbidden**: 인증 문제가 아니라면 `originRequest.httpHostHeader: localhost:11434`가 config에 있는지 확인 — Ollama가 낯선 `Host` 헤더를 거부하는 것이고, 이 프로젝트에서 두 번 겪었다. (Access 토큰 없이 보낸 요청이라면 403이 정상이다)
 - [ ] **재부팅했더니 서버가 죽은 것 같다**: `curl localhost:11434`가 안 되면 Ollama가 꺼진 것 → `sudo systemctl restart ollama`(또는 `sudo snap restart ollama`). 외부 접속이 안 되면 터널이 꺼진 것 → `sudo systemctl restart cloudflared` 후 `journalctl -u cloudflared -n 50 --no-pager`로 커넥션이 실제로 등록되는지 확인
 - [ ] **`systemctl is-active`는 `active`인데 외부에서 안 열린다**: 이 프로젝트에서 실제로 겪은 형태다. **"상태 표시"와 "실제 동작"은 다른 이야기다** — `journalctl`에 터널 커넥션 4개가 뜨는지, 그리고 외부에서 fresh curl로 응답이 오는지 **둘 다** 확인한다
-- [ ] **터널 주소가 옛 터널을 가리킨다(에러 1033)**: DNS는 **터널 ID**를 가리켜야 한다(계정 ID·커넥터 ID와 헷갈리기 쉽다). `cloudflared tunnel route dns annswieteom-llm-spark llm.annswieteom.com --overwrite-dns`로 다시 지정
+- [ ] **터널 주소가 옛 터널을 가리킨다(에러 1033)**: DNS는 **터널 ID**를 가리켜야 한다(계정 ID·커넥터 ID와 헷갈리기 쉽다). `cloudflared tunnel route dns --overwrite-dns annswieteom-llm-spark llm.annswieteom.com`로 다시 지정
 - [ ] **Cloudflare Tunnel 주소가 백엔드에서 안 열림**: Ollama가 `127.0.0.1`에만 바인딩된 경우다. systemd면 `sudo systemctl edit ollama`에 `Environment="OLLAMA_HOST=0.0.0.0:11434"`를 넣고 `daemon-reload` + 재시작, snap이면 `sudo snap set ollama host="0.0.0.0:11434"` 후 재시작
 - [ ] **응답이 오지만 너무 느려 타임아웃 난다**: `nvidia-smi`로 GPU가 실제로 쓰이는지 확인(CPU 폴백이 가장 조용한 실패다). GPU가 정상인데도 느리면 대역폭 한계이므로 위의 롤백(14b)을 검토
 - [ ] **확인할 때 캐시되는 도구를 쓰지 않는다**: 응답을 캐싱하는 fetch 도구 때문에 죽은 터널이 살아 있는 것처럼 보여 한 세션을 날린 적이 있다. 항상 fresh `curl`

@@ -123,6 +123,7 @@ Windows 절은 **통째로 지우지 않았다.** 추론 호스트만 Linux이�
 | 체크리스트가 "DGX Spark는 Ollama가 snap 사전설치"라고 단정 | NVIDIA 개발자 포럼 글을 근거로 썼는데 **이 기계는 snap이 아니었다** — `sudo snap set ollama host=...`가 "스냅 ollama을(를) 찾을 수 없습니다"로 실패 | 2절을 "설치 방식을 먼저 확인" + systemd/snap 두 갈래로 다시 씀. 그리고 이미 `localhost:11434`가 응답하면 바인딩은 건드리지 않는 게 맞다는 것도 명시(cloudflared는 같은 기계에서 붙으므로 `127.0.0.1`이어도 통한다) |
 | 72b 유지 결정이 실측 후 뒤집힘 | 결정 시점에는 계산상 범위(2.7~7 tok/s)만 있었고, 실제 3.0 tok/s에서 카테고리 하나가 240초 타임아웃을 넘겼다 | 운영 모델을 32b로, 롤백을 14b로 내렸다. 측정을 터널 작업 **전에** 한 덕에 되돌린 비용이 문서와 주석뿐이었다 |
 | `cloudflared tunnel create`가 `No file cert.pem`으로 실패 | `tunnel login`을 먼저 하지 않았다 — 계정 인증서가 없으면 터널을 만들 수 없다 | `cloudflared tunnel login` 후 재시도. SSH면 브라우저가 안 뜨고 URL만 나오니 그걸 다른 기기 브라우저에서 열어 존을 승인한다. 그리고 **`sudo`로 login하면 `cert.pem`이 `/root`에 생겨** `sudo` 없는 `tunnel create`가 못 찾으므로 둘을 같은 사용자로 실행한다 |
+| `tunnel route dns ... --overwrite-dns`가 사용법 에러를 뱉음 | cloudflared는 위치 인자 뒤의 플래그를 파싱하지 않는다. 내가 쓴 문서 4곳이 전부 플래그를 뒤에 두고 있었다 | `cloudflared tunnel route dns --overwrite-dns <터널> <호스트명>` — 플래그를 앞으로. 08번·07번·`config.linux.yml.example`·`verify_tunnel.ps1` 수정 |
 | 긴 Bash heredoc이 `unexpected EOF`로 끊김 | 명령 문자열이 길어지면 heredoc 종료 토큰까지 도달하지 못한다 | 긴 편집은 스크립트 파일로 쓴 뒤 실행. 한국어 문자열을 유니코드 이스케이프로 넣다가 `추론`을 `추로`로 오타내기도 해서, 그 뒤로는 직접 파일에 썼다 |
 
 ## 관련 커밋
