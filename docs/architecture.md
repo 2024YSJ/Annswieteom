@@ -1,6 +1,6 @@
 # 아키텍처 문서
 
-이 문서는 백엔드/프론트엔드 코드 구조를 파일·함수 단위로 정리한다. 명세는 [docs/specs/annswieoteum_detailed_spec.md](specs/annswieoteum_detailed_spec.md), 마일스톤 진행 상황은 [docs/checklists/](checklists/), 작업 기록은 [docs/devlog/](devlog/)를 참고. 이 문서는 "지금 구조가 어떻게 생겼고 새 코드를 어디에 둬야 하는가"에 집중한다.
+이 문서는 백엔드/프론트엔드 코드 구조를 파일·함수 단위로 정리한다. 명세는 [docs/specs/annswieteom_detailed_spec.md](specs/annswieteom_detailed_spec.md), 마일스톤 진행 상황은 [docs/checklists/](checklists/), 작업 기록은 [docs/devlog/](devlog/)를 참고. 이 문서는 "지금 구조가 어떻게 생겼고 새 코드를 어디에 둬야 하는가"에 집중한다.
 
 ## 1. 개요
 
