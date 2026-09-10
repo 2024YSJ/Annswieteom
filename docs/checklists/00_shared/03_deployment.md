@@ -33,6 +33,14 @@
 - [ ] 추론 서버를 DGX Spark로 이관한 뒤에도 `LOCAL_LLM_BASE_URL`은 **같은 호스트명**(`https://llm.annswieteom.com`)이므로 값 변경도 재배포도 필요 없다 — 바뀌는 건 `LOCAL_LLM_MODEL_NAME`과 Access 토큰 두 개뿐이다([../person_A_infra_ai/08_dgx_spark_migration.md](../person_A_infra_ai/08_dgx_spark_migration.md))
 - [ ] `ENVIRONMENT=production` 추가 — [person_B_frontend_backend/01_auth.md](../person_B_frontend_backend/01_auth.md)에서 추가한 값. 이게 없으면(기본값 `development`) Refresh Token 쿠키가 `SameSite=Lax`로 내려가서 Vercel↔Render 교차 도메인 환경에서 쿠키가 아예 전달되지 않는다(3번 참고)
 - [ ] `JWT_SECRET`은 `openssl rand -hex 32`로 새로 생성해서 등록 (로컬 개발용 값과 달라도 무방)
+- [ ] **`main`에 머지하기 전에 프로덕션 DB 마이그레이션을 먼저 돌린다.** Render에는 `render.yaml`도 `Procfile`도 없고 시작 명령이 `uvicorn`뿐이라 **마이그레이션이 자동으로 돌지 않는다** — 새 테이블/컬럼을 쓰는 코드가 먼저 배포되면 해당 엔드포인트가 500으로 떨어진다.
+  ```bash
+  cd backend
+  DATABASE_URL='<프로덕션 연결 문자열>' venv/Scripts/python.exe -m alembic upgrade head
+  DATABASE_URL='<같은 값>' venv/Scripts/python.exe -m alembic current   # 최신 리비전인지 확인
+  ```
+  순서가 중요하다: **테이블·컬럼 추가는 지금 배포된 코드를 깨뜨리지 않으므로 머지 전에 돌리는 쪽이 항상 안전하다.** 반대로 컬럼 삭제·타입 변경이 섞인 마이그레이션이면 배포와 동시에 돌려야 하니 별도로 계획한다.
+  이 프로젝트는 이걸 이미 한 번 놓쳤다 — `docs/devlog/Step2/06_the_migration_that_never_ran_and_the_effect_that_never_refired.md`.
 - [ ] 배포 후 `<render-url>/docs`에서 Swagger UI 접속 확인
 - [ ] 프론트엔드의 `NEXT_PUBLIC_API_BASE_URL`을 실제 Render 배포 주소로 갱신, 재배포
 
