@@ -92,7 +92,7 @@ CPU로 폴백해 도는 것은 에러 없이 그냥 10배 느려지는 형태로
   | 모델 | decode | 문단 3개 문서(844토큰) | 콜드 적재 |
   |---|---|---|---|
   | `qwen2.5:72b` | 3.0 tok/s | **4분 42초** — 카테고리 하나가 타임아웃 240초를 넘겼다 | 15.5초 |
-  | `qwen2.5:32b` | (실측 기입) | (기입) | (기입) |
+  | `qwen2.5:32b` | 약 13 tok/s | **1분 3초**(웜) / 1분 30초(콜드 포함) — 타임아웃 240초 안에 넉넉히 들어온다 | (기입) |
 
   재본 값이 위 표보다 **한 자리** 낮으면 모델 문제가 아니라 3번(GPU 미사용)이다.
 
@@ -104,7 +104,10 @@ CPU로 폴백해 도는 것은 에러 없이 그냥 10배 느려지는 형태로
     https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb
   sudo dpkg -i /tmp/cloudflared.deb && cloudflared --version
   ```
-- [ ] `cloudflared tunnel login` — 기존과 **같은 Cloudflare 계정**으로
+- [ ] `cloudflared tunnel login` — 기존과 **같은 Cloudflare 계정**으로. **`tunnel create`보다 먼저 해야 한다** — 안 하면 `Cannot determine default origin certificate path. No file cert.pem`으로 실패한다(2026-09-10에 실제로 겪음).
+  - SSH 접속이면 브라우저가 안 뜨고 URL만 출력된다. 그 URL을 **노트북 브라우저에 복사해** 열고 `annswieteom.com` 존을 승인한다.
+  - **`sudo`를 붙이지 않는다.** `sudo`로 login하면 `cert.pem`이 `/root/.cloudflared/`에 생겨서, `sudo` 없이 실행한 `tunnel create`가 다시 못 찾는다. login과 create는 같은 사용자로 하고, `sudo`가 필요한 건 뒤의 `service install`뿐이다.
+  - `ls -l ~/.cloudflared/cert.pem`으로 생성 확인
 - [ ] `cloudflared tunnel create annswieteom-llm-spark` — 기존 터널(`annswieteom-llm`, `annswieteom-llm-main`)과 이름을 일부러 다르게 둔다. 터널 ID와 자격증명 `.json` 경로를 기록.
 - [ ] 자격증명을 시스템 위치로 옮긴다 (서비스가 사용자 홈에 의존하지 않게):
   ```bash
