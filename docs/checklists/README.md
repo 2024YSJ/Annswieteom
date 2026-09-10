@@ -8,7 +8,7 @@
 | 폴더 | 담당 | 역할 |
 |---|---|---|
 | [`00_shared/`](00_shared/) | 공용(둘 중 아무나 / 함께) | 리포지토리 스캐폴딩, DB 스키마, 배포 설정 |
-| [`person_A_infra_ai/`](person_A_infra_ai/) | **A** (4090 PC 보유, 서버 운영 경험 없음) | 로컬 LLM·임베딩 서빙, AI 어댑터, 기록물 파이프라인, Cloudflare Tunnel, 일관성 검증, 서버 운영 |
+| [`person_A_infra_ai/`](person_A_infra_ai/) | **A** (로컬 추론 서버(DGX Spark) 운영 담당, 서버 운영 경험 없음) | 로컬 LLM·임베딩 서빙, AI 어댑터, 기록물 파이프라인, Cloudflare Tunnel, 일관성 검증, 서버 운영 |
 | [`person_B_frontend_backend/`](person_B_frontend_backend/) | **B** | 인증 API, 인터뷰 상태머신 API, 기록물/문서 생성 API, 프론트엔드 전체 |
 | [`milestones_overview.md`](milestones_overview.md) | 둘 다 | 주차별 마일스톤과 위 체크리스트 항목들의 매핑, 검증 기준 |
 

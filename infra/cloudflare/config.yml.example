@@ -1,3 +1,7 @@
+# ⚠ LEGACY — Windows origin(RTX 4090). 2026-09-10부터 운영 추론 서버는 DGX Spark(Linux/aarch64)다.
+# 새로 설정하려면 config.linux.yml.example 을 쓴다. 이 파일은 9/21 이후 삭제한다
+# (데모 기간 동안은 Windows 경로 참고 자료로 남긴다).
+#
 # Cloudflare Tunnel 설정 파일 예시
 # 실제 파일은 %USERPROFILE%\.cloudflared\config.yml 에 저장한다 (저장소에 커밋하지 않는다)
 #

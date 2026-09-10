@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     # Comma-separated list of allowed frontend origins for CORS. Local dev
-    # only needs localhost:3000; deployed environments (Railway) must add
+    # only needs localhost:3000; deployed environments (Render) must add
     # the Vercel domains via this env var — see app/main.py.
     cors_allow_origins: str = "http://localhost:3000"
 
@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # 2026-09-09 Gemini 폴백을 제거했다. 추론/임베딩 경로가 로컬 Ollama 하나뿐이라
     # 이 서버가 닿지 않으면 AI 기능은 503(llm_unavailable)으로 끝난다 — 대체 경로는
     # 없고, 화면에는 "AI 서버가 수리 중이예요."가 뜬다.
+
+    # Cloudflare Access 서비스 토큰. 터널(llm.annswieteom.com)이 Access 뒤에 있어서
+    # 이 헤더 없이 보내면 403이 온다. 기본값을 빈 문자열로 둔 건 로컬 개발용이다 —
+    # 로컬 Ollama(localhost:11434)는 Access 뒤에 없으므로 비어 있는 게 정상이고,
+    # 비어 있으면 아래 ollama_headers()가 아무 헤더도 붙이지 않는다.
+    llm_access_client_id: str = ""
+    llm_access_client_secret: str = ""
 
     supabase_url: str = ""
     supabase_service_key: str = ""
@@ -58,6 +65,24 @@ class Settings(BaseSettings):
     # 12-4절: 생성된 문장과 인용된 confirmed_facts 간 코사인 유사도 최소값.
     # 0.45~0.65 범위에서 실제 생성 샘플로 튜닝 — app/services/consistency_check.py 참고.
     consistency_threshold: float = 0.55
+
+    def ollama_headers(self) -> dict[str, str]:
+        """Auth headers for every request to the Ollama origin.
+
+        Lives on Settings rather than in a service module because both the LLM
+        adapter (services/llm/local_ollama.py) and the embedding adapter
+        (services/embedding/local_ollama_embedding.py) need it, and neither
+        package should import from the other. Both already import `settings`.
+
+        Empty when either half of the token is unset, so local dev against
+        localhost:11434 keeps working with no configuration.
+        """
+        if not (self.llm_access_client_id and self.llm_access_client_secret):
+            return {}
+        return {
+            "CF-Access-Client-Id": self.llm_access_client_id,
+            "CF-Access-Client-Secret": self.llm_access_client_secret,
+        }
 
     class Config:
         env_file = ".env"

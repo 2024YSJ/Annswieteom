@@ -2,6 +2,7 @@
 
 체크리스트: `docs/checklists/person_A_infra_ai/05_cloudflare_tunnel.md`
 날짜: 2026-09-02
+후속: 2026-09-10에 추론 서버를 DGX Spark로 교체하면서 이 문서의 "실제 서버 PC에서 재진행" 과제는 4090이 아니라 Spark 기준으로 다시 쓰였다 → [08_dgx_spark_migration.md](08_dgx_spark_migration.md). 여기서 찾아낸 두 함정(403 Host 헤더, 서비스는 Running인데 터널은 죽음)은 Linux에서도 그대로 유효하고 그쪽 문서가 이어받았다.
 
 ---
 

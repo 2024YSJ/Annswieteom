@@ -3,7 +3,7 @@
 근거: 명세서 13-3절, 2-1절
 선행 조건: [02_llm_adapter_layer.md](02_llm_adapter_layer.md)에서 로컬 LLM 연동이 어느 정도 동작 확인됨
 브랜치: 별도 브랜치 없이 진행해도 무방(또는 `chore/cloudflare-tunnel`) — 대부분 PC 설정·`.env` 값 교체이고 저장소에 반영될 코드가 거의 없다
-시점: 2주차 (급하지 않다 — 이 작업이 며칠 걸려도 서비스는 Gemini로 계속 동작한다)
+시점: 2주차 — 당시엔 "며칠 걸려도 Gemini 폴백이 받쳐준다"고 적혀 있었으나, 2026-09-09에 폴백을 제거했으므로 지금은 이 서버가 곧 AI 기능 전체다
 
 > **개념부터**: "터널"은 당신의 PC 안에서만 열려 있는 `http://localhost:11434`(Ollama)를, 인터넷 어디서나 접속 가능한 `https://무언가` 주소로 바꿔주는 통로다. 클라우드에 있는 백엔드가 이 주소로 Ollama를 호출한다. 이 통로로는 Ollama 응답만 오갈 뿐 PC의 다른 부분에는 전혀 접근할 수 없다 (2-1절).
 
@@ -69,42 +69,18 @@
 - [ ] 터널을 통한 접속이 실패하면 `OLLAMA_HOST=0.0.0.0` 환경변수를 설정하고 Ollama를 재시작 (기본 설정으로 보통 문제없지만 안 될 경우의 대응)
 - [x] **터널을 통한 접속이 403 Forbidden으로 실패하면** (바인딩 문제가 아니라 Host 헤더 문제) — 2번/3번에서처럼 cloudflared에 `--http-host-header localhost:11434` 또는 `originRequest.httpHostHeader: localhost:11434`를 설정했는지 확인. 2026-09-02에 실제로 재현·해결됨
 
-## 8. 실제 서버 PC(RTX 4090)에서 재진행 — 중요
+## 8. 실제 추론 서버로 이관 → [08_dgx_spark_migration.md](08_dgx_spark_migration.md)
 
-10번 줄의 정정 안내대로, 1~5·7번은 **개발용 PC**에서 검증된 것이고 **실제 서버 PC에서는 아직 아무것도 안 한 상태**다. 여기서는 오늘 겪었던 두 문제(403, 서비스 위장)를 처음부터 피해가도록 순서를 다시 정리해둔다 — 이 순서대로 하면 개발 PC에서처럼 헤맬 일이 없다.
+여기에는 원래 **실제 서버 PC(RTX 4090)에서 재진행하는 순서**가 적혀 있었다. 그 절차는 **한 항목도 실행되지 않았고**, 2026-09-10에 추론 서버를 RTX 4090(Windows)에서 **NVIDIA DGX Spark(GB10, aarch64, DGX OS)**로 교체하기로 결정하면서 대상 하드웨어 자체가 바뀌었다. Linux/systemd 기준으로 다시 쓴 절차는 [08_dgx_spark_migration.md](08_dgx_spark_migration.md)에 있다 — **그쪽을 따른다.**
 
-- [ ] 실제 서버 PC에 Ollama 설치 확인, `qwen2.5:14b`(또는 최종 선택한 모델)와 `bge-m3` 둘 다 받아져 있는지 `ollama list`로 확인
-- [ ] 서버 PC에 `cloudflared` 설치(`winget install --id Cloudflare.cloudflared -e`)
-- [ ] `cloudflared tunnel login` — 개발 PC와 같은 Cloudflare 계정으로 로그인
-- [ ] **터널은 개발용과 이름을 다르게 새로 만든다**: `cloudflared tunnel create annswieteom-llm-main` (개발 PC의 `annswieteom-llm`은 그대로 남겨두고 헷갈리지 않게 구분)
-- [ ] `config.yml` 작성 — **처음부터 `originRequest.httpHostHeader: localhost:11434`를 포함**(3번의 403 문제를 애초에 겪지 않도록):
-  ```yaml
-  tunnel: annswieteom-llm-main
-  credentials-file: C:\Users\<사용자명>\.cloudflared\<터널ID>.json
-  ingress:
-    - hostname: llm.annswieteom.com
-      service: http://localhost:11434
-      originRequest:
-        httpHostHeader: localhost:11434
-    - service: http_status:404
-  ```
-- [ ] DNS 연결: `cloudflared tunnel route dns annswieteom-llm-main llm.annswieteom.com --overwrite-dns` — `llm.annswieteom.com`은 지금 개발 PC의 터널을 가리키고 있으므로 `--overwrite-dns` 옵션으로 이 서버 PC의 터널로 덮어써야 한다(플래그 없이 실행하면 이미 레코드가 있다고 에러가 날 수 있다)
-- [ ] `cloudflared tunnel run annswieteom-llm-main`으로 실행 후 `https://llm.annswieteom.com`에서 fresh curl(캐시된 도구 응답 말고 실제 재요청)로 200 확인
-- [ ] 관리자 권한으로 서비스 등록은 **`service install`에 의존하지 말고 처음부터 레지스트리에 명령을 명시**(5번의 위장 문제를 애초에 겪지 않도록):
-  ```powershell
-  cloudflared.exe service install
-  Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\cloudflared' -Name ImagePath `
-    -Value '"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --config "C:\Users\<사용자명>\.cloudflared\config.yml" --logfile "C:\Users\<사용자명>\.cloudflared\service.log" run annswieteom-llm-main'
-  Restart-Service cloudflared
-  ```
-- [ ] `service.log`에 tunnel connection이 실제로 등록됐는지, 그리고 fresh curl로 외부 응답이 오는지 **둘 다** 확인 (`Get-Service`가 `Running`으로 보이는 것만으로는 부족하다)
-- [ ] 실제로 재부팅해서 자동 기동 확인
-- [ ] 휴대폰 데이터망으로 실기기 접속 확인
-- [ ] 여기까지 끝나면 6번(백엔드 연동)의 URL 공유를 진행
+실행되지 않은 Windows 절차를 여기 남겨두면 데모 압박 상황에서 엉뚱한 문서를 따라가게 되므로 본문은 지웠다. 다만 위 1~7번의 `[x]` 이력과 거기서 실제로 겪은 두 함정은 그대로 보존한다 — 둘 다 새 기계에서도 그대로 유효하고, 08번이 그 형태를 이어받는다:
+
+- **403 Forbidden**: Ollama가 낯선 `Host` 헤더를 거부한다 → `originRequest.httpHostHeader: localhost:11434` (3번·7번). Linux에서도 동일하다.
+- **서비스는 "Running"인데 터널은 죽어 있다**: Windows에서는 레지스트리 `ImagePath`에 인자가 없어서였다(5번). Linux `service install`은 인자를 제대로 넣어주므로 이 원인은 사라지지만, **"상태 표시"와 "실제 동작"이 다르다**는 교훈은 남는다 → 08번 6·8번에서 `journalctl`과 외부 요청을 둘 다 확인한다.
 
 ## 검증 기준
 
 - [x] (개발용 PC 기준) 다른 기기에서 터널 고정 주소로 접속했을 때 Ollama 응답이 온다 — 2026-09-02, fresh curl 및 휴대폰 실기기 모두 확인
 - [x] (개발용 PC 기준) PC를 재부팅해도 Ollama, cloudflared 둘 다 사람이 손대지 않아도 자동으로 다시 켜진다 — 2026-09-02 실제 재부팅으로 확인
-- [ ] **(실제 서버 PC 기준) 위 두 항목을 8번 순서대로 서버 PC에서 다시 확인 — 아직 미완료, 진짜 완료 기준은 이것**
-- [ ] 이후 [07_server_ops_checklist.md](07_server_ops_checklist.md)의 "처음 설정할 때" 항목을 모두 체크할 수 있다 — 6번(백엔드 연동)과 8번(실서버)이 아직 열려 있어 전체 완료는 아님
+- [ ] **진짜 완료 기준은 이 파일이 아니라 [08_dgx_spark_migration.md](08_dgx_spark_migration.md)의 검증 기준이다** — DGX Spark에서 계약 검증·외부 접속·재부팅까지 통과해야 한다
+- [ ] 이후 [07_server_ops_checklist.md](07_server_ops_checklist.md)의 "처음 설정할 때" 항목을 모두 체크할 수 있다 — 6번(백엔드 연동)과 08번(DGX Spark 이관)이 아직 열려 있어 전체 완료는 아님
