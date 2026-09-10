@@ -1,7 +1,7 @@
 # "안 쉬었음" — Claude Code 구현 명세서 (최종본)
 
 작성일: 2026-08-30
-기반 문서: `annswieoteum_implementation_plan.md` (최종본)
+기반 문서: `annswieteom_implementation_plan.md` (최종본)
 대상 독자: 이 문서를 읽고 실제 코드를 작성할 **Claude Code(AI 코딩 에이전트)**, 그리고 이를 함께 사용할 **컴퓨터공학과 학부생 2인(초심자, 이 중 한 명은 서버를 직접 운영해본 경험이 전혀 없음)**
 목적: 원티드 AI Championship 2026 제출용 서비스를 3주 안에 실제로 완성하기 위한, 코드 작성에 바로 들어갈 수 있는 수준의 구현 명세서 겸 개발 계획서.
 
@@ -9,7 +9,7 @@
 
 **Claude Code에게**: 이 문서는 위에서 아래로 순서대로 구현하면 되도록 설계되어 있다. 각 절의 산출물은 이후 절의 전제 조건이다(예: 3절 환경 셋업이 끝나야 5절 리포지토리 구조를 만들 수 있고, 6절 DB 스키마가 있어야 8절 상태머신을 구현할 수 있다). 사용자가 별도로 지시하지 않는 한, **16절의 마일스톤 순서**를 그대로 따라 작업을 작은 단위로 쪼개어 진행하고, 각 단위 작업이 끝날 때마다 실제로 실행되는지 확인한 뒤 다음으로 넘어가라. 이 프로젝트에는 "정직성 가드레일"(1-2절)이라는 절대 원칙이 있으니, 문서 생성과 관련된 어떤 코드를 작성하든 이 원칙을 절대 깨지 않아야 한다. **특히 2-1절과 13-3절, 19절은 서버를 한 번도 운영해본 적 없는 팀원(A)을 위한 절이니, A가 맡을 작업을 안내할 때는 반드시 이 절들의 설명 수준을 유지하거나 더 쉽게 풀어써라 — "당연히 알겠지"라고 생략하지 마라.**
 
-**두 학부생에게**: 이 문서는 여러분이 처음 접할 수 있는 개념(REST API, JWT, 상태머신, 임베딩, 벡터DB, 그리고 "서버"라는 개념 자체)이 나올 때마다 짧게 설명을 붙여뒀다. 모르는 용어가 나오면 당황하지 말고 해당 설명을 먼저 읽으면 된다. 이 문서만 있으면 Claude Code(또는 다른 AI 코딩 도구)에게 "이 문서대로 구현해줘"라고 맡길 수 있도록 작성했다. **특히 4090 PC를 담당하는 분(서버 운영 경험 없음)은 2-1절을 가장 먼저 읽는 것을 권장한다** — 이 프로젝트에서 "서버를 운영한다"는 게 실제로 무엇을 뜻하는지, 무엇을 조심해야 하는지 처음부터 차근차근 설명해뒀다.
+**두 학부생에게**: 이 문서는 여러분이 처음 접할 수 있는 개념(REST API, JWT, 상태머신, 임베딩, 벡터DB, 그리고 "서버"라는 개념 자체)이 나올 때마다 짧게 설명을 붙여뒀다. 모르는 용어가 나오면 당황하지 말고 해당 설명을 먼저 읽으면 된다. 이 문서만 있으면 Claude Code(또는 다른 AI 코딩 도구)에게 "이 문서대로 구현해줘"라고 맡길 수 있도록 작성했다. **특히 추론 서버(DGX Spark)를 담당하는 분(서버 운영 경험 없음)은 2-1절을 가장 먼저 읽는 것을 권장한다** — 이 프로젝트에서 "서버를 운영한다"는 게 실제로 무엇을 뜻하는지, 무엇을 조심해야 하는지 처음부터 차근차근 설명해뒀다.
 
 **이전 문서 대비 변경점**: 계획서 확정 이후, (1) **채용공고 파싱 기능을 완전히 제거**했다 — 이 서비스의 목적은 특정 회사 지원용 자소서가 아니라 **CV(경력기술서)에 들어갈 공백기 항목 자체를 작성하는 것**이므로, 최종 생성물은 특정 직무·회사에 종속되지 않는 범용 경력기술서 문장이다. (2) **인증 방식을 카카오/구글 소셜 로그인에서 이메일+비밀번호 자체 회원가입으로 단순화**했다 — 초심자 2인이 3주 안에 구현하기에 외부 OAuth 앱 등록 없이 가는 편이 훨씬 안전하다. (3) 개발 환경은 **Windows 기준**으로, Docker 없이 곧바로 개발할 수 있도록 단순화했다(이유는 3절 참고).
 
@@ -49,14 +49,13 @@
 [브라우저 (Next.js SPA)]
         │  HTTPS / REST
         ▼
-[백엔드 (FastAPI, Python) — Railway 등 클라우드에 배포]
+[백엔드 (FastAPI, Python) — Render에 배포]
         │
         ├── 인증 서비스 (이메일+비밀번호, JWT 발급)
         ├── 인터뷰 오케스트레이터 (대화 상태머신)
         ├── AI 어댑터 레이어 (LLM Provider 추상화)
         │        │
-        │        ├─▶ [LocalOllamaProvider] ──HTTPS(Cloudflare Tunnel)──▶ [RTX 4090 PC: Ollama 추론 서버] (1순위)
-        │        └─▶ [GeminiProvider] ──▶ [Google Gemini API] (로컬 서버 장애·과부하 시 대체)
+        │        └─▶ [LocalOllamaProvider] ──HTTPS(Cloudflare Tunnel + Access)──▶ [DGX Spark: Ollama 추론 서버] (유일)
         │
         ├── 기록물 수집 파이프라인 (URL 파서 → 청킹 → 임베딩)
         ├── 문서 생성·근거매핑 모듈
@@ -67,11 +66,13 @@
 
 v1 계획서 대비 **채용공고 파싱 모듈이 완전히 제거**됐다. 이로써 외부 사이트 크롤링 실패·JS 렌더링 대응 같은, 초심자에게 특히 까다로운 문제 하나를 통째로 없앨 수 있었다 — 이번 범위 축소가 일정상 실질적인 이득이 된다.
 
-**왜 로컬 GPU + 클라우드 하이브리드인가**: 웹앱 본체(프론트·백엔드·DB)는 클라우드에 올려 항상 접속 가능하게 유지하고, 부하가 큰 LLM 추론만 팀원의 4090 PC로 보낸다. 4090 PC는 집/사무실 네트워크 안에 있어 외부에서 바로 접근할 수 없으므로, Cloudflare Tunnel로 고정된 HTTPS 주소를 하나 발급받아 그 주소를 백엔드가 호출한다. 이렇게 분리해두면 데모 당일 4090 PC나 집 네트워크에 문제가 생겨도 웹앱 자체는 죽지 않고, "AI 생성만 일시적으로 Gemini로 대체"되는 정도로 그친다.
+**왜 로컬 GPU + 클라우드 하이브리드인가**: 웹앱 본체(프론트·백엔드·DB)는 클라우드에 올려 항상 접속 가능하게 유지하고, 부하가 큰 LLM 추론만 팀의 추론 서버(2026-09-10부터 **DGX Spark**, 그 이전엔 RTX 4090 PC)로 보낸다. 이 기계는 집/사무실 네트워크 안에 있어 외부에서 바로 접근할 수 없으므로, Cloudflare Tunnel로 고정된 HTTPS 주소를 하나 발급받아 그 주소를 백엔드가 호출한다.
+
+**단, "웹앱은 안 죽는다"의 범위를 정확히 알아야 한다**: 2026-09-09에 Gemini 폴백을 제거했으므로 이 서버가 죽으면 **AI 기능은 전부 `503`으로 멈추고** 화면에 "AI 서버가 수리 중이예요."가 뜬다. 로그인·세션 목록·메인 피드 같은 비-AI 경로는 그대로 동작한다. 그래서 데모 당일 이 서버와 터널 점검은 선택이 아니라 필수 항목이다(19절).
 
 ### 2-1. "서버를 운영한다"는 게 정확히 무엇인가 — 처음 해보는 사람을 위한 설명
 
-이 절은 4090 PC를 담당하지만 서버를 운영해본 적 없는 팀원(이하 A)을 위한 것이다. Claude Code는 A와 관련된 작업을 안내할 때 이 절의 눈높이를 유지해야 한다.
+이 절은 추론 서버(DGX Spark)를 담당하지만 서버를 운영해본 적 없는 팀원(이하 A)을 위한 것이다. Claude Code는 A와 관련된 작업을 안내할 때 이 절의 눈높이를 유지해야 한다.
 
 **"서버"란 그냥 "항상 켜져서 요청을 기다리는 프로그램"이다.** 평소 쓰는 프로그램(메모장, 게임 등)은 내가 실행하고 조작해야 뭔가 일어나지만, 서버는 반대다 — 실행해두면 조용히 대기하고 있다가, 누군가(이 경우 우리 백엔드)가 인터넷을 통해 "요청"을 보내면 그때 응답을 돌려준다. 이 프로젝트에서 A의 PC 위에 떠 있는 서버는 정확히 하나, **Ollama**뿐이다. Ollama는 설치하면 자동으로 "AI 모델에게 질문을 보내면 답을 준다"는 역할을 하는 서버로 백그라운드에서 계속 켜져 있는다.
 
@@ -93,7 +94,7 @@ v1 계획서 대비 **채용공고 파싱 모듈이 완전히 제거**됐다. �
 | 프론트엔드 | Next.js(React) + TypeScript | React 기반 중 배포(Vercel)가 가장 간단하고 자료가 압도적으로 많아 막혔을 때 검색으로 해결하기 쉽다 |
 | 백엔드 | Python + FastAPI | 문법이 간결하고, 자동으로 API 문서(Swagger UI, `/docs`)가 생성돼 프론트-백엔드 협업 시 "이 API가 뭘 받고 뭘 주는지"를 눈으로 바로 확인할 수 있다 |
 | DB | PostgreSQL + pgvector, **Supabase**(관리형 클라우드) | **로컬에 Postgres를 직접 설치하지 않는다.** Supabase에 무료로 프로젝트 하나를 만들면 개발용·배포용 DB를 동일하게 하나로 쓸 수 있어 "로컬 DB와 배포 DB가 다르다"는 초심자 흔한 함정을 피할 수 있다 |
-| 백엔드 배포 | Railway | 저장소를 연결하면 Dockerfile 없이도 Python 프로젝트를 자동 인식해 배포해준다 |
+| 백엔드 배포 | Render | 저장소를 연결하면 Dockerfile 없이도 Python 프로젝트를 자동 인식해 배포해준다. 무료 요금제는 15분 유휴 후 잠들고 다음 요청에서 깨어난다 |
 | 프론트 배포 | Vercel | Next.js 제작사가 만든 배포 서비스라 설정이 거의 필요 없다 |
 | 로컬 LLM 서빙 | Ollama | Windows 설치 파일 하나로 끝나고, 모델 다운로드·실행이 명령어 한 줄(`ollama run 모델명`)로 된다 |
 | 로컬 → 외부 노출 | Cloudflare Tunnel | 공유기 포트포워딩 설정 없이(초심자에게 어렵고 보안 위험도 있음) 안전하게 HTTPS 주소를 받을 수 있다 |
@@ -111,7 +112,7 @@ v1 계획서 대비 **채용공고 파싱 모듈이 완전히 제거**됐다. �
 4. **코드 에디터**: VS Code 권장.
 5. **GitHub 계정 및 저장소 접근 권한**: 두 사람 모두 하나의 GitHub 저장소에 협업자로 등록한다.
 
-**4090 PC를 가진 팀원만 추가로 설치**:
+**추론 서버(DGX Spark)를 담당하는 팀원만 추가로 설치**:
 
 6. **Ollama**: [ollama.com/download/windows](https://ollama.com/download/windows)에서 설치 파일을 받아 실행하면 끝난다. 설치가 끝나면 자동으로 백그라운드에서 Ollama 서버가 실행된다(작업 표시줄에 아이콘이 뜬다). 터미널에서 아래로 확인한다.
    ```
@@ -120,7 +121,7 @@ v1 계획서 대비 **채용공고 파싱 모듈이 완전히 제거**됐다. �
    ollama run exaone3.5:7.8b
    ```
    (모델명은 10-3절에서 다시 확정한다. 다운로드는 모델 크기에 따라 몇 분~수십 분 걸릴 수 있다.)
-7. **Cloudflare Tunnel(cloudflared)**: [발급 가이드](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)에서 Windows용 `cloudflared.exe`를 받는다. 자세한 설정 절차는 13-3절에 별도로 정리했다 — 이 단계는 로컬 LLM 서버가 어느 정도 완성된 뒤(2주차)에 진행해도 된다.
+7. **Cloudflare Tunnel(cloudflared)**: [발급 가이드](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)에서 추론 서버 OS에 맞는 빌드를 받는다 — DGX Spark는 Linux **arm64** `.deb`다(x86 빌드는 실행되지 않는다). 자세한 설정 절차는 13-3절에 별도로 정리했다 — 이 단계는 로컬 LLM 서버가 어느 정도 완성된 뒤(2주차)에 진행해도 된다.
 
 **공용 계정 발급(둘 중 아무나 진행 가능)**:
 
@@ -128,14 +129,14 @@ v1 계획서 대비 **채용공고 파싱 모듈이 완전히 제거**됐다. �
    ```sql
    create extension if not exists vector;
    ```
-9. **Google AI Studio(Gemini API 키)**: [aistudio.google.com](https://aistudio.google.com/)에서 구글 계정으로 로그인 후 API 키를 발급받는다(무료 티어로 충분히 개발 가능). 이 키는 로컬 서버가 준비되기 전까지 개발용 LLM으로도 쓰고, 이후에는 장애 대응용 폴백으로 쓴다.
+9. ~~**Google AI Studio(Gemini API 키)**~~ — **2026-09-09에 폐기.** Gemini는 추론·임베딩·이미지 OCR 세 군데에서 제거됐고, 이 키를 환경변수에 남겨두면 오히려 백엔드 부팅이 실패한다(10-4절). 새로 발급받을 필요가 없다.
 
 ---
 
 ## 5. 리포지토리 구조 (모노레포)
 
 ```
-annswieoteum/
+annswieteom/
 ├── frontend/                      # Next.js (TypeScript)
 │   ├── app/
 │   ├── components/
@@ -195,7 +196,7 @@ annswieoteum/
 **Git 협업 규칙** (브랜치·PR 경험이 있는 두 사람 기준, 간단히만 정한다):
 - `main` 브랜치는 항상 실행 가능한 상태를 유지한다.
 - 기능 단위로 `feature/<기능명>` 브랜치를 따서 작업하고(예: `feature/auth`, `feature/interview-flow`), PR로 `main`에 머지한다.
-- 4090 PC를 가진 팀원은 주로 `backend/app/services/llm`, `services/embedding`, `services/record_pipeline` 쪽을, 다른 팀원은 `frontend` 전체와 `backend/app/api`, `services/interview_orchestrator`, `document_generator` 쪽을 맡는 방식으로 자연스럽게 폴더가 겹치지 않게 분담하면 충돌이 적다.
+- 추론 서버를 담당하는 팀원은 주로 `backend/app/services/llm`, `services/embedding`, `services/record_pipeline` 쪽을, 다른 팀원은 `frontend` 전체와 `backend/app/api`, `services/interview_orchestrator`, `document_generator` 쪽을 맡는 방식으로 자연스럽게 폴더가 겹치지 않게 분담하면 충돌이 적다.
 - 커밋 메시지는 `feat: `, `fix: `, `chore: ` 같은 접두어만 붙이는 정도로 충분하다(Conventional Commits 전체 규칙까지는 이 프로젝트 규모에서 불필요).
 
 ---
@@ -462,7 +463,17 @@ class InterviewContext(BaseModel):
 | POST `/sessions/{id}/document/finalize` 🔒 | 최종 확정 | - |
 | GET `/sessions/{id}/export?format=txt` 🔒 | 텍스트 내보내기 | - |
 
-### 9-6. 공통 에러 포맷
+### 9-6. 운영 상태 확인
+
+| 메서드/경로 | 설명 | 비고 |
+|---|---|---|
+| GET `/health/llm` | 추론 서버·임베딩 서버 도달 여부 | 인증 없음. **항상 200**이고 상태는 본문(`llm_reachable`, `embedding_reachable`, `model_name`, `embedding_model_name`, `base_url_host`)에 담는다 |
+
+폴백이 없어서(10-2절) 추론 서버 장애가 곧 AI 기능 전체 정지이고, 노트북에서 터널로 직접 보내는 curl은 실제 경로(Render → Cloudflare Access → Spark)와 **다른 경로**를 검사한다. 이 엔드포인트가 그 전체 경로를 한 요청으로 확인하는 유일한 지점이다.
+
+`base_url_host`는 전체 URL이 아니라 호스트만 담는다 — Access 토큰이 붙은 뒤로는 URL 주변이 자격증명 자리다. 그리고 `/api/v1` 밖의 `GET /health`는 Render의 플랫폼 liveness probe로 남겨두고 여기에 합치지 않는다(합치면 Spark 장애가 서비스 재시작 루프로 번진다).
+
+### 9-7. 공통 에러 포맷
 
 ```json
 { "error": "error_code_snake_case", "message": "사용자에게 보여줄 한국어 설명" }
@@ -487,23 +498,13 @@ class LLMProvider(Protocol):
 
 ### 10-2. 구현체
 
-- `LocalOllamaProvider`: Cloudflare Tunnel로 노출된 Ollama HTTP API를 호출. 타임아웃 20초(생성), 5초(health_check).
-- `GeminiProvider`: Google Gemini API. 폴백.
-- `FallbackProvider`: 두 provider를 우선순위 리스트로 감싸 순차 시도.
+> **2026-09-09 변경**: `GeminiProvider`와 `FallbackProvider`를 삭제했다. 프로바이더가 하나뿐인 폴백 래퍼는 "나중에 뭔가 붙일 자리"라는 인상만 주면서 예외 이름을 헷갈리게 만들 뿐이었다. 예외도 `ProviderUnavailableError`/`AllProvidersFailedError`/`TimeoutError`를 **`LLMUnavailableError` 하나로** 합쳤다 — 호출부 입장에서 "AI를 못 썼다"는 결과는 동일하고, 잡아야 할 예외가 둘이면 어딘가 한 곳에서 반드시 빠뜨린다.
 
-```python
-class FallbackProvider:
-    def __init__(self, providers: list[LLMProvider]):
-        self.providers = providers  # [LocalOllamaProvider(), GeminiProvider()]
-
-    async def draft_suggestion(self, context, step):
-        for provider in self.providers:
-            try:
-                return await provider.draft_suggestion(context, step)
-            except (TimeoutError, ProviderUnavailableError):
-                continue
-        raise AllProvidersFailedError()
-```
+- `LocalOllamaProvider`: Cloudflare Tunnel + Cloudflare Access 서비스 토큰 뒤의 Ollama HTTP API를 호출하는 **유일한 프로바이더**. `POST /api/chat`을 `format:"json"` + `stream:true`로 쓰고, `health_check()`는 `GET /api/tags`(5초).
+- 타임아웃: 생성 240초, health_check 5초. (원래 20초였고 한동안 45초였다. DGX Spark는 메모리 대역폭(273GB/s)이 decode 벽이라 45초로는 문서 생성 한 카테고리도 끝나지 않는다. 2026-09-10 실측으로 `qwen2.5:72b`는 3.0 tok/s, 문단 3개 문서 하나에 282초가 걸려 이 240초마저 넘겼고 — 그래서 운영 모델을 `qwen2.5:32b`로 내렸다.)
+- **응답을 스트리밍으로 받는 이유는 성능이 아니라 Cloudflare다.** 무료·Pro·Business 플랜의 프록시 read timeout(약 100초)은 **첫 바이트까지의 시간**에 걸리므로, non-streaming으로 72b를 호출하면 완성 전에 524가 난다. 조각을 이어붙이면 첫 토큰만 빨리 나오면 되므로 이 벽을 넘는다.
+- 요청 페이로드에 `keep_alive`를 실어 43GB 모델이 호출마다 재적재되지 않게 한다 — 재적재 시간만으로도 위 100초를 넘긴다.
+- 프로바이더 메서드는 샘플링 모드를 **명시**해야 한다(`TEMPERATURE_DETERMINISTIC` / `TEMPERATURE_CREATIVE`). 기본값을 두지 않은 건 그 결정을 강제하려는 의도다.
 
 ### 10-3. 로컬 모델 선택
 
@@ -514,11 +515,15 @@ EXAONE 3.5 7.8B-Instruct와 Qwen2.5 14B-Instruct를 4비트 양자화(GGUF Q4_K_
 | 변수명 | 설명 |
 |---|---|
 | `LOCAL_LLM_BASE_URL` | Cloudflare Tunnel로 노출된 Ollama 엔드포인트 |
-| `LOCAL_LLM_MODEL_NAME` | 예: `exaone3.5:7.8b` |
-| `GEMINI_API_KEY` | |
-| `LLM_PROVIDER_ORDER` | 예: `local,gemini` |
+| `LOCAL_LLM_MODEL_NAME` | 예: `qwen2.5:32b` |
+| `LLM_ACCESS_CLIENT_ID` | Cloudflare Access 서비스 토큰의 Client ID. 비워두면 인증 헤더를 붙이지 않는다(로컬 Ollama용) |
+| `LLM_ACCESS_CLIENT_SECRET` | 같은 토큰의 Client Secret. 발급 시 한 번만 보이고, 채팅·커밋에 남기지 않는다 |
 | `DATABASE_URL` | Supabase 연결 문자열 |
 | `JWT_SECRET` | 임의의 긴 랜덤 문자열(`openssl rand -hex 32`로 생성 가능) |
+
+> **임베딩 모델 이름은 환경변수가 아니다.** `bge-m3`는 `services/embedding/local_ollama_embedding.py`에 하드코딩돼 있고, 그 출력 차원 1024는 DB의 `VECTOR(1024)` 컬럼 타입이다(11절). 설정으로 빼면 오타가 부팅 실패가 아니라 요청 도중의 차원 불일치 예외로 나타나 더 나쁘다.
+
+> `GEMINI_API_KEY`와 `LLM_PROVIDER_ORDER`는 2026-09-09에 삭제됐다. pydantic-settings가 기본 `extra="forbid"`라 이 키가 `.env`나 배포 환경변수에 **남아 있으면 부팅 자체가 실패한다** — 새로 추가하지 않는 게 아니라, 지워졌는지 확인해야 하는 항목이다.
 
 `backend/.env.example` 파일로 관리하고, 실제 `.env`는 `.gitignore`에 포함해 저장소에 올리지 않는다.
 
@@ -526,9 +531,12 @@ EXAONE 3.5 7.8B-Instruct와 Qwen2.5 14B-Instruct를 4비트 양자화(GGUF Q4_K_
 
 ## 11. 임베딩 파이프라인
 
-- **로컬**: Ollama로 서빙 가능한 임베딩 모델 `bge-m3`를 1순위로 사용(`ollama pull bge-m3`).
-- **클라우드 폴백**: 로컬이 응답하지 않을 때 Gemini Embedding API 사용.
-- 두 모델은 벡터 차원이 다르므로, `record_chunks.embedding_model`에 실제 사용된 모델을 기록해두고, 검색 시 질의 임베딩도 저장 시점과 같은 모델로 생성해 동일 공간에서 비교한다.
+- **로컬 `bge-m3` 하나뿐이다**(`ollama pull bge-m3`). 클라우드 폴백(Gemini Embedding)은 2026-09-09에 삭제했다 — 애초에 동작하지도 않았다. Gemini는 768차원인데 컬럼이 1024차원이라 첫 줄에서 차원 불일치 예외를 던지고 있었고, 그 예외만은 폴백 대상이 아니라 그대로 다시 던져졌다. 즉 이름만 폴백이었다.
+- **차원 1024는 설정값이 아니라 DB 컬럼 타입이다.** `record_chunks.embedding`, `feed_item_embeddings.embedding`, `user_profile_embeddings.embedding`이 모두 `VECTOR(1024)`이고, `EMBEDDING_DIM` 상수가 단일 출처다. 임베딩 모델을 바꾸려면 세 테이블의 재임베딩 + 마이그레이션이 함께 필요하다.
+- 매 임베딩 호출마다 벡터 길이를 검사해 다르면 `EmbeddingDimensionMismatchError`를 던진다 — 잘못된 모델이 걸렸을 때 1024 컬럼에 이상한 차원이 들어가는 걸 막는 유일한 방어선이다.
+- `record_chunks.embedding_model`에 실제 사용된 모델을 기록해두고, 검색 시 질의 임베딩도 저장 시점과 같은 모델로 생성해 동일 공간에서 비교한다.
+- **임베딩 실패는 데이터 손실이 아니라 정렬 품질 저하로만 나타나야 한다.** 프로바이더가 하나뿐이라 터널이 끊기면 100% 실패하므로, 벡터 컬럼은 nullable이고 항목은 임베딩 전에 커밋되며 다음 수집이 빈 벡터를 backfill한다. 조회는 벡터가 없으면 최신순으로 내려간다.
+- **그래서 새 서버에서 `ollama pull bge-m3`를 빠뜨리면 조용히 망한다** — 예외도 배너도 없이 "정렬이 좀 이상하다"로만 보인다. 실제로 한 번 겪었다.
 
 ---
 
@@ -622,17 +630,17 @@ async def check_sentence_consistency(
 
 ### 13-2. 이미지 기록물(OCR)
 
-Gemini의 비전 기능으로 이미지 텍스트를 추출한다(별도 OCR API 계정을 새로 만들지 않아도 되는 이점). 자격증 발급일 등 날짜가 있으면 `published_at`으로 파싱해 채운다.
+~~Gemini의 비전 기능으로 이미지 텍스트를 추출한다.~~ **2026-09-09에 이 경로를 삭제했다.** Gemini를 제거하면서 대체할 로컬 비전 모델이 없었고, 텍스트를 못 뽑으면 그 기록물은 어떤 문장의 근거도 될 수 없는데 업로드가 201로 성공하면 사용자는 근거가 쌓였다고 믿게 된다 — 이 서비스에서 그건 빈 목록 문제가 아니라 정직성 문제에 가깝다. 그래서 조용히 실패시키는 대신 이미지 업로드를 `400 unsupported_file_type`으로 **거절**한다. 되살리려면 로컬 비전 모델(llava/qwen2.5vl 등)로 재작성해야 하고 한국어 자격증 OCR 품질은 별도 검증이 필요하다.
 
-### 13-3. Cloudflare Tunnel 설정 (Windows, 4090 PC 담당자용 — 서버 운영 처음이어도 괜찮다)
+### 13-3. Cloudflare Tunnel 설정 (Linux/DGX Spark 담당자용 — 서버 운영 처음이어도 괜찮다)
 
 > **먼저 개념부터**: "터널"은 A의 PC 안에서만 열려 있는 `http://localhost:11434`(Ollama)를, 인터넷 어디서나 접속 가능한 `https://무언가.trycloudflare.com` 같은 진짜 주소로 바꿔주는 통로다. 이 주소를 클라우드에 있는 우리 백엔드가 호출하는 것이다. 2-1절에서 설명했듯 이 통로로는 Ollama의 응답만 오갈 뿐, PC의 다른 부분에는 전혀 접근할 수 없다.
 
 1. `cloudflared.exe`를 다운로드한 폴더에서 PowerShell을 열고 로그인: `cloudflared.exe tunnel login` (브라우저가 열리며 Cloudflare 계정 인증 화면이 뜬다. 계정이 없으면 무료로 하나 만들면 된다.)
-2. 터널 생성: `cloudflared.exe tunnel create annswieoteum-llm` (성공하면 터널 ID와 `.json` 인증 파일 경로가 화면에 출력된다 — 이 경로를 기록해둔다.)
+2. 터널 생성: `cloudflared.exe tunnel create annswieteom-llm` (성공하면 터널 ID와 `.json` 인증 파일 경로가 화면에 출력된다 — 이 경로를 기록해둔다.)
 3. 홈 디렉터리의 `.cloudflared` 폴더에 생성된 설정 파일에 아래 내용을 작성(`config.yml`, 파일이 없으면 메모장으로 새로 만들어도 된다):
    ```yaml
-   tunnel: annswieoteum-llm
+   tunnel: annswieteom-llm
    credentials-file: C:\Users\<사용자명>\.cloudflared\<터널ID>.json
    ingress:
      - hostname: <원하는 서브도메인>.<보유 도메인 또는 Cloudflare 제공 도메인>
@@ -640,12 +648,12 @@ Gemini의 비전 기능으로 이미지 텍스트를 추출한다(별도 OCR API
      - service: http_status:404
    ```
    (도메인이 따로 없다면 Cloudflare 계정에 무료 도메인을 하나 연결하거나, Cloudflare 무료 Zero Trust 대시보드에서 안내하는 방식을 그대로 따라가면 된다. Claude Code는 이 단계에서 A가 도메인을 갖고 있는지 먼저 확인하고, 없다면 임시 방편으로 `cloudflared tunnel --url http://localhost:11434` 형태의 **Quick Tunnel**(로그인·도메인 등록 없이 즉석에서 임시 주소를 발급해주는 방식)로 먼저 개발을 진행하도록 안내해도 된다 — 다만 Quick Tunnel 주소는 실행할 때마다 바뀌므로 데모 당일에는 위 방식대로 고정 주소를 쓰는 것이 안전하다.)
-4. 실행: `cloudflared.exe tunnel run annswieoteum-llm`
+4. 실행: `cloudflared tunnel run annswieteom-llm-spark`. **ingress에 `originRequest.httpHostHeader: localhost:11434`를 반드시 넣는다** — 없으면 Ollama가 DNS 리바인딩 방지 검사에서 터널 도메인을 낯선 `Host`로 보고 403을 던진다(이 프로젝트에서 두 번 겪었다).
 5. **확인**: 다른 기기(예: 휴대폰 데이터로 연결한 스마트폰 브라우저)에서 3번에서 설정한 `https://<주소>`로 접속해봤을 때 Ollama 응답이 온다면 성공이다. PC 안에서 `http://localhost:11434`만 확인하는 것과는 다르게, 이 단계에서는 반드시 **PC 밖에서** 접속해봐야 진짜로 인터넷에 노출됐는지 확인할 수 있다.
-6. PC가 재부팅돼도 자동 실행되도록 Windows 서비스로 등록: `cloudflared.exe service install` (관리자 권한 PowerShell에서 실행 — PowerShell 아이콘을 우클릭해 "관리자 권한으로 실행"을 선택하면 된다)
+6. 재부팅돼도 자동 실행되도록 systemd 서비스로 등록: `sudo cloudflared --config /etc/cloudflared/config.yml service install` 후 `sudo systemctl enable --now cloudflared`. **등록 후 `systemctl is-active`만 믿지 말고** `journalctl -u cloudflared`에 터널 커넥션이 실제로 뜨는지와 외부에서 fresh curl로 응답이 오는지를 함께 확인한다 — "상태 표시"와 "실제 동작"이 다른 사례를 이미 겪었다.
 7. 발급된 주소를 백엔드 `.env`의 `LOCAL_LLM_BASE_URL`에 넣는다.
 
-이 작업은 2주차에 로컬 LLM 연동이 어느 정도 되고 나서 진행해도 무방하다. **막히면 조급해하지 않아도 된다** — 최악의 경우 이 터널 없이도 서비스는 10-4절의 `GeminiProvider`만으로 동작하니, 터널 설정에 며칠 걸리더라도 서비스 전체가 멈추지는 않는다.
+이 절차의 최신·실행 가능한 버전은 [docs/checklists/person_A_infra_ai/08_dgx_spark_migration.md](../checklists/person_A_infra_ai/08_dgx_spark_migration.md)다. **폴백이 없으므로**(2026-09-09 Gemini 제거) 이 터널은 "있으면 좋은 것"이 아니라 AI 기능의 유일한 경로다. 그래도 조급해할 필요는 없다 — 위 순서를 하나씩, 각 단계마다 확인하며 진행하면 된다. 막히는 지점은 대부분 403(Host 헤더)이나 1033(DNS가 옛 터널을 가리킴) 둘 중 하나다.
 
 ---
 
@@ -684,22 +692,22 @@ React Query로 서버 상태를 관리한다. 예: `['session', sessionId]`, `['
 ## 15. 배포
 
 - 프론트엔드: Vercel (GitHub 저장소 연결만 하면 자동 배포)
-- 백엔드: Railway (GitHub 저장소 연결, `requirements.txt`와 시작 명령어 `uvicorn app.main:app --host 0.0.0.0 --port $PORT`만 설정하면 됨, Dockerfile 불필요)
+- 백엔드: Render (GitHub 저장소 연결, `requirements.txt`와 시작 명령어 `uvicorn app.main:app --host 0.0.0.0 --port $PORT`만 설정하면 됨, Dockerfile 불필요)
 - DB/스토리지: Supabase (4절에서 이미 생성한 프로젝트를 개발·배포 공통으로 사용)
-- 로컬 LLM 서버: 4090 PC에서 Ollama 상시 구동 + Cloudflare Tunnel(13-3절)
-- 모니터링: 최소한으로, Railway 자체 로그 확인 정도로 충분(Sentry 등 별도 도구는 이번 범위에서 생략 — 초심자에게 추가 학습 곡선이 되므로)
+- 로컬 LLM 서버: DGX Spark에서 Ollama 상시 구동 + Cloudflare Tunnel + Access 서비스 토큰(13-3절)
+- 모니터링: 최소한으로, Render 자체 로그와 `GET /api/v1/health/llm` 확인 정도로 충분(Sentry 등 별도 도구는 이번 범위에서 생략 — 초심자에게 추가 학습 곡선이 되므로)
 
 ---
 
 ## 16. 개발 마일스톤 (Claude Code가 세부 작업으로 쪼갤 기준선)
 
-아래는 "무엇을, 어떤 순서로" 만들지에 대한 큰 틀이다. Claude Code는 각 마일스톤을 실제 커밋 단위의 작은 작업으로 더 잘게 나누어 진행하면 된다. **A = 4090 PC 보유 팀원(인프라·AI 담당, 서버 운영 경험 없음 — 2-1절·13-3절·19절 참고), B = 다른 팀원(프론트·백엔드 로직 담당)**. 마감은 9월 20일이다. A의 작업은 대부분 "설치하고 명령어 한 줄 실행"에 가깝게 잘게 쪼개져 있으니, Claude Code는 A에게 작업을 배정할 때 한 번에 여러 단계를 뭉쳐서 주지 말고 하나씩 확인해가며 진행하도록 안내하라.
+아래는 "무엇을, 어떤 순서로" 만들지에 대한 큰 틀이다. Claude Code는 각 마일스톤을 실제 커밋 단위의 작은 작업으로 더 잘게 나누어 진행하면 된다. **A = 추론 서버(DGX Spark) 운영 팀원(인프라·AI 담당, 서버 운영 경험 없음 — 2-1절·13-3절·19절 참고), B = 다른 팀원(프론트·백엔드 로직 담당)**. 마감은 9월 20일이다. A의 작업은 대부분 "설치하고 명령어 한 줄 실행"에 가깝게 잘게 쪼개져 있으니, Claude Code는 A에게 작업을 배정할 때 한 번에 여러 단계를 뭉쳐서 주지 말고 하나씩 확인해가며 진행하도록 안내하라.
 
 **마일스톤 1 — 기반 다지기 (1주차)**
 - 저장소 생성, 5절 구조로 폴더 스캐폴딩
 - Supabase 프로젝트 생성, 6절 스키마를 SQLAlchemy 모델 + Alembic 마이그레이션으로 작성 및 적용
 - (B) 회원가입/로그인 API(7절) + 최소한의 프론트 로그인 화면
-- (A) Ollama 설치, 로컬 모델 후보 비교, `LLMProvider`/`GeminiProvider`/`FallbackProvider` 골격(10절) — 이 시점에는 Cloudflare Tunnel 없이 로컬(같은 PC 안)에서만 테스트해도 된다
+- (A) Ollama 설치, 로컬 모델 후보 비교, `LLMProvider`/`LocalOllamaProvider` 골격(10절) — 이 시점에는 Cloudflare Tunnel 없이 로컬(같은 PC 안)에서만 테스트해도 된다
 - 검증 기준: 회원가입 → 로그인 → 토큰으로 인증된 API 호출이 실제로 동작
 
 **마일스톤 2 — 인터뷰 흐름 (1~2주차)**
@@ -719,7 +727,7 @@ React Query로 서버 상태를 관리한다. 예: `['session', sessionId]`, `['
 - 검증 기준: 카테고리 여러 개를 끝까지 진행했을 때, 근거 없는 문장이 섞이지 않고 각 문장에 출처가 표시되는지 확인
 
 **마일스톤 5 — 배포 및 안정화 (3주차)**
-- 15절대로 배포, 폴백 전환 테스트(로컬 서버를 일부러 꺼서 Gemini로 자동 전환되는지 확인)
+- 15절대로 배포, LLM 중단 시 동작 확인(로컬 서버를 일부러 꺼서 AI 경로가 503 + "AI 서버가 수리 중이예요."로 정직하게 멈추고 비-AI 경로는 살아 있는지 확인)
 - 가상 시나리오 2~3개로 전체 흐름 리허설
 - 9/16 이후 신규 기능 동결, 이후는 버그 수정과 발표 준비만 진행
 
@@ -731,11 +739,13 @@ React Query로 서버 상태를 관리한다. 예: `['session', sessionId]`, `['
 - **Ollama가 응답하지 않음**: 작업 표시줄에 Ollama 아이콘이 있는지 확인. 없다면 Ollama 앱을 다시 실행한다. `ollama list`로 모델이 실제로 받아져 있는지 확인한다.
 - **Supabase 연결 실패**: `DATABASE_URL`에 비밀번호의 특수문자가 URL 인코딩되지 않은 경우가 흔하다(예: `@`는 `%40`으로).
 - **CORS 에러(프론트에서 백엔드 호출 실패)**: FastAPI에서 `CORSMiddleware`에 프론트엔드 주소(`http://localhost:3000` 등)를 허용 목록에 추가했는지 확인한다.
-- **Cloudflare Tunnel 주소가 백엔드에서 안 열림**: 4090 PC의 Ollama가 `0.0.0.0`이 아니라 `127.0.0.1`에만 바인딩돼 있으면 터널을 통해서도 접근이 안 될 수 있다 — Ollama 기본 설정으로는 보통 문제없지만, 안 되면 `OLLAMA_HOST=0.0.0.0` 환경변수를 설정하고 재시작해본다.
-- **(서버 처음 운영하는 분을 위한 항목) PC를 재부팅했더니 서버가 죽은 것 같다**: 당황하지 않아도 된다. `http://localhost:11434`가 안 열리면 Ollama가 꺼진 것이니 Ollama 앱을 다시 켜면 되고, 외부에서 접속이 안 되면 터널이 꺼진 것이니 PowerShell에서 `cloudflared.exe tunnel run annswieoteum-llm`을 다시 실행하면 된다. 13-3절 6번처럼 서비스로 등록해두면 이 문제 자체가 거의 발생하지 않는다.
+- **Cloudflare Tunnel 주소가 백엔드에서 안 열림**: Spark의 Ollama가 `127.0.0.1`에만 바인딩돼 있으면 터널을 통해서도 접근이 안 될 수 있다. 다만 cloudflared는 같은 기계에서 `localhost:11434`로 붙으므로 보통은 문제가 없다 — 실제로 막혔을 때만 바꾼다. Ollama 설치 방식에 따라 방법이 다르다: systemd면 `sudo systemctl edit ollama`에 `Environment="OLLAMA_HOST=0.0.0.0:11434"`를 넣고 `daemon-reload` + 재시작, snap이면 `sudo snap set ollama host="0.0.0.0:11434"` 후 `sudo snap restart ollama`(snap 설치본은 유닛 파일이 없어 `systemctl edit`이 먹지 않는다). NVIDIA 포럼에는 DGX Spark가 snap 사전설치로 적혀 있지만 실제로 우리 기계는 snap이 아니었으므로(2026-09-10) 먼저 확인한다.
+- **터널을 통하면 403 Forbidden인데 `localhost`에서는 200**: 바인딩이 아니라 `Host` 헤더 문제다. cloudflared ingress에 `originRequest.httpHostHeader: localhost:11434`를 넣는다.
+- **터널은 살아 있는데 에러 1033**: DNS가 지금 켜져 있는 터널이 아닌 옛 터널을 가리키고 있다. DNS는 **터널 ID**를 가리켜야 한다(계정 ID·커넥터 ID와 헷갈리기 쉽다).
+- **(서버 처음 운영하는 분을 위한 항목) PC를 재부팅했더니 서버가 죽은 것 같다**: 당황하지 않아도 된다. `http://localhost:11434`가 안 열리면 Ollama가 꺼진 것이니 Ollama 앱을 다시 켜면 되고, 외부에서 접속이 안 되면 터널이 꺼진 것이니 `sudo systemctl restart cloudflared`를 실행하면 된다. 13-3절 6번처럼 서비스로 등록해두면 이 문제 자체가 거의 발생하지 않는다.
 - **(서버 처음 운영하는 분을 위한 항목) Windows 방화벽이 "액세스를 허용하시겠습니까?" 경고를 띄운다**: Ollama나 cloudflared를 처음 실행할 때 Windows 방화벽이 뜨는 것은 정상이다. "액세스 허용"을 눌러주면 된다 — 이는 해당 프로그램이 네트워크를 쓰겠다는 표준적인 확인 절차이지, 문제가 생겼다는 신호가 아니다.
-- **(서버 처음 운영하는 분을 위한 항목) 노트북 화면을 덮었더니(절전모드) 서버가 멈췄다**: 데스크톱이 아니라 노트북으로 4090을 운용하는 경우, Windows 설정 → 시스템 → 전원에서 "덮개를 닫았을 때 절전 모드로 전환"을 "아무 것도 안 함"으로 바꿔야 한다. 데모·투표 기간에는 이 설정을 반드시 미리 확인해둔다(19절 체크리스트 참고).
-- **자꾸 뭔가 막힐 때의 기본 원칙**: 이 프로젝트에서 로컬 서버 관련 문제는 최악의 경우에도 서비스 전체를 멈추게 하지 않는다(10절 `FallbackProvider`가 자동으로 Gemini로 넘어간다). 그러니 A는 서버 쪽에서 막히더라도 서비스 전체가 죽었다고 걱정하지 말고, 시간을 넉넉히 두고 하나씩 확인하면 된다.
+- **(서버 처음 운영하는 분을 위한 항목) 기계가 절전으로 들어가 서버가 멈췄다**: Spark에서는 `sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target`으로 막는다. 개발용 Windows 노트북이라면 설정 → 시스템 → 전원에서 "덮개를 닫았을 때"를 "아무 것도 안 함"으로 바꾼다. 데모·투표 기간에는 이 설정을 반드시 미리 확인해둔다(19절 체크리스트 참고).
+- **자꾸 뭔가 막힐 때의 기본 원칙**: 폴백이 없으므로(2026-09-09 Gemini 제거) 이 서버가 죽으면 AI 기능은 정말로 멈춘다 — 다만 그때도 웹앱 본체와 로그인·피드는 살아 있고, 사용자에게는 "AI 서버가 수리 중이예요."라는 안내가 나간다. 데이터가 깨지는 종류의 실패가 아니다. 그러니 A는 서버 쪽에서 막히더라도 서둘러 아무 설정이나 바꾸지 말고, 위 항목을 위에서 아래로 하나씩 확인하면 된다.
 
 ---
 
@@ -758,7 +768,7 @@ React Query로 서버 상태를 관리한다. 예: `['session', sessionId]`, `['
 **처음 설정할 때 (1회, 2주차쯤)**:
 - [ ] Ollama 설치 완료, `ollama list`에 사용할 모델이 보인다
 - [ ] `http://localhost:11434`를 PC 안에서 브라우저로 열면 "Ollama is running"이 뜬다
-- [ ] Cloudflare Tunnel 설정 완료, `cloudflared.exe service install`로 자동 실행 등록까지 했다
+- [ ] Cloudflare Tunnel 설정 완료, `sudo cloudflared service install` + `sudo systemctl enable --now cloudflared`로 자동 실행 등록까지 했다
 - [ ] **PC가 아닌 다른 기기(휴대폰 등)**에서 터널 주소로 접속했을 때도 응답이 온다
 - [ ] Windows 전원 설정에서 "절전 모드로 전환 안 함"으로 바꿔뒀다(노트북이면 덮개 닫을 때 설정도 함께)
 - [ ] 터널 주소를 B에게 전달해서 백엔드 `.env`의 `LOCAL_LLM_BASE_URL`에 반영했다
@@ -771,7 +781,8 @@ React Query로 서버 상태를 관리한다. 예: `['session', sessionId]`, `['
 **데모·투표 기간 시작 전날 (9/20 저녁, 매우 중요)**:
 - [ ] PC 전원 케이블 연결 확인, 절전 설정 재확인
 - [ ] Ollama, cloudflared 둘 다 서비스로 등록되어 재부팅해도 자동으로 켜지는지 실제로 한 번 재부팅해서 테스트
-- [ ] 터널을 일부러 잠깐 꺼서 웹앱이 정말 Gemini로 자동 전환되는지 확인(10절 폴백 테스트) — 이건 A 혼자 판단하지 말고 B와 함께 확인한다
+- [ ] 터널을 일부러 잠깐 꺼서 웹앱이 **폴백 없이도 깨지지 않고 끝나는지** 확인 — AI 경로는 `503 llm_unavailable` + "AI 서버가 수리 중이예요."여야 하고(500이나 무한 로딩이면 버그), 로그인·피드 같은 비-AI 경로는 그대로 동작해야 한다. 이건 A 혼자 판단하지 말고 B와 함께 확인한다
+- [ ] 롤백 경로 확인: 4090을 내렸으므로 되돌아갈 기계가 없다. `ollama list`에 `qwen2.5:32b`가 있고, 롤백이 Render 환경변수 `LOCAL_LLM_MODEL_NAME` 한 줄 교체임을 팀이 알고 있다
 - [ ] 데모 당일 PC 근처에 있을 수 없는 시간대가 있다면 미리 팀에 공유해둔다
 
 이 체크리스트를 통과하면, A는 서버 운영 경험이 없어도 이 프로젝트가 요구하는 서버 운영을 충분히 해낸 것이다.

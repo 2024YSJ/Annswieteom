@@ -1,17 +1,23 @@
+# ⚠ LEGACY — Windows origin(RTX 4090). 2026-09-10부터 운영 추론 서버는 DGX Spark(Linux/aarch64)다.
+# 새로 설정하려면 config.linux.yml.example 을 쓴다. 이 파일은 9/21 이후 삭제한다
+# (데모 기간 동안은 Windows 경로 참고 자료로 남긴다).
+#
 # Cloudflare Tunnel 설정 파일 예시
 # 실제 파일은 %USERPROFILE%\.cloudflared\config.yml 에 저장한다 (저장소에 커밋하지 않는다)
 #
 # 설정 방법:
 #   1. cloudflared.exe tunnel login
-#   2. cloudflared.exe tunnel create annswieoteum-llm
+#   2. cloudflared.exe tunnel create annswieteom-llm
 #      -> <TUNNEL_ID>.json 이 %USERPROFILE%\.cloudflared\ 에 생성됨
 #   3. 아래 내용을 %USERPROFILE%\.cloudflared\config.yml 로 저장하고
 #      <TUNNEL_ID>, <사용자명>, <서브도메인>, <도메인> 을 실제 값으로 교체
 
-tunnel: annswieoteum-llm
+tunnel: annswieteom-llm
 credentials-file: C:\Users\<사용자명>\.cloudflared\<TUNNEL_ID>.json
 
 ingress:
   - hostname: llm.<도메인>       # 예: llm.example.com
     service: http://localhost:11434
+    originRequest:
+      httpHostHeader: localhost:11434   # 필수: 없으면 Ollama가 터널 도메인을 Host 헤더로 받아 403 Forbidden 반환
   - service: http_status:404

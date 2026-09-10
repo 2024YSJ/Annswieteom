@@ -1,13 +1,13 @@
 # 아키텍처 문서
 
-이 문서는 백엔드/프론트엔드 코드 구조를 파일·함수 단위로 정리한다. 명세는 [docs/specs/annswieoteum_detailed_spec.md](specs/annswieoteum_detailed_spec.md), 마일스톤 진행 상황은 [docs/checklists/](checklists/), 작업 기록은 [docs/devlog/](devlog/)를 참고. 이 문서는 "지금 구조가 어떻게 생겼고 새 코드를 어디에 둬야 하는가"에 집중한다.
+이 문서는 백엔드/프론트엔드 코드 구조를 파일·함수 단위로 정리한다. 명세는 [docs/specs/annswieteom_detailed_spec.md](specs/annswieteom_detailed_spec.md), 마일스톤 진행 상황은 [docs/checklists/](checklists/), 작업 기록은 [docs/devlog/](devlog/)를 참고. 이 문서는 "지금 구조가 어떻게 생겼고 새 코드를 어디에 둬야 하는가"에 집중한다.
 
 ## 1. 개요
 
 - **프론트엔드**: Next.js 14+ (TypeScript, App Router) — `frontend/`
 - **백엔드**: FastAPI (Python 3.11+) — `backend/`
 - **DB**: PostgreSQL + pgvector (Supabase)
-- **LLM**: 로컬 Ollama 전용 — **폴백 없음**(2026-09-09 Gemini 제거). 추론도 임베딩도 이 서버 하나에 달려 있고, 닿지 않으면 AI 경로는 전부 503 `llm_unavailable`로 끝난다
+- **LLM**: 로컬 Ollama 전용 — **폴백 없음**(2026-09-09 Gemini 제거). 추론도 임베딩도 이 서버 하나에 달려 있고, 닿지 않으면 AI 경로는 전부 503 `llm_unavailable`로 끝난다. 추론 호스트는 **DGX Spark**(GB10, aarch64, DGX OS)이고 Cloudflare Tunnel + Access 서비스 토큰 뒤의 `llm.annswieteom.com`으로 노출된다 — 이관 절차는 [docs/checklists/person_A_infra_ai/08_dgx_spark_migration.md](checklists/person_A_infra_ai/08_dgx_spark_migration.md)
 - **핵심 제약(정직성 가드레일)**: 생성된 모든 문장은 `confirmed_facts` 테이블의 행을 최소 1개 이상 인용해야 한다. 이 제약은 특정 함수 하나가 아니라 여러 계층에 걸쳐 강제된다 — 자세한 내용은 6절.
 
 백엔드는 `api/ → schemas/ + services/ → models/ → db` 방향으로 의존한다:
@@ -141,9 +141,11 @@ classDiagram
 - **세션 스코프**(`sessions`/`interview`/`records`/`document`/`job_search`/`coverage`): `Depends(get_owned_session)`으로 소유권 검증을 공유한다.
 - **계정 스코프**(`auth`의 일부, `profile`): `Depends(get_current_user)`.
 - **익명 허용**(`feed`): `Depends(get_current_user_optional)` — 메인 화면 피드는 로그아웃 방문자에게도 떠야 한다. 단 `feed/jobs/recommended`만 `get_current_user`.
+- **인증 없음**(`health`): 운영자가 데모 중 휴대폰에서 JWT 없이 확인해야 하고, 노출값은 명세서에 이미 적힌 모델 이름과 호스트명뿐이다.
 
 | 파일 | 책임 | 주요 엔드포인트 |
 |---|---|---|
+| `health.py` | 추론 서버 도달 여부(운영자용). **항상 200**이고 상태는 본문에 담는다 — 503을 내면 "AI 서버만 죽었다"와 "앱 전체가 죽었다"를 구분할 수 없다. `main.py`의 `/health`(Render liveness probe)와는 **절대 합치지 않는다** | `GET /health/llm` |
 | `auth.py` | 회원가입/로그인/게스트/토큰 재발급/로그아웃 | `POST /register`, `/login`, `/guest`, `/refresh`, `/logout`, `GET /me` |
 | `sessions.py` | 세션 CRUD (생성/목록/상세/이름변경/삭제) | `POST /sessions`, `GET /sessions`, `GET /sessions/{id}`, `PATCH /sessions/{id}`, `DELETE /sessions/{id}` |
 | `interview.py` | 상태머신 진행: 기간→카테고리→기록물스킵→인터뷰(초안/확인) | `POST .../period`, `.../period/extract`, `.../categories`, `.../categories/extract`, `.../records/skip`, `GET .../interview/next`, `POST .../interview/confirm` |
@@ -155,6 +157,7 @@ classDiagram
 
 | 파일 | 대응 라우터 | 주요 클래스 |
 |---|---|---|
+| `health.py` | `health.py` | `LLMHealthRead` |
 | `user.py` | `auth.py` | `UserCreate`, `LoginRequest`, `UserRead`, `TokenPair`, `RegisterResponse` |
 | `session.py` | `sessions.py` | `SessionCreate`, `SessionRead`(`title` 포함), `SessionRename`, `SessionContextRead`, `ActivityCategoryRead`, `ConfirmedFactRead`, `RecordChunkExcerptRead` |
 | `interview.py` | `interview.py` | `GapPeriodSet/Read`, `PeriodExtractRequest/Read`, `CategoryInput`, `CategorySelect`, `CategoryExtractRequest/Read`, `StatusRead`, `RecordsSkipRead`, `BasedOnRead`, `InterviewNextRead`, `InterviewConfirm`, `InterviewConfirmRead` |

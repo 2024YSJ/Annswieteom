@@ -47,7 +47,12 @@ _MAX_CATEGORIES_PER_QUERY = 3
 # 멈추는 것보다 부분 결과가 낫다. 이 값은 로컬 3b + 후보 20건 기준으로
 # 관련성 판단 1회가 ~37초 걸리는 현실에 맞춘 잠정치다(devlog 20 실측).
 # 조회에 검색 조건이 실려 후보 수가 줄면 훨씬 내려갈 수 있다.
-_QUERY_BUDGET_SECONDS = 90.0
+# 2026-09-10 상향: 추론 서버가 DGX Spark로 바뀌면서 관련성 판단 1회가 훨씬
+# 오래 걸린다 — 대역폭(273GB/s)이 decode 벽이고 qwen2.5:72b는 3.0 tok/s로
+# 실측됐다. 운영 모델을 32b로 내려도 4090+14b 시절보다는 느리다. 90초로는 첫
+# 카테고리도 못 넘기고 전부 skipped로 떨어져 화면이 늘 비어 보인다. 위의
+# _MAX_CATEGORIES_PER_QUERY=3과 함께 읽어야 하는 값이다 — 예산은 3회분이다.
+_QUERY_BUDGET_SECONDS = 600.0
 
 
 def _require_job_search(session: SessionModel) -> None:

@@ -36,6 +36,8 @@
 - [x] 타임아웃/연결 실패 시 `ProviderUnavailableError` 또는 `TimeoutError` 발생시키도록 처리 (FallbackProvider가 이를 잡아서 다음 provider로 넘어감)
 - [x] 이 시점에는 `LOCAL_LLM_BASE_URL`을 `http://localhost:11434`로 두고 로컬에서만 테스트 (Cloudflare Tunnel은 [05_cloudflare_tunnel.md](05_cloudflare_tunnel.md)에서 나중에 연결)
 
+> ⚠️ **아래 3·4절은 실행된 이력이지만 지금 코드에는 없다.** 2026-09-09에 `gemini_provider.py`와 `fallback.py`를 삭제하고 `LocalOllamaProvider`를 유일한 프로바이더로 만들었으며, 예외도 `LLMUnavailableError` 하나로 합쳤다. `get_llm_provider()`는 `services/llm/__init__.py`로 옮겨졌다. 새 작업의 기준은 3·4절이 아니라 [08_dgx_spark_migration.md](08_dgx_spark_migration.md)와 `docs/devlog/PersonB/24_remove_gemini_no_fallback.md`다.
+
 ## 3. `GeminiProvider` (`gemini_provider.py`)
 
 - [x] Google Gemini API 클라이언트 초기화 (`GEMINI_API_KEY` 환경변수 사용)
@@ -56,5 +58,5 @@
 ## 검증 기준
 
 - [x] `LOCAL_LLM_BASE_URL`을 로컬로 둔 상태에서 `FallbackProvider.draft_suggestion()`을 호출하면 Ollama가 실제로 응답한다 — B-5 실 브라우저 완주 테스트(2026-09-03)에서 실제 `qwen2.5:14b` 응답으로 인터뷰 3라운드 전부 확인
-- [ ] 의도적으로 Ollama를 꺼둔 상태에서 같은 호출을 하면 자동으로 Gemini 응답이 돌아온다 (에러 없이) — `GEMINI_API_KEY`가 아직 로컬에 없어 미검증
+- [x] ~~의도적으로 Ollama를 꺼둔 상태에서 같은 호출을 하면 자동으로 Gemini 응답이 돌아온다~~ — **이 항목은 성립하지 않게 됐다.** 2026-09-09에 폴백을 제거했으므로 Ollama가 꺼져 있으면 `LLMUnavailableError` → `503 llm_unavailable`이 정답이다. 그 동작 확인은 [00_shared/03_deployment.md](../00_shared/03_deployment.md) 4절로 옮겼다
 - [x] 둘 다 실패하도록 만들면(`GEMINI_API_KEY`를 잘못된 값으로) `AllProvidersFailedError`가 발생한다 — 14B 콜드 스타트로 로컬이 타임아웃하고 Gemini도 키가 없어 실패했을 때 실제로 503(`AllProvidersFailedError`)로 이어지는 것을 확인
