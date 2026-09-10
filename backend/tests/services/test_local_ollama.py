@@ -35,7 +35,9 @@ def ollama_calls(monkeypatch):
     여기서는 그 아래층(httpx)만 갈아끼워 실제 payload를 검사한다.
     """
     calls: list[dict] = []
-    canned = {"content": "{}"}
+    # sent_headers는 canned에 얹었다 — 기존 12개 테스트가 (calls, canned) 2-튜플로
+    # 언패킹하고 있어서 반환 형태를 바꾸면 전부 손봐야 한다.
+    canned: dict = {"content": "{}", "sent_headers": []}
 
     class _StubClient:
         def __init__(self, *args, **kwargs) -> None:
@@ -47,8 +49,9 @@ def ollama_calls(monkeypatch):
         async def __aexit__(self, *exc_info) -> None:
             return None
 
-        async def post(self, url: str, json: dict) -> _StubResponse:  # noqa: A002 - httpx의 인자명
+        async def post(self, url: str, json: dict, headers: dict | None = None) -> _StubResponse:  # noqa: A002 - httpx의 인자명
             calls.append(json)
+            canned["sent_headers"].append(headers)
             return _StubResponse(canned["content"])
 
     monkeypatch.setattr(local_ollama.httpx, "AsyncClient", _StubClient)
@@ -178,3 +181,46 @@ async def test_classify_drops_hallucinated_category_names(ollama_calls):
     result = await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
 
     assert [q.category for q in result] == ["training_course"]
+
+
+@pytest.mark.asyncio
+async def test_access_headers_are_sent_when_the_token_is_configured(ollama_calls, monkeypatch):
+    # 터널이 Cloudflare Access 뒤에 있어서 이 헤더가 없으면 전부 403이 된다.
+    monkeypatch.setattr(local_ollama.settings, "llm_access_client_id", "id.access", raising=False)
+    monkeypatch.setattr(local_ollama.settings, "llm_access_client_secret", "secret", raising=False)
+    _, canned = ollama_calls
+    canned["content"] = json.dumps({"categories": ["training_course"]})
+
+    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
+
+    assert canned["sent_headers"][0] == {
+        "CF-Access-Client-Id": "id.access",
+        "CF-Access-Client-Secret": "secret",
+    }
+
+
+@pytest.mark.asyncio
+async def test_no_access_headers_when_the_token_is_unset(ollama_calls, monkeypatch):
+    # 로컬 dev(localhost:11434)는 Access 뒤에 없다. 빈 값이 정상 상태여야 한다.
+    monkeypatch.setattr(local_ollama.settings, "llm_access_client_id", "", raising=False)
+    monkeypatch.setattr(local_ollama.settings, "llm_access_client_secret", "", raising=False)
+    _, canned = ollama_calls
+    canned["content"] = json.dumps({"categories": ["training_course"]})
+
+    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
+
+    assert canned["sent_headers"][0] == {}
+
+
+@pytest.mark.asyncio
+async def test_half_configured_access_token_sends_no_headers(ollama_calls, monkeypatch):
+    # id만 있고 secret이 없으면 Access는 어차피 거절한다. 반쪽 헤더를 보내
+    # 403 원인을 헷갈리게 만들지 말고 아무것도 안 보낸다.
+    monkeypatch.setattr(local_ollama.settings, "llm_access_client_id", "id.access", raising=False)
+    monkeypatch.setattr(local_ollama.settings, "llm_access_client_secret", "", raising=False)
+    _, canned = ollama_calls
+    canned["content"] = json.dumps({"categories": ["training_course"]})
+
+    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
+
+    assert canned["sent_headers"][0] == {}

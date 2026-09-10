@@ -323,7 +323,9 @@ class LocalOllamaProvider:
     async def health_check(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self._base_url}/api/tags")
+                resp = await client.get(
+                    f"{self._base_url}/api/tags", headers=settings.ollama_headers()
+                )
                 return resp.status_code == 200
         except Exception:
             return False
@@ -348,7 +350,9 @@ class LocalOllamaProvider:
         }
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+                resp = await client.post(
+                    f"{self._base_url}/api/chat", json=payload, headers=settings.ollama_headers()
+                )
                 resp.raise_for_status()
                 return resp.json()["message"]["content"]
         except httpx.TimeoutException as exc:
