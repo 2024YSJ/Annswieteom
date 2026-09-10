@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     # Comma-separated list of allowed frontend origins for CORS. Local dev
-    # only needs localhost:3000; deployed environments (Railway) must add
+    # only needs localhost:3000; deployed environments (Render) must add
     # the Vercel domains via this env var — see app/main.py.
     cors_allow_origins: str = "http://localhost:3000"
 
