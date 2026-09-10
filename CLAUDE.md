@@ -58,9 +58,13 @@ npm run lint
 ### Local LLM (Ollama — DGX Spark inference host, Linux/aarch64)
 
 ```bash
-# Ollama ships pre-installed as a snap on DGX Spark; do not replace it with install.sh
-sudo snap set ollama host="0.0.0.0:11434"
-sudo snap restart ollama
+# Ollama is already installed on the Spark. Identify HOW before changing anything --
+# an NVIDIA forum post says snap, but this machine was not a snap install:
+#   systemctl list-unit-files | grep -i ollama ; snap list ollama 2>/dev/null
+# Do NOT reinstall via install.sh; that can lose the GB10 (SM121) CUDA setup.
+# If localhost:11434 already answers, leave the binding alone -- cloudflared connects
+# from the same host, so a 127.0.0.1 bind is fine. OLLAMA_HOST=0.0.0.0 is a
+# troubleshooting step, not a setup step.
 
 ollama pull qwen2.5:32b    # inference (LOCAL_LLM_MODEL_NAME)
 ollama pull bge-m3         # embeddings — REQUIRED, and not configurable:
@@ -137,7 +141,7 @@ instructions to the other.
 **Inference host (DGX Spark):** DGX OS, Linux, ARM64 (aarch64)
 
 - Service management is `systemctl`/`journalctl`, not the Services console or Event Log
-- Ollama is a snap: configure it with `snap set ollama ...`; `systemctl edit ollama` has no unit to edit
+- How Ollama is installed varies -- check before configuring it. Under systemd use `systemctl edit ollama` + `Environment="OLLAMA_HOST=..."`; under snap that has no unit to edit and `snap set ollama host=...` is the only path
 - cloudflared needs the `linux-arm64` build; x86 binaries will not run
 - Suspend/hibernate must be masked, not just disabled in a power profile
 
