@@ -26,6 +26,7 @@ class LocalOllamaEmbedding:
                 resp = await client.post(
                     f"{base_url}/api/embed",
                     json={"model": _MODEL, "input": texts},
+                    headers=settings.ollama_headers(),
                 )
                 resp.raise_for_status()
                 vectors: list[list[float]] = resp.json()["embeddings"]
@@ -43,7 +44,9 @@ class LocalOllamaEmbedding:
         base_url = settings.local_llm_base_url.rstrip("/")
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{base_url}/api/tags")
+                resp = await client.get(
+                    f"{base_url}/api/tags", headers=settings.ollama_headers()
+                )
                 return resp.status_code == 200
         except Exception:
             return False
