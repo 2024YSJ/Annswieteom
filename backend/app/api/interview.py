@@ -4,7 +4,7 @@ import random
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +49,7 @@ from app.services.llm.base import (
     RecordExcerpt as LLMRecordExcerpt,
 )
 from app.services.llm import get_llm_provider
+from app.services.profile.attributes import get_profile_extractor, profile_summary_lines
 from app.services.record_pipeline.search import get_chunk_search
 
 router = APIRouter(prefix="/sessions", tags=["interview"])
@@ -180,6 +181,11 @@ async def _build_context(
     except Exception:
         excerpts = []
 
+    # 다른 세션·검색에서 이미 알게 된 사람 단위 속성(비민감만). 후속/드릴다운
+    # 질문이 아는 걸 다시 묻지 않게 한다 — draft_answer에는 넣지 않는다
+    # (InterviewContext.profile_summary 주석 참고).
+    profile_summary = await profile_summary_lines(db, session.user_id)
+
     context = InterviewContext(
         session_id=str(session.id),
         category_label=category.label,
@@ -194,6 +200,7 @@ async def _build_context(
             for e in excerpts
         ],
         asked_questions=[f.source_question_text for f in confirmed_so_far if f.source_question_text],
+        profile_summary=profile_summary,
     )
     return context, list(confirmed_so_far)
 
@@ -476,10 +483,12 @@ async def interview_ask(
 @router.post("/{session_id}/interview/answer", response_model=InterviewAnswerRead)
 async def interview_answer(
     payload: InterviewAnswerRequest,
+    background_tasks: BackgroundTasks,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
     llm: LLMProvider = Depends(get_llm_provider),
     chunk_search=Depends(get_chunk_search),
+    extractor=Depends(get_profile_extractor),
 ) -> InterviewAnswerRead:
     try:
         orchestrator.require_interviewing(session.status)
@@ -569,7 +578,14 @@ async def interview_answer(
         "candidate_facts": candidate_payload,
         "answer_log_id": str(answer_log.id),
     }
+    user_id, answer_id = session.user_id, answer_log.id
     await db.commit()
+
+    # 답변 원문에서 사람 단위 속성(나이·거주지·학력·희망직무 …)을 뽑아 프로필로
+    # 남긴다. 응답을 보낸 뒤 백그라운드에서 돈다 — 사용자가 후보 사실을 검토하는
+    # 동안이 로컬 Ollama가 비어 있는 시간이다. 구조 질문(activity_breakdown)은 위에서
+    # 이미 반환했으므로 여기 오지 않는다.
+    background_tasks.add_task(extractor, user_id, "interview_answer", payload.text, answer_id)
 
     return InterviewAnswerRead(
         candidates=[

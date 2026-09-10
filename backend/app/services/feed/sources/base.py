@@ -35,6 +35,8 @@ class FeedItemData:
     source_key: str | None = None
     #: 소스가 등록일/게시일을 주는 경우에만. 대부분의 고용24 카테고리는 안 준다.
     source_published_at: date | None = None
+    #: 구조화된 자격조건. 지금은 온통청년만 준다(youthcenter_source._parse_eligibility).
+    eligibility: dict | None = None
 
     @property
     def feed_kind(self) -> str:

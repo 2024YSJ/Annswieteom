@@ -130,6 +130,35 @@ def _known_region_names() -> tuple[str, ...]:
 KNOWN_REGION_NAMES: tuple[str, ...] = _known_region_names()
 
 
+def region_code_for(name: str) -> str | None:
+    """지역명 하나 → 행정구역 코드(광역 2자리 또는 시·군 5자리). 모르면 None.
+
+    사용자 프로필(거주지·희망지역) 저장용. 권역명("경기 북부")은 단일 시·군이
+    아니므로 광역 코드로 올려 준다. "수도권"은 광역이 셋이라 코드 하나로 못 담아
+    None이다 — 추측한 코드를 저장하는 것보다 비워 두는 편이 매칭을 덜 틀린다.
+    """
+    name = name.strip()
+    if not name or name == "수도권":
+        return None
+    group = _REGION_GROUPS.get(name)
+    if group is not None:
+        return group[0]
+    bare = name.removesuffix("시").removesuffix("군").removesuffix("구") or name
+    city = _CITY_CODES.get(bare)
+    if city is not None:
+        return city
+    return _WIDE_AREA_CODES.get(name) or _WIDE_AREA_CODES.get(name[:2])
+
+
+def region_label_for(code: str) -> str | None:
+    """region_code_for의 역방향 — 저장된 코드를 화면 라벨로."""
+    for table in (_CITY_CODES, _WIDE_AREA_CODES):
+        for label, value in table.items():
+            if value == code:
+                return label
+    return None
+
+
 def resolve_region_filters(region_names: list[str], limit: int) -> list[RegionFilter]:
     """지역명 목록을 호출 단위 조건 목록으로 바꾼다.
 

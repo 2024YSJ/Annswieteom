@@ -33,6 +33,16 @@ FEED_KIND_BY_CATEGORY = {
 
 FEED_CATEGORIES = tuple(FEED_KIND_BY_CATEGORY)
 
+#: 메인 화면 섹션 → 카테고리. 위 FEED_KIND_BY_CATEGORY가 훈련과정·구직자프로그램을
+#: "policy"로 보낸 건 온통청년 키 승인이 늦을 때 정책 섹션이 비지 않게 하려던
+#: 것이었다. 온통청년이 700여 건을 주는 지금은 "청년 지원 정책"에 고용24 훈련기관
+#: 카드가 섞여 무엇인지 알아보기 어려워서(2026-09-11 요청) 섹션을 출처 기준으로
+#: 나눈다. feed_kind는 CHECK 제약이 걸린 저장 컬럼이라 바꾸면 운영 마이그레이션이
+#: 또 필요하므로, 저장은 그대로 두고 조회에서 카테고리로 가른다.
+POLICY_SECTION_CATEGORIES = ("youth_policy",)
+TRAINING_SECTION_CATEGORIES = ("training_course", "job_seeker_program")
+JOB_SECTION_CATEGORIES = tuple(c for c, kind in FEED_KIND_BY_CATEGORY.items() if kind == "job")
+
 
 class FeedItem(Base):
     """외부 API에서 긁어와 캐시해 둔 공고/정책 한 건. 전 사용자 공용이다 —
@@ -67,6 +77,11 @@ class FeedItem(Base):
     # 같은 이유로 JSONB가 아닌 제네릭 JSON.
     meta_lines: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     detail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 구조화된 자격조건(연령·지역·학력·전공·취업상태·특화분야·혼인·소득 코드).
+    # 온통청년만 채운다 — services/feed/sources/youthcenter_source.py
+    # _parse_eligibility. 티어 매칭(services/feed/matching.py)의 입력이다.
+    # None = 조건 정보 없음(고용24 항목 전부, 또는 이 컬럼 이전에 수집된 행).
+    eligibility: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 소스가 등록일/게시일을 주는 경우에만 채워진다. 고용24 6개 중 대부분은 안 준다.
     source_published_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     # 실제로 임베딩에 넣은 문자열을 그대로 보관한다 — 다음 수집 때 "이 항목을 다시

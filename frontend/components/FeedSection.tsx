@@ -13,7 +13,9 @@ import { queryKeys } from "@/lib/query-keys";
  * 잠시 기다렸다 다시 물어보는 것 말고는 방법이 없다. */
 const WARMING_POLL_MS = 4000;
 
-export type FeedScope = "policies" | "jobs" | "recommended";
+export type FeedScope = "policies" | "trainings" | "jobs" | "recommended" | "recommended_policies";
+
+const PERSONALIZED_SCOPES: ReadonlySet<FeedScope> = new Set(["recommended", "recommended_policies"]);
 
 /** `fallback_reason`별 안내. 셋을 하나로 뭉치면 안 되는 이유는 서버 스키마 주석에
  * 적힌 그대로다 — 문답을 처음 남긴 사용자는 `preparing`을 반드시 한 번 지나가므로
@@ -32,22 +34,47 @@ function fallbackNotice(feed: FeedRead): { text: string; tone: "info" | "warn" }
       };
     case "ai_unavailable":
       return { text: "AI 서버가 수리 중이라 맞춤 정렬을 못 하고 있어요. 아래 최신 공고는 그대로 보실 수 있어요.", tone: "warn" };
+    case "no_attributes":
+      return {
+        text: "대화에서 나이·사는 곳·학력 같은 정보를 알게 되면, 조건이 모두 맞는 정책부터 골라드려요. 맞춤 정보 화면에서 직접 적어두셔도 돼요.",
+        tone: "info",
+      };
     default:
       return null;
   }
 }
 
+/** 맞춤 정책 카드의 조건 일치 표시. "왜 이게 위에 있지?"에 답하는 자리다 —
+ * 교집합(all)과 합집합(some)을 구분해 보여주지 않으면 사용자는 순서의 의미를 모른다. */
+function MatchBadge({ item }: { item: FeedItemRead }) {
+  const matched = item.matched_labels ?? [];
+  if (item.match_tier === "all") {
+    return <span className="feed-match">조건 {matched.length}개 모두 일치</span>;
+  }
+  if (item.match_tier === "some") {
+    return <span className="feed-match feed-match-some">조건 {matched.length}개 일치</span>;
+  }
+  return null;
+}
+
 function FeedCard({ item }: { item: FeedItemRead }) {
   // detail_url이 없는 카테고리가 실제로 있다(고용24 일부). 그럴 땐 링크가 아니라
   // 평범한 카드로 그린다 — 눌리는 것처럼 보이는데 아무 일도 없으면 안 된다.
+  const matched = item.matched_labels ?? [];
+  const unmet = item.unmet_labels ?? [];
   const body = (
     <>
       <div className="feed-card-tags">
+        <MatchBadge item={item} />
         <span className="feed-tag">{item.category_label}</span>
         <span className="feed-tag feed-tag-muted">{item.source_label}</span>
       </div>
       <span className="feed-card-title">{item.title}</span>
       {item.subtitle && <span className="feed-card-subtitle">{item.subtitle}</span>}
+      {matched.length > 0 && <span className="feed-card-match">✓ {matched.join(" · ")}</span>}
+      {item.match_tier === "some" && unmet.length > 0 && (
+        <span className="feed-card-unmet">확인 필요: {unmet.slice(0, 2).join(" · ")}</span>
+      )}
       {item.meta_lines.length > 0 && (
         <span className="feed-card-meta">{item.meta_lines.join(" · ")}</span>
       )}
@@ -82,7 +109,7 @@ export function FeedSection({
   aside?: string;
   /** 섹션 헤더 오른쪽 액션(예: "맞춤 정보 수정"). aside 대신 쓰인다. */
   action?: ReactNode;
-  /** `recommended`는 로그인 필수. 나머지는 없어도 되고, 있으면 그대로 실어 보낸다. */
+  /** `recommended`·`recommended_policies`는 로그인 필수. 나머지는 없어도 되고, 있으면 그대로 실어 보낸다. */
   accessToken: string | null;
   limit?: number;
 }) {
@@ -91,7 +118,9 @@ export function FeedSection({
     queryFn: ({ pageParam }) => {
       const options = { limit, offset: pageParam };
       if (scope === "policies") return feedApi.policies(options, accessToken);
+      if (scope === "trainings") return feedApi.trainings(options, accessToken);
       if (scope === "jobs") return feedApi.jobs(options, accessToken);
+      if (scope === "recommended_policies") return feedApi.recommendedPolicies(options, accessToken!);
       return feedApi.recommendedJobs(options, accessToken!);
     },
     initialPageParam: 0,
@@ -101,7 +130,7 @@ export function FeedSection({
       // 임베딩이 있는 행만). 그래서 여기서 그냥 믿어도 된다.
       return seen < lastPage.total ? seen : undefined;
     },
-    enabled: scope !== "recommended" || !!accessToken,
+    enabled: !PERSONALIZED_SCOPES.has(scope) || !!accessToken,
     // 캐시가 데워지는 동안에만 폴링한다. 다 차면 refetchInterval이 false가 되어
     // 멈추므로, 메인 화면을 열어둔 채로 계속 요청이 나가지 않는다.
     refetchInterval: (query) => (query.state.data?.pages[0]?.is_warming ? WARMING_POLL_MS : false),
@@ -117,7 +146,8 @@ export function FeedSection({
   // 아래 "최신 공고"와 **글자 그대로 같은 목록**이라, 그리면 같은 카드가 화면에
   // 두 번 나온다. 이 자리에는 왜 아직 맞춤이 아닌지와 다음에 뭘 하면 되는지만
   // 남긴다.
-  const suppressed = scope === "recommended" && !!feed && !feed.personalized;
+  // 맞춤 정책도 같다 — 속성이 없으면 아래 "청년 지원 정책"과 같은 최신순 목록이다.
+  const suppressed = PERSONALIZED_SCOPES.has(scope) && !!feed && !feed.personalized;
 
   return (
     <section className="landing-section">

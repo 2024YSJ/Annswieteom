@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import date
+
 import httpx
 import pytest
 
 from app.core.config import settings
-from app.services.feed.sources import configured_sources
+from app.services.feed.sources import configured_sources, youthcenter_source
 from app.services.feed.sources.youthcenter_source import (
     YouthCenterApiError,
     YouthCenterFeedSource,
@@ -185,6 +187,8 @@ def test_unconfigured_source_is_silently_dropped_from_the_registry(monkeypatch):
 async def test_parses_the_real_response(monkeypatch):
     monkeypatch.setattr(settings, "youthcenter_api_key", "some-key")
     _mock_get(monkeypatch, _REAL_POLICY_JSON)
+    # 두 번째 정책의 신청기간이 20260701~20260713이다 — 그 안의 날로 고정해야 둘 다 살아 있다.
+    monkeypatch.setattr(youthcenter_source, "_today", lambda: date(2026, 7, 1))
 
     results = await YouthCenterFeedSource().fetch("youth_policy")
 
@@ -237,3 +241,68 @@ async def test_empty_list_is_not_an_error(monkeypatch):
     _mock_get(monkeypatch, {"resultCode": 200, "result": {"youthPolicyList": []}})
 
     assert await YouthCenterFeedSource().fetch("youth_policy") == []
+
+
+@pytest.mark.asyncio
+async def test_policies_past_their_application_deadline_are_dropped(monkeypatch):
+    monkeypatch.setattr(settings, "youthcenter_api_key", "some-key")
+    _mock_get(monkeypatch, _REAL_POLICY_JSON)
+    monkeypatch.setattr(youthcenter_source, "_today", lambda: date(2026, 9, 11))
+
+    results = await YouthCenterFeedSource().fetch("youth_policy")
+
+    # 첫 정책은 상시모집(aplyYmd 비어 있음)이라 남고, 둘째는 7/13에 마감됐다.
+    assert [r.source_key for r in results] == ["20260908005400213380"]
+
+
+@pytest.mark.asyncio
+async def test_eligibility_codes_are_kept_for_matching(monkeypatch):
+    """예전 파서는 60개 필드 중 자격조건을 전부 버렸다 — 티어 매칭의 입력이다."""
+    monkeypatch.setattr(settings, "youthcenter_api_key", "some-key")
+    _mock_get(monkeypatch, _REAL_POLICY_JSON)
+    monkeypatch.setattr(youthcenter_source, "_today", lambda: date(2026, 7, 1))
+
+    first, second = await YouthCenterFeedSource().fetch("youth_policy")
+
+    assert first.eligibility["age"] is None  # 0/0 = 제한없음
+    assert first.eligibility["job_status"] == ["0013001", "0013003", "0013006"]
+    assert first.eligibility["school"] == ["0049010"]
+    assert first.eligibility["special"] == ["0014001", "0014008"]
+    assert first.eligibility["marital"] == "0055003"
+    assert first.eligibility["nationwide"] is False
+    assert "41111" in first.eligibility["zip_codes"]
+    assert second.eligibility["age"] == {"min": 19, "max": 39}
+    assert second.eligibility["income"]["cond"] == "0043003"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_later_page_keeps_the_pages_already_fetched(monkeypatch):
+    """온통청년은 가끔 한 페이지만 400을 낸다(실측, 매번 다른 페이지)."""
+    monkeypatch.setattr(settings, "youthcenter_api_key", "some-key")
+    monkeypatch.setattr(youthcenter_source, "_PAGE_SIZE", 1)
+    monkeypatch.setattr(youthcenter_source, "_today", lambda: date(2026, 7, 1))
+    policy = _REAL_POLICY_JSON["result"]["youthPolicyList"][0]
+
+    async def fake_get(self, url, params=None, **kwargs):
+        request = httpx.Request("GET", url, params=params)
+        if params["pageNum"] == "1":
+            return httpx.Response(200, json={"resultCode": 200, "result": {"youthPolicyList": [policy]}}, request=request)
+        return httpx.Response(400, json={"errorCode": "e003", "errorMsg": "api data invalid."}, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+    results = await YouthCenterFeedSource().fetch("youth_policy")
+    assert [r.title for r in results] == [policy["plcyNm"]]
+
+
+@pytest.mark.asyncio
+async def test_http_errors_never_carry_the_api_key(monkeypatch):
+    """httpx 예외 메시지에는 요청 URL(= 인증키)이 들어 있다. ingest는 예외 문자열을
+    last_error에 저장하고 /feed/sources가 그걸 보여준다 — 키가 새면 안 된다."""
+    monkeypatch.setattr(settings, "youthcenter_api_key", "secret-key-value")
+    _mock_get(monkeypatch, {"errorCode": "e001", "errorMsg": "invalid api key."}, status_code=403)
+
+    with pytest.raises(YouthCenterApiError) as exc_info:
+        await YouthCenterFeedSource().fetch("youth_policy")
+    assert "secret-key-value" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None

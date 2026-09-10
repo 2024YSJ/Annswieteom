@@ -10,6 +10,7 @@ from jinja2 import Environment, FileSystemLoader
 from app.core.config import settings
 from app.models.activity_category import CATEGORY_TYPES
 from app.services.llm.base import (
+    AttributeCandidate,
     BasedOn,
     CategorySuggestion,
     clamp_activity_period,
@@ -31,6 +32,7 @@ from app.services.llm.base import (
     TEMPERATURE_CREATIVE,
     TEMPERATURE_DETERMINISTIC,
 )
+from app.services.profile import vocabulary
 
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 _jinja_env = Environment(loader=FileSystemLoader(str(_PROMPTS_DIR)), autoescape=False)
@@ -148,6 +150,7 @@ class LocalOllamaProvider:
             confirmed_facts_so_far=context.confirmed_facts_so_far,
             record_excerpts=context.record_excerpts,
             asked_questions=context.asked_questions,
+            profile_summary=context.profile_summary,
         )
         response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
@@ -177,6 +180,7 @@ class LocalOllamaProvider:
             gap_end=context.gap_end,
             confirmed_facts_so_far=context.confirmed_facts_so_far,
             asked_questions=context.asked_questions,
+            profile_summary=context.profile_summary,
         )
         response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
@@ -254,7 +258,10 @@ class LocalOllamaProvider:
             gap_start=gap_start,
             gap_end=gap_end,
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT)
+        # temperature는 _generate의 필수 키워드 인자다. 빠져 있던 동안 이 호출은
+        # 매번 TypeError를 냈고, 호출부(_maybe_infer_category_period)가 예외를
+        # 전부 삼켜서 활동기간 AI 추론이 조용히 죽어 있었다.
+        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             if data["start_date"] is None or data["end_date"] is None:
@@ -275,15 +282,28 @@ class LocalOllamaProvider:
         response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(response_text)
+            # 프롬프트(final_document.jinja)는 사실을 [1]부터 번호 매겨 보여주므로
+            # 모델은 1-based 번호로 답한다. LLMProvider 계약(document_generator가
+            # facts[i]로 읽는 것)은 0-based라 여기서 한 번만 변환한다. 변환이 없던
+            # 동안은 인용이 한 칸씩 밀려 문장이 **다른 사실**을 근거로 저장됐다 —
+            # 정직성 가드레일 위반. 번호 0(범위 밖)은 -1이 되어 호출부에서 버려진다.
             paragraphs = [
                 ParagraphDraft(
                     topic=p["topic"],
-                    sentences=[SentenceWithEvidence(text=s["text"], fact_indices=s["fact_indices"]) for s in p["sentences"]],
+                    sentences=[
+                        SentenceWithEvidence(
+                            text=s["text"],
+                            fact_indices=[
+                                i - 1 for i in s["fact_indices"] if isinstance(i, int) and not isinstance(i, bool)
+                            ],
+                        )
+                        for s in p["sentences"]
+                    ],
                 )
                 for p in data["paragraphs"]
             ]
             return DraftDocument(paragraphs=paragraphs)
-        except (json.JSONDecodeError, KeyError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]:
@@ -336,6 +356,37 @@ class LocalOllamaProvider:
             data = json.loads(response_text)
             return str(data.get("draft_query") or "")
         except json.JSONDecodeError as exc:
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def extract_profile_attributes(
+        self, text: str, known: list[str], allow_sensitive: bool
+    ) -> list[AttributeCandidate]:
+        # allow_sensitive는 프롬프트를 바꾸지 않는다(base.py Protocol 주석 참고).
+        prompt = _render(
+            "extract_profile_attributes.jinja",
+            text=text,
+            known=known,
+            regions=", ".join(vocabulary.REGION_CHOICES),
+            education=", ".join(vocabulary.EDUCATION_CHOICES),
+            majors=", ".join(vocabulary.MAJOR_CHOICES),
+            employment=", ".join(vocabulary.EMPLOYMENT_CHOICES),
+            employment_types=", ".join(vocabulary.EMPLOYMENT_TYPE_CHOICES),
+            special=", ".join(vocabulary.SPECIAL_CHOICES),
+            marital=", ".join(vocabulary.MARITAL_CHOICES),
+        )
+        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        try:
+            data = json.loads(response_text)
+            return [
+                AttributeCandidate(
+                    key=str(a["key"]),
+                    value_label=str(a["value"]).strip(),
+                    evidence=str(a.get("evidence") or "").strip(),
+                )
+                for a in data["attributes"]
+                if isinstance(a, dict) and a.get("key") and a.get("value") not in (None, "")
+            ]
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def health_check(self) -> bool:

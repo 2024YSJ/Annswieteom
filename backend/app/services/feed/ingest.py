@@ -173,6 +173,9 @@ async def _upsert(db: AsyncSession, source_key: str, items: list[FeedItemData]) 
             row.embed_text = embed_text
             row.detail_url = item.detail_url
             row.source_published_at = item.source_published_at
+            # 이 갱신 분기를 빠뜨리면 컬럼 도입 전에 수집된 정책은 영원히 조건
+            # 없음(None)으로 남아 전부 티어 C로 떨어진다.
+            row.eligibility = item.eligibility
             continue
         db.add(
             FeedItem(
@@ -185,6 +188,7 @@ async def _upsert(db: AsyncSession, source_key: str, items: list[FeedItemData]) 
                 meta_lines=list(item.meta_lines),
                 detail_url=item.detail_url,
                 source_published_at=item.source_published_at,
+                eligibility=item.eligibility,
                 embed_text=embed_text,
                 first_seen_at=now,
                 last_seen_at=now,
