@@ -14,7 +14,6 @@ import { CategorySection } from "@/components/CategorySection";
 import { RecordsSection } from "@/components/RecordsSection";
 import { InterviewSection } from "@/components/InterviewSection";
 import { ResultSection } from "@/components/ResultSection";
-import { CoverageSection } from "@/components/CoverageSection";
 import { JobSearchChatPage } from "@/components/JobSearchChatPage";
 import { ChatComposer, type ActiveStep, type ComposerEvent } from "@/components/ChatComposer";
 import { LoadingNotice } from "@/components/LoadingNotice";
@@ -155,13 +154,10 @@ export default function SessionChatPage() {
             />
           )}
 
-          {/* 인터뷰가 시작된 뒤부터 보여준다 — 활동 기간은 frequency 답변이
-           * 확정되는 시점부터 채워지므로 그 전에는 계산할 것이 없다. 결과
-           * 화면에서도 계속 보여서, 문서를 만들기 전에 "아직 비어 있는 시기"를
-           * 마지막으로 확인할 수 있게 한다. */}
-          {(interviewActive || resultActive) && (
-            <CoverageSection sessionId={sessionId} accessToken={accessToken!} />
-          )}
+          {/* "공백기 채움 현황" 카드는 2026-09-11에 뺐다(devlog 34). 인터뷰 진행도가
+           * 아니라 활동 기간(날짜)이 공백기를 덮은 비율이라, "1년 동안 알바"처럼
+           * 긴 활동 하나만으로 인터뷰 첫 턴에 100%가 됐다. 백엔드
+           * (/coverage, 기간 추론)는 후속 질문 예산에 쓰이므로 남아 있다. */}
 
           {resultActive && <ResultSection sessionId={sessionId} accessToken={accessToken!} status={ctx.status} />}
 
