@@ -448,7 +448,10 @@ export function ResultSection({
   if (status === "RESULT_GENERATE" && !document) {
     return (
       <ChatBubble side="left" variant="card">
-        <LoadingNotice label="초안을 생성하는 중이에요..." />
+        <LoadingNotice
+          label="초안을 생성하는 중이에요..."
+          notice="공백기 활동마다 문장을 만들고 근거를 하나씩 붙이는 중이에요. 활동이 여러 개면 몇 분 걸릴 수 있으니, 창을 닫지 말고 기다려주세요 🙏"
+        />
       </ChatBubble>
     );
   }
