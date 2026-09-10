@@ -1,6 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+
+import { useInfiniteQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { feedApi, type FeedItemRead, type FeedRead } from "@/lib/api-client";
 import { errorMessage } from "@/lib/error-messages";
@@ -36,7 +38,7 @@ function fallbackNotice(feed: FeedRead): { text: string; tone: "info" | "warn" }
 }
 
 function FeedCard({ item }: { item: FeedItemRead }) {
-  // detail_url이 없는 카테고리가 실제로 있다(워크넷 일부). 그럴 땐 링크가 아니라
+  // detail_url이 없는 카테고리가 실제로 있다(고용24 일부). 그럴 땐 링크가 아니라
   // 평범한 카드로 그린다 — 눌리는 것처럼 보이는데 아무 일도 없으면 안 된다.
   const body = (
     <>
@@ -71,36 +73,51 @@ export function FeedSection({
   icon,
   aside,
   accessToken,
+  action,
   limit = 6,
 }: {
   scope: FeedScope;
   title: string;
   icon: string;
   aside?: string;
+  /** 섹션 헤더 오른쪽 액션(예: "맞춤 정보 수정"). aside 대신 쓰인다. */
+  action?: ReactNode;
   /** `recommended`는 로그인 필수. 나머지는 없어도 되고, 있으면 그대로 실어 보낸다. */
   accessToken: string | null;
   limit?: number;
 }) {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: queryKeys.feed(scope),
-    queryFn: () => {
-      if (scope === "policies") return feedApi.policies({ limit }, accessToken);
-      if (scope === "jobs") return feedApi.jobs({ limit }, accessToken);
-      return feedApi.recommendedJobs({ limit }, accessToken!);
+    queryFn: ({ pageParam }) => {
+      const options = { limit, offset: pageParam };
+      if (scope === "policies") return feedApi.policies(options, accessToken);
+      if (scope === "jobs") return feedApi.jobs(options, accessToken);
+      return feedApi.recommendedJobs(options, accessToken!);
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => {
+      const seen = lastPage.offset + lastPage.items.length;
+      // `total`은 서버가 이 정렬로 실제 도달 가능한 행 수를 준다(개인화면
+      // 임베딩이 있는 행만). 그래서 여기서 그냥 믿어도 된다.
+      return seen < lastPage.total ? seen : undefined;
     },
     enabled: scope !== "recommended" || !!accessToken,
     // 캐시가 데워지는 동안에만 폴링한다. 다 차면 refetchInterval이 false가 되어
     // 멈추므로, 메인 화면을 열어둔 채로 계속 요청이 나가지 않는다.
-    refetchInterval: (query) => (query.state.data?.is_warming ? WARMING_POLL_MS : false),
+    refetchInterval: (query) => (query.state.data?.pages[0]?.is_warming ? WARMING_POLL_MS : false),
     retry: false,
   });
 
-  const notice = data ? fallbackNotice(data) : null;
+  // 상태(is_warming/personalized/fallback_reason)는 첫 페이지 기준으로 읽는다 —
+  // 뒤 페이지는 같은 목록의 이어지는 조각일 뿐이다.
+  const feed = data?.pages[0];
+  const items = data?.pages.flatMap((page) => page.items) ?? [];
+  const notice = feed ? fallbackNotice(feed) : null;
   // 맞춤 공고가 개인화되지 않았을 때는 목록을 아예 안 그린다. 그 응답은 바로
   // 아래 "최신 공고"와 **글자 그대로 같은 목록**이라, 그리면 같은 카드가 화면에
   // 두 번 나온다. 이 자리에는 왜 아직 맞춤이 아닌지와 다음에 뭘 하면 되는지만
   // 남긴다.
-  const suppressed = scope === "recommended" && !!data && !data.personalized;
+  const suppressed = scope === "recommended" && !!feed && !feed.personalized;
 
   return (
     <section className="landing-section">
@@ -108,9 +125,9 @@ export function FeedSection({
         <div className="section-head">
           <h2>
             <span aria-hidden>{icon}</span> {title}
-            {data?.personalized && <span className="feed-badge">맞춤</span>}
+            {feed?.personalized && <span className="feed-badge">맞춤</span>}
           </h2>
-          {aside && <span className="section-aside">{aside}</span>}
+          {action ?? (aside && <span className="section-aside">{aside}</span>)}
         </div>
 
         {notice && !suppressed && (
@@ -123,13 +140,22 @@ export function FeedSection({
           <p className="feed-empty">불러오는 중...</p>
         ) : suppressed && notice ? (
           <p className={notice.tone === "warn" ? "msg-error" : "feed-callout"}>{notice.text}</p>
-        ) : data && data.items.length > 0 ? (
-          <div className="feed-grid">
-            {data.items.map((item) => (
-              <FeedCard key={item.id} item={item} />
-            ))}
-          </div>
-        ) : data?.is_warming ? (
+        ) : items.length > 0 ? (
+          <>
+            <div className="feed-grid">
+              {items.map((item) => (
+                <FeedCard key={item.id} item={item} />
+              ))}
+            </div>
+            {hasNextPage && (
+              <div className="feed-more">
+                <button type="button" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+                  {isFetchingNextPage ? "불러오는 중..." : "더보기"}
+                </button>
+              </div>
+            )}
+          </>
+        ) : feed?.is_warming ? (
           <p className="feed-empty">최신 정보를 모으고 있어요. 잠시만 기다려주세요...</p>
         ) : (
           <p className="feed-empty">

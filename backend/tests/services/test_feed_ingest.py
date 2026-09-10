@@ -187,7 +187,7 @@ async def test_concurrent_refresh_is_skipped_by_the_lock(db_factory):
 async def test_stale_source_keys_reports_never_refreshed_keys(db_factory):
     async with db_factory() as db:
         keys = await ingest.stale_source_keys(db)
-    # 실제 설정된 워크넷 6개 카테고리가 전부 "한 번도 성공한 적 없음"으로 잡힌다.
+    # 실제 설정된 고용24 6개 카테고리가 전부 "한 번도 성공한 적 없음"으로 잡힌다.
     assert "worknet:job_fair" in keys
 
 

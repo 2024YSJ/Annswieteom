@@ -33,7 +33,7 @@ def test_lists_every_source_category(feed_client):
     rows = feed_client.get("/api/v1/feed/sources", headers=headers).json()
 
     keys = {r["source_key"] for r in rows}
-    # 워크넷 6개 + 온통청년 1개. 설정 여부와 무관하게 전부 보여야 한다.
+    # 고용24 6개 + 온통청년 1개. 설정 여부와 무관하게 전부 보여야 한다.
     assert "worknet:job_fair" in keys
     assert "worknet:training_course" in keys
     assert "youthcenter:youth_policy" in keys

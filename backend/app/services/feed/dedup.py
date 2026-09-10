@@ -22,7 +22,7 @@ def compute_dedup_key(
     택했다. 새로 들어온 행이 옛 행을 밀어내지 않도록 옛 행은 삭제가 아니라
     is_active=False로 내려간다(models/feed_item.py).
 
-    워크넷 응답에는 채용행사의 `eventNo`, 공채속보의 `empSeqno`처럼 쓸 만한
+    고용24 응답에는 채용행사의 `eventNo`, 공채속보의 `empSeqno`처럼 쓸 만한
     id가 실제로 들어 있지만, 지금 `JobInfoResult`가 그 필드를 안 들고 있다.
     파서에 `source_key`를 추가하는 건 job_info_client.py를 동시에 고치고 있는
     다른 작업과 겹쳐서 그쪽이 병합된 뒤로 미뤘다 — 그때 이 함수는 그대로 두고

@@ -13,6 +13,7 @@ from app.models.record_chunk import RecordChunk
 from app.models.refresh_token import RefreshToken
 from app.models.session import Session
 from app.models.user import User
+from app.models.user_preference import UserPreference
 from app.models.user_profile_embedding import UserProfileEmbedding
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "FeedItemEmbedding",
     "FeedRefreshState",
     "UserProfileEmbedding",
+    "UserPreference",
 ]

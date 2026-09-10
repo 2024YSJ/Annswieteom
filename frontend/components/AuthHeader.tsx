@@ -33,11 +33,14 @@ export function AuthHeader() {
           {isLoading ? null : user ? (
             <>
               <span className="topbar-user">{user.nickname}님</span>
-              {/* 게스트에게는 숨긴다 — 문답 아카이브는 이메일 계정 전용이라
-               * 눌러봐야 "회원가입하세요" 안내밖에 나오지 않는다. */}
+              {/* 게스트에게는 숨긴다 — 이메일 계정 전용이라 눌러봐야
+               * "회원가입하세요" 안내밖에 나오지 않는다.
+               * 이름이 "내 문답 기록"이었을 때는 맞춤 정보를 고치러 가는
+               * 곳으로 읽히지 않았다(2026-09-10 피드백). 이 페이지가 이제
+               * 희망사항 편집까지 겸하므로 이름을 바꿨다. */}
               {!user.is_guest && (
                 <Link href="/archive" className="btn-ghost topbar-btn">
-                  내 문답 기록
+                  맞춤 정보
                 </Link>
               )}
               {user.is_guest && (

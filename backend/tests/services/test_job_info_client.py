@@ -31,8 +31,10 @@ _PUBLIC_RECRUITMENT_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 _PUBLIC_RECRUITMENT_COMPANY_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <dhsOpenEmpHireInfoList><total>1</total><dhsOpenEmpHireInfo>
-  <coClcdNm>중견기업</coClcdNm><coNm>한독헬스케어</coNm>
+  <coClcdNm>중견기업</coClcdNm><coNm>한독헬스케어</coNm><empCoNo>E000026363</empCoNo>
+  <busino>4778803393</busino>
   <coIntroSummaryCont>안전성과 효능이 검증된 헬스케어 솔루션을 제공하는 전문 기업</coIntroSummaryCont>
+  <homepg>https://handok.recruiter.co.kr/career/company</homepg>
 </dhsOpenEmpHireInfo></dhsOpenEmpHireInfoList>
 """
 
@@ -47,7 +49,7 @@ _JOB_SEEKER_PROGRAM_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 _PROMISING_SME_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <smallGiantsList><total>1</total><smallGiant>
-  <coNm>주식회사 케이피에프</coNm><indTpNm>금속가공제품 제조업</indTpNm>
+  <coNm>주식회사 케이피에프</coNm><indTpNm>금속가공제품 제조업</indTpNm><busiNo>3038515748</busiNo>
   <regionNm>충북 충주시</regionNm><coMainProd>볼트,너트,차량용단조품</coMainProd>
 </smallGiant></smallGiantsList>
 """
@@ -76,6 +78,28 @@ async def test_search_job_fairs_parses_real_shaped_response(monkeypatch):
     assert results[0].title == "2026년 충청권 취업박람회"
     assert results[0].subtitle == "대전/충청 지역"
     assert results[0].meta_lines == ["기간: 2026-10-16 ~ 2026-10-16"]
+    # 상세 페이지 파라미터 이름이 API 필드명과 다르다(eventNo -> newsDataSeqno,
+    # areaCd -> eventMegaRegionCd). 이 조합을 2026-09-10에 실제 행사로 확인했다.
+    assert results[0].detail_url == (
+        "https://www.work24.go.kr/wk/a/f/1100/retrieveEmpEventDtl.do"
+        "?newsDataSeqno=49160&eventMegaRegionCd=56"
+    )
+    assert results[0].source_key == "49160"
+
+
+@pytest.mark.asyncio
+async def test_job_fair_without_a_region_code_gets_no_link(monkeypatch):
+    """지역 코드가 없으면 상세 페이지가 안 열린다 — 그럴 땐 링크를 안 만든다.
+
+    안 열리는 링크는 링크가 없는 것보다 나쁘다(카드가 눌리는 것처럼 보인다).
+    """
+    _mock_get(
+        monkeypatch,
+        _JOB_FAIR_XML.replace("<areaCd>56</areaCd>", "<areaCd></areaCd>"),
+    )
+    results = await jic.search_job_fairs()
+    assert results[0].detail_url is None
+    assert results[0].source_key == "49160"
 
 
 @pytest.mark.asyncio
@@ -86,6 +110,7 @@ async def test_search_public_recruitment_parses_real_shaped_response(monkeypatch
     assert results[0].subtitle == "농업협동조합중앙회"
     assert results[0].detail_url == "https://nhcenter.incruit.com/hire/1"
     assert "규모: 대기업" in results[0].meta_lines
+    assert results[0].source_key == "177320"
 
 
 @pytest.mark.asyncio
@@ -94,6 +119,10 @@ async def test_search_public_recruitment_companies_parses_real_shaped_response(m
     results = await jic.search_public_recruitment_companies()
     assert results[0].title == "한독헬스케어"
     assert "헬스케어" in results[0].meta_lines[-1]
+    # 고용24에는 이 카테고리의 공개 상세 페이지가 없어서, 응답이 주는 기업
+    # 채용 홈페이지를 상세 링크로 쓴다.
+    assert results[0].detail_url == "https://handok.recruiter.co.kr/career/company"
+    assert results[0].source_key == "E000026363"
 
 
 @pytest.mark.asyncio
@@ -110,6 +139,10 @@ async def test_search_promising_smes_parses_real_shaped_response(monkeypatch):
     results = await jic.search_promising_smes()
     assert results[0].title == "주식회사 케이피에프"
     assert "업종: 금속가공제품 제조업" in results[0].meta_lines
+    # 응답에 링크 필드가 없고 고용24에도 기업별 공개 상세가 없다 — 추측한
+    # 주소로 보내느니 안 눌리는 카드로 둔다. 사업자번호는 중복 제거용으로만 쓴다.
+    assert results[0].detail_url is None
+    assert results[0].source_key == "3038515748"
 
 
 @pytest.mark.asyncio
@@ -247,7 +280,7 @@ async def test_duplicate_courses_across_combos_are_merged(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_zero_filtered_results_falls_back_to_an_unfiltered_fetch(monkeypatch):
-    # 워크넷은 유효하지 않은 코드에도 에러가 아니라 빈 목록을 준다(실측: 광주
+    # 고용24은 유효하지 않은 코드에도 에러가 아니라 빈 목록을 준다(실측: 광주
     # 29는 두 엔드포인트 모두 0건) — "코드가 틀렸다"와 "그 지역에 과정이 없다"를
     # 구분할 수 없으니, 조용히 빈 화면을 주는 대신 넓혀서 다시 받아온다.
     attempts: list[tuple] = []

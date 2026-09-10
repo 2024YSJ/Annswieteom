@@ -9,8 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.interview_answer import InterviewAnswer
+from app.models.user_preference import UserPreference
 from app.models.user import User
-from app.schemas.profile import ArchivedAnswerRead, ArchiveSummaryRead
+from app.schemas.profile import (
+    ArchivedAnswerRead,
+    ArchiveSummaryRead,
+    PreferenceRead,
+    PreferenceUpdate,
+)
 
 router = APIRouter(prefix="/me", tags=["profile"])
 
@@ -108,3 +114,44 @@ async def delete_archived_answer(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="answer_not_found")
     await db.delete(answer)
     await db.commit()
+
+
+@router.get("/preferences", response_model=PreferenceRead)
+async def get_preferences(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PreferenceRead:
+    """직접 쓴 맞춤 정보. 아직 없으면 빈 문자열을 돌려준다(404가 아니다) —
+    화면은 "아직 안 썼음"과 "불러오기 실패"를 구분해야 하고, 전자는 정상이다."""
+    _require_registered(current_user)
+    row = await db.get(UserPreference, current_user.id)
+    if row is None:
+        return PreferenceRead(wish_text="", updated_at=None)
+    return PreferenceRead(wish_text=row.wish_text or "", updated_at=row.updated_at)
+
+
+@router.put("/preferences", response_model=PreferenceRead)
+async def put_preferences(
+    payload: PreferenceUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PreferenceRead:
+    """맞춤 정보 저장(upsert). 빈 문자열이면 지운 것으로 본다.
+
+    저장만 하고 임베딩은 여기서 다시 계산하지 않는다 — 로컬 Ollama 호출이
+    수 초씩 걸려서 "저장" 버튼이 그만큼 멈춰 보인다. 다음 맞춤 공고 조회가
+    지문 변화를 감지해 백그라운드로 갱신한다(profile_needs_refresh). 항목
+    수집과 같은 stale-while-revalidate 방식이다.
+    """
+    _require_registered(current_user)
+
+    wish = payload.wish_text.strip()
+    row = await db.get(UserPreference, current_user.id)
+    if row is None:
+        row = UserPreference(user_id=current_user.id, wish_text=wish)
+        db.add(row)
+    else:
+        row.wish_text = wish
+    await db.commit()
+    await db.refresh(row)
+    return PreferenceRead(wish_text=row.wish_text or "", updated_at=row.updated_at)

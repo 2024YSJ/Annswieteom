@@ -25,6 +25,12 @@ export interface ArchiveSummary {
   category_types: string[];
 }
 
+export interface Preference {
+  /** 사용자가 직접 쓴 맞춤 정보. 아직 안 썼으면 빈 문자열(404가 아니다). */
+  wish_text: string;
+  updated_at: string | null;
+}
+
 export const profileApi = {
   /** 계정에 쌓인 문답 기록, 최신순. 이메일로 등록된 계정만 접근 가능(게스트는 403). */
   listAnswers: (
@@ -44,6 +50,17 @@ export const profileApi = {
   summary: (accessToken: string) =>
     request<ArchiveSummary>("/api/v1/me/answers/summary", {
       headers: authHeaders(accessToken),
+    }),
+
+  /** 직접 쓴 맞춤 정보. 문답이 없어도 이것만으로 맞춤 공고가 켜진다. */
+  preferences: (accessToken: string) =>
+    request<Preference>("/api/v1/me/preferences", { headers: authHeaders(accessToken) }),
+
+  savePreferences: (wishText: string, accessToken: string) =>
+    request<Preference>("/api/v1/me/preferences", {
+      method: "PUT",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ wish_text: wishText }),
     }),
 
   deleteAnswer: (answerId: string, accessToken: string) =>
