@@ -35,8 +35,8 @@ export function ChatComposer({
   disabled?: boolean;
   /** AI가 이번 질문에 대해 미리 써본 답변 — 입력창에 편집 가능한 값으로 채워둔다.
    * 사용자가 그대로 보내든, 이어 쓰든, 고치든, 지우고 새로 쓰든 최종 선택은
-   * 사용자 몫이다 (interview/answer -> interview/confirm의 확인 절차는 그대로
-   * 거치므로 이 prefill이 정직성 가드레일을 건너뛰지 않는다). */
+   * 사용자 몫이다 (답변은 초안으로만 쌓이고 카테고리 끝 확인(interview/review)을
+   * 그대로 거치므로 이 prefill이 정직성 가드레일을 건너뛰지 않는다). */
   prefillText?: string | null;
 }) {
   const [text, setText] = useState("");

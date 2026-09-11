@@ -105,8 +105,10 @@ All routes under `/api/v1`:
   `/api/v1`), which is Render's liveness probe and must stay dependency-free.
 - `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me`
 - `POST /sessions`, `POST /sessions/{id}/period`, `POST /sessions/{id}/categories`
-- `GET /sessions/{id}/interview/next` → returns AI draft + context
-- `POST /sessions/{id}/interview/confirm` → saves to `confirmed_facts`
+- `POST /sessions/{id}/interview/ask` → current question (or the pending category review)
+- `POST /sessions/{id}/interview/answer` → stores the answer's extracted facts as category **drafts** (`activity_categories.draft_turns`), returns the next question or the category review
+- `POST /sessions/{id}/interview/review` → the only path that saves interview facts to `confirmed_facts` (once per category, after the user edits/excludes/adds)
+- `POST /sessions/{id}/interview/confirm` → only the "여러 활동 있나요?" split check (routing, not facts)
 - `POST /sessions/{id}/records` → async blog/image parsing (poll for status)
 - `POST /sessions/{id}/generate` → triggers STAR document generation
 - `GET /sessions/{id}/document`, `PATCH /sessions/{id}/document/sentences/{id}`

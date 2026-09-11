@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -73,6 +73,14 @@ class ActivityCategory(Base):
     period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
     period_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # 이 카테고리에서 답했지만 아직 확인받지 않은 턴들(카테고리 단위 확인, 2026-09-11).
+    # 답변 하나 = 턴 하나: {turn_id, answer_log_id, question_text, question_source,
+    # fact_type_hint, answer_text, drafts: [{content, based_on}]}. 카테고리 끝 확인
+    # (POST /interview/review)에서 confirmed_facts로 옮겨지고 NULL로 비워진다.
+    # **정직성 가드레일:** 이 값은 진행 판단과 LLM 컨텍스트에만 쓰이고 문서에는
+    # 절대 인용되지 않는다 — 인용은 confirmed_facts뿐이다.
+    # JSON 컬럼은 제자리 변경을 추적하지 않으므로 항상 새 리스트로 재할당한다.
+    draft_turns: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped["Session"] = relationship("Session", back_populates="categories", foreign_keys=[session_id])

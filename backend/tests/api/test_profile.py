@@ -40,22 +40,38 @@ def _session_at_interviewing(client, headers):
     return session_id
 
 
-def _answer_one_turn(client, headers, session_id, text, confirm=True):
+def _answer_one_turn(client, headers, session_id, text, confirm=False):
+    """ask -> answer 한 턴. 카테고리 단위 확인(2026-09-11) 이후 답변마다 확인하는
+    단계는 없다 — 사실 확정까지 필요한 테스트는 confirm=True로 카테고리를 끝까지
+    답하고 확인까지 제출한다(_finish_category)."""
     client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
     resp = client.post(
         f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": text}
     )
     assert resp.status_code == 200
-    if not confirm:
-        return
-    client.post(
-        f"/api/v1/sessions/{session_id}/interview/confirm",
-        headers=headers,
-        json={"confirmations": [
-            {"index": c["index"], "final_text": c["content"], "was_edited": False}
-            for c in resp.json()["candidates"]
-        ]},
+    if confirm:
+        _finish_category(client, headers, session_id, answer_body=resp.json())
+
+
+def _finish_category(client, headers, session_id, answer_body):
+    """남은 질문에 채움 답을 하고 카테고리 끝 확인을 모두 맞다고 제출한다."""
+    for _ in range(20):
+        if answer_body["mode"] == "review":
+            break
+        client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+        answer_body = client.post(
+            f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "채움 답변"}
+        ).json()
+    review = answer_body["review"]
+    confirmations = [
+        {"turn_id": g["turn_id"], "index": d["index"], "final_text": d["content"], "was_edited": False}
+        for g in review["groups"]
+        for d in g["drafts"]
+    ]
+    resp = client.post(
+        f"/api/v1/sessions/{session_id}/interview/review", headers=headers, json={"confirmations": confirmations}
     )
+    assert resp.status_code == 200
 
 
 def test_answers_are_archived_with_the_users_own_wording(session_client):
@@ -63,18 +79,19 @@ def test_answers_are_archived_with_the_users_own_wording(session_client):
     2026-09-09 전까지 이 원문은 어디에도 저장되지 않고 사라졌다."""
     headers = _register_and_login(session_client)
     session_id = _session_at_interviewing(session_client, headers)
-    _answer_one_turn(session_client, headers, session_id, "주 3회 저녁 6시부터 10시까지 일했어요")
+    _answer_one_turn(session_client, headers, session_id, "주 3회 저녁 6시부터 10시까지 일했어요", confirm=True)
 
     resp = session_client.get("/api/v1/me/answers", headers=headers)
     assert resp.status_code == 200
     answers = resp.json()
-    assert len(answers) == 1
-    assert answers[0]["answer_text"] == "주 3회 저녁 6시부터 10시까지 일했어요"
-    assert answers[0]["category_label"] == "편의점 알바"
-    assert answers[0]["category_type"] == "part_time"
-    assert answers[0]["question_source"] == "base"
-    assert answers[0]["session_id"] == session_id
-    assert [f["content"] for f in answers[0]["confirmed_facts"]] == ["주 3회 저녁 6시부터 10시까지 일했어요"]
+    # 카테고리를 끝까지 답했으므로 채움 답변들도 함께 쌓인다 — 원문으로 찾는다.
+    answer = next(a for a in answers if a["answer_text"] == "주 3회 저녁 6시부터 10시까지 일했어요")
+    assert answer["category_label"] == "편의점 알바"
+    assert answer["category_type"] == "part_time"
+    assert answer["question_source"] == "base"
+    assert answer["session_id"] == session_id
+    # 카테고리 끝 확인에서 확정된 사실이 그 답변 행에 스냅샷으로 남는다.
+    assert [f["content"] for f in answer["confirmed_facts"]] == ["주 3회 저녁 6시부터 10시까지 일했어요"]
 
 
 def test_answer_without_confirm_is_archived_with_no_facts(session_client):
@@ -137,10 +154,16 @@ def test_summary_counts_answers_and_facts(session_client):
     _answer_one_turn(session_client, headers, session_id, "첫 번째 답변")
     _answer_one_turn(session_client, headers, session_id, "두 번째 답변")
 
+    # 확인 전: 답은 쌓였지만 확정된 사실은 없다.
     body = session_client.get("/api/v1/me/answers/summary", headers=headers).json()
     assert body["total_answers"] == 2
-    assert body["total_confirmed_facts"] == 2
+    assert body["total_confirmed_facts"] == 0
     assert body["category_types"] == ["part_time"]
+
+    # 카테고리 끝 확인 뒤: 모든 답의 사실이 스냅샷으로 들어온다.
+    _answer_one_turn(session_client, headers, session_id, "세 번째 답변", confirm=True)
+    body = session_client.get("/api/v1/me/answers/summary", headers=headers).json()
+    assert body["total_confirmed_facts"] == body["total_answers"]
 
 
 def test_archived_answer_can_be_deleted(session_client):
