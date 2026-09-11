@@ -11,6 +11,10 @@ from app.services.embedding.base import (
 
 _MODEL = "bge-m3"
 
+# 생성 쪽(local_ollama._KEEP_ALIVE)과 같은 이유. 없으면 Ollama 기본값(5분)이 걸려,
+# 잠깐 쉬었다 오면 기록물 검색·일관성 검사가 매번 bge-m3 재적재부터 기다린다.
+_KEEP_ALIVE = -1
+
 
 class LocalOllamaEmbedding:
     """Ollama bge-m3 embedding via /api/embed (batch-capable, Ollama 0.3+)."""
@@ -25,7 +29,7 @@ class LocalOllamaEmbedding:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
                     f"{base_url}/api/embed",
-                    json={"model": _MODEL, "input": texts},
+                    json={"model": _MODEL, "input": texts, "keep_alive": _KEEP_ALIVE},
                     headers=settings.ollama_headers(),
                 )
                 resp.raise_for_status()

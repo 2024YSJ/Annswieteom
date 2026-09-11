@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     # LOCAL_LLM_MODEL_NAME is ever unset, instead of falling back cleanly.
     # Matches .env.example's documented default.
     local_llm_model_name: str = "qwen2.5:14b"
+    # Qwen3 이후 계열처럼 기본이 thinking인 모델은 답 앞에 숨은 추론 토큰을 먼저
+    # 쏟아낸다 — decode가 병목인 Spark에서는 그만큼이 그대로 지연이다. 켜면 요청에
+    # "think": false를 싣는다. 기본값이 꺼짐인 이유는 qwen2.5에는 필요 없고, 이 필드를
+    # 모르는 옛 Ollama가 어떻게 반응할지 운영 서버에서 확인하지 않았기 때문이다
+    # (로컬 0.33.3은 비-thinking 모델에 보내도 200으로 무시한다).
+    local_llm_disable_thinking: bool = False
     # 2026-09-09 Gemini 폴백을 제거했다. 추론/임베딩 경로가 로컬 Ollama 하나뿐이라
     # 이 서버가 닿지 않으면 AI 기능은 503(llm_unavailable)으로 끝난다 — 대체 경로는
     # 없고, 화면에는 "AI 서버가 수리 중이예요."가 뜬다.

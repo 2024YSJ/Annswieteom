@@ -10,7 +10,7 @@ from app.models.confirmed_fact import ConfirmedFact
 from app.models.generated_document import GeneratedDocument
 from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
-from app.services.consistency_check import evaluate_sentence_consistency
+from app.services.consistency_check import evaluate_sentence_consistency, evaluate_sentences_consistency
 from app.services.embedding.base import EmbeddingProvider
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact, LLMProvider
 
@@ -64,6 +64,15 @@ async def generate_full_document(
         ]
         draft = await llm.generate_document(llm_facts, tone, category.label)
 
+        # 카테고리의 모든 문장을 임베딩 한 번으로 검사한다 — 문장마다 부르면
+        # 문장 수만큼 터널을 왕복한다(evaluate_sentences_consistency 참고).
+        sentences = [s for p in draft.paragraphs for s in p.sentences]
+        cited = [[facts[i] for i in s.fact_indices if 0 <= i < len(facts)] for s in sentences]
+        results = await evaluate_sentences_consistency(
+            [(s.text, c) for s, c in zip(sentences, cited)], embedding_provider
+        )
+        checked = iter(zip(cited, results))
+
         for paragraph_draft in draft.paragraphs:
             paragraph = GeneratedParagraph(
                 document_id=document.id,
@@ -75,8 +84,7 @@ async def generate_full_document(
             paragraph_order_index += 1
 
             for sentence in paragraph_draft.sentences:
-                cited_facts = [facts[i] for i in sentence.fact_indices if 0 <= i < len(facts)]
-                consistency = await evaluate_sentence_consistency(sentence.text, cited_facts, embedding_provider)
+                cited_facts, consistency = next(checked)
 
                 db.add(GeneratedSentence(
                     document_id=document.id,

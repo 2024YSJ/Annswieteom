@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import functools
+import logging
 import random
 import uuid
 from datetime import date
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.deps import get_owned_session
-from app.db.session import get_db
+from app.db.session import get_background_session_factory, get_db
 from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.gap_period import GapPeriod
@@ -51,6 +53,8 @@ from app.services.llm.base import (
 from app.services.llm import get_llm_provider
 from app.services.profile.attributes import get_profile_extractor, profile_summary_lines
 from app.services.record_pipeline.search import get_chunk_search
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sessions", tags=["interview"])
 
@@ -105,9 +109,22 @@ async def _load_confirmed_facts(db: AsyncSession, category: ActivityCategory) ->
 _PERIOD_HINT_FACT_TYPES = frozenset({"frequency", "context"})
 
 
+def _period_inference_needed(category: ActivityCategory, facts: list[ConfirmedFact]) -> bool:
+    """LLM을 부르기 전의 싼 게이트. 요청 경로에서 먼저 걸러, 필요 없는 턴에는
+    백그라운드 작업 자체를 예약하지 않는다."""
+    if category.period_start is not None or category.period_source == "user_set":
+        return False
+    if not _PERIOD_HINT_FACT_TYPES & {f.fact_type for f in facts}:
+        return False
+    # 사실에 기간 단서가 하나도 없으면 아예 묻지 않는다 — 로컬 모델은 이 경우
+    # "모르겠다" 대신 공백 기간 전체를 되뱉는다(coverage.has_period_clue 주석 참고).
+    # LLM 호출 한 번도 아낀다.
+    return has_period_clue(f.content for f in facts)
+
+
 async def _maybe_infer_category_period(
     db: AsyncSession,
-    session: SessionModel,
+    session_id: uuid.UUID,
     category: ActivityCategory,
     facts: list[ConfirmedFact],
     llm: LLMProvider,
@@ -119,18 +136,11 @@ async def _maybe_infer_category_period(
     못 구했다고 인터뷰 턴 자체를 실패시킬 이유가 없다(기간 미상 카테고리는
     coverage report의 categories_without_period로 그대로 드러난다).
     """
-    if category.period_start is not None or category.period_source == "user_set":
-        return
-    if not _PERIOD_HINT_FACT_TYPES & {f.fact_type for f in facts}:
-        return
-    # 사실에 기간 단서가 하나도 없으면 아예 묻지 않는다 — 로컬 모델은 이 경우
-    # "모르겠다" 대신 공백 기간 전체를 되뱉는다(coverage.has_period_clue 주석 참고).
-    # LLM 호출 한 번도 아낀다.
-    if not has_period_clue(f.content for f in facts):
+    if not _period_inference_needed(category, facts):
         return
 
     gap_period = (
-        await db.execute(select(GapPeriod).where(GapPeriod.session_id == session.id))
+        await db.execute(select(GapPeriod).where(GapPeriod.session_id == session_id))
     ).scalar_one_or_none()
     if gap_period is None:
         return
@@ -151,6 +161,44 @@ async def _maybe_infer_category_period(
     category.period_start = suggestion.start_date
     category.period_end = suggestion.end_date
     category.period_source = "ai_inferred"
+
+
+async def infer_category_period_in_background(
+    session_factory: async_sessionmaker,
+    llm: LLMProvider,
+    session_id: uuid.UUID,
+    category_id: uuid.UUID,
+) -> None:
+    """interview_confirm이 응답을 보낸 뒤에 도는 기간 추론 — 예외를 던지지 않는다.
+
+    예전에는 confirm 요청 안에서 judge_drilldown·draft_answer보다 먼저 순차로
+    불렀다. Spark에서 LLM 호출 하나가 수 초씩이라, 사용자는 결과를 화면에 쓰지도
+    않는 메타데이터 때문에 그만큼 더 기다렸다. 사용자가 다음 답을 읽고 쓰는
+    동안은 Ollama가 비어 있으니 그때 돌린다(프로필 속성 추출과 같은 이유).
+
+    대가: 방금 끝난 턴의 followup_budget 계산에는 새 기간이 반영되지 않고, 다음
+    confirm부터 반영된다. 사실을 새로 읽어 게이트를 다시 확인하므로, 그 사이
+    사용자가 직접 기간을 지정했다면(user_set) 덮어쓰지 않는다.
+    """
+    try:
+        async with session_factory() as db:
+            category = await db.get(ActivityCategory, category_id)
+            if category is None:
+                return
+            facts = await _load_confirmed_facts(db, category)
+            await _maybe_infer_category_period(db, session_id, category, facts, llm)
+            await db.commit()
+    except Exception:
+        logger.warning("interview: background period inference failed for %s", category_id, exc_info=True)
+
+
+def get_period_inferrer(
+    session_factory: async_sessionmaker = Depends(get_background_session_factory),
+    llm: LLMProvider = Depends(get_llm_provider),
+):
+    """FastAPI DI 훅 — 테스트는 get_background_session_factory를 오버라이드해
+    같은 테스트 DB와 FakeLLMProvider로 이 작업을 그대로 돌린다."""
+    return functools.partial(infer_category_period_in_background, session_factory, llm)
 
 
 async def _build_context(
@@ -603,10 +651,12 @@ async def interview_answer(
 @router.post("/{session_id}/interview/confirm", response_model=InterviewConfirmRead)
 async def interview_confirm(
     payload: InterviewConfirmRequest,
+    background_tasks: BackgroundTasks,
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
     llm: LLMProvider = Depends(get_llm_provider),
     chunk_search=Depends(get_chunk_search),
+    period_inferrer=Depends(get_period_inferrer),
 ) -> InterviewConfirmRead:
     try:
         orchestrator.require_interviewing(session.status)
@@ -716,7 +766,10 @@ async def interview_confirm(
         (await db.execute(select(ConfirmedFact).where(ConfirmedFact.category_id == category_id))).scalars().all()
     )
     answered_fact_types = {f.fact_type for f in all_facts}
-    await _maybe_infer_category_period(db, session, category, all_facts, llm)
+    # 기간 추론은 응답 뒤로 미룬다(infer_category_period_in_background 참고).
+    # 게이트만 여기서 먼저 확인해, 필요 없는 턴엔 작업을 예약하지 않는다.
+    if _period_inference_needed(category, all_facts):
+        background_tasks.add_task(period_inferrer, session.id, category_id)
 
     remaining_base_question = next_base_question(category.category_type, answered_fact_types)
     # AI 추가 질문(드릴다운/후속) 전용 예산 — 고정 질문 자체는 이 예산과 무관하게

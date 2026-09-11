@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.services.llm import get_llm_provider
 from app.api.records import get_process_document_record, get_process_record
-from app.db.session import Base, get_db
+from app.db.session import Base, get_background_session_factory, get_db
 from app.main import app
 from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
@@ -440,6 +440,8 @@ def session_client():
         return []
 
     app.dependency_overrides[get_db] = override_get_db
+    # confirm 뒤 백그라운드 기간 추론이 같은 테스트 DB에 쓰게 한다.
+    app.dependency_overrides[get_background_session_factory] = lambda: test_session_local
     fake_extractor = FakeProfileExtractor()
 
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
@@ -613,6 +615,7 @@ def document_client():
         return {}
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_background_session_factory] = lambda: test_session_local
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
     app.dependency_overrides[get_embedding_provider] = lambda: fake_embedding
     app.dependency_overrides[get_chunk_search] = lambda: override_chunk_search
