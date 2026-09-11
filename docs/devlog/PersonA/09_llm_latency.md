@@ -99,7 +99,8 @@ MoE는 토큰당 활성 파라미터만 읽으므로 대역폭이 병목인 Spar
 
 ## 관련 커밋
 
-- (PR 머지 후 채움)
+- `84f8d84` 계측 로그, 출력 축소(extract_facts chunk_ids / sufficiency reason), 기간 추론 백그라운드화, 임베딩 keep_alive·배치, think 설정, A/B 스크립트
+- `a5063f5` 이 devlog와 스펙 10-2절
 
 ## 남은 작업
 
