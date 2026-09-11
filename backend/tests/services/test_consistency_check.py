@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from app.models.confirmed_fact import ConfirmedFact
-from app.services.consistency_check import _cosine_similarity, check_sentence_consistency, max_cosine_similarity
+from app.services.consistency_check import (
+    _cosine_similarity,
+    check_sentence_consistency,
+    evaluate_sentences_consistency,
+    max_cosine_similarity,
+)
 
 
 class FakeEmbeddingProvider:
@@ -83,6 +88,45 @@ async def test_max_cosine_similarity_returns_the_highest_score():
     })
     score = await max_cosine_similarity("문장", ["낮음", "높음"], embedding_provider=provider)
     assert score == pytest.approx(1.0)
+
+
+class _CountingProvider(FakeEmbeddingProvider):
+    def __init__(self, vectors: dict[str, list[float]]) -> None:
+        super().__init__(vectors)
+        self.calls: list[list[str]] = []
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(texts)
+        return await super().embed(texts)
+
+
+@pytest.mark.asyncio
+async def test_batch_check_embeds_once_and_matches_the_single_sentence_rule():
+    provider = _CountingProvider({
+        "일치 문장": [1.0, 0.0],
+        "무관 문장": [0.0, 1.0],
+        "근거": [1.0, 0.0],
+    })
+
+    results = await evaluate_sentences_consistency(
+        [("일치 문장", [_fact("근거")]), ("무관 문장", [_fact("근거")]), ("인용 없는 문장", [])],
+        embedding_provider=provider,
+    )
+
+    # 문장마다 터널을 왕복하지 않는다. 같은 텍스트("근거")는 한 번만 보낸다.
+    assert provider.calls == [["일치 문장", "근거", "무관 문장"]]
+    assert [r.passed for r in results] == [True, False, False]
+    assert results[0].score == pytest.approx(1.0)
+    # 인용이 없으면 단건 규칙과 같이 검사 없이 실패(score=None)
+    assert results[2].score is None
+
+
+@pytest.mark.asyncio
+async def test_batch_check_with_no_citations_never_calls_the_provider():
+    provider = _CountingProvider({})
+    results = await evaluate_sentences_consistency([("문장", [])], embedding_provider=provider)
+    assert provider.calls == []
+    assert results[0].passed is False
 
 
 def test_cosine_similarity_orthogonal_vectors_is_zero():

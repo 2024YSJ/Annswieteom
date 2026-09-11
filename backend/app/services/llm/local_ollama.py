@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import date
 from pathlib import Path
 
@@ -34,6 +36,8 @@ from app.services.llm.base import (
 )
 from app.services.profile import vocabulary
 
+logger = logging.getLogger(__name__)
+
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 _jinja_env = Environment(loader=FileSystemLoader(str(_PROMPTS_DIR)), autoescape=False)
 
@@ -66,7 +70,16 @@ def _render(template_name: str, **kwargs: object) -> str:
     return _jinja_env.get_template(template_name).render(**kwargs)
 
 
-def _parse_based_on(raw: str | dict) -> BasedOn:
+def _parse_based_on(raw: str | dict, known_excerpts: list[RecordExcerpt]) -> BasedOn:
+    """모델이 댄 chunk_id를 프롬프트에 실제로 넣었던 발췌로 되돌린다.
+
+    모델에게는 chunk_id만 받는다. 예전에는 발췌 원문(text)까지 다시 쓰게 했는데,
+    decode가 병목인 Spark에서 수백 자를 13 tok/s로 되받아 적는 건 순수한 지연이었고,
+    받은 text를 그대로 저장했으니 모델이 발췌를 바꿔 쓰면 원문과 다른 인용이 남았다.
+    이제 text/published_at은 항상 우리가 보낸 원문이다. 모르는 chunk_id는 버리고,
+    남는 게 없으면 generic_pattern이다 — 근거를 지어낼 수 없다.
+    예전 형식(excerpts: [{chunk_id, text, ...}])으로 답해도 chunk_id만 읽는다.
+    """
     if isinstance(raw, dict):
         data = raw
     else:
@@ -74,18 +87,21 @@ def _parse_based_on(raw: str | dict) -> BasedOn:
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             data = {"type": raw}
+    if not isinstance(data, dict) or data.get("type") != "record":
+        return BasedOn(type="generic_pattern")
 
-    if data.get("type") == "record":
-        excerpts = [
-            RecordExcerpt(
-                chunk_id=e.get("chunk_id", ""),
-                text=e.get("text", ""),
-                published_at=e.get("published_at"),
-            )
-            for e in data.get("excerpts", [])
-        ]
-        return BasedOn(type="record", excerpts=excerpts)
-    return BasedOn(type="generic_pattern")
+    chunk_ids = data.get("chunk_ids")
+    if not isinstance(chunk_ids, list):
+        chunk_ids = [e.get("chunk_id") for e in data.get("excerpts") or [] if isinstance(e, dict)]
+    by_id = {e.chunk_id: e for e in known_excerpts}
+    excerpts: list[RecordExcerpt] = []
+    for chunk_id in chunk_ids:
+        excerpt = by_id.get(chunk_id) if isinstance(chunk_id, str) else None
+        if excerpt is not None and excerpt not in excerpts:
+            excerpts.append(excerpt)
+    if not excerpts:
+        return BasedOn(type="generic_pattern")
+    return BasedOn(type="record", excerpts=excerpts)
 
 
 class LocalOllamaProvider:
@@ -103,7 +119,7 @@ class LocalOllamaProvider:
             record_excerpts=context.record_excerpts,
             question_text=question_text,
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
+        response_text = await self._generate(prompt, label="draft_answer", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(response_text)
             return data["draft_answer"]
@@ -124,18 +140,18 @@ class LocalOllamaProvider:
             answer_text=answer_text,
             fact_type_hint=fact_type_hint,
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="extract_facts", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             return [
                 FactCandidate(
                     content=f["content"],
                     fact_type=f["fact_type"],
-                    based_on=_parse_based_on(f.get("based_on", "generic_pattern")),
+                    based_on=_parse_based_on(f.get("based_on", "generic_pattern"), context.record_excerpts),
                 )
                 for f in data["facts"]
             ]
-        except (json.JSONDecodeError, KeyError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
             # The model didn't follow the requested JSON schema — treat this
             # like any other provider failure so the caller can surface it
             # to the next provider instead of a raw 500.
@@ -152,7 +168,7 @@ class LocalOllamaProvider:
             asked_questions=context.asked_questions,
             profile_summary=context.profile_summary,
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
+        response_text = await self._generate(prompt, label="followup_question", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(response_text)
             return data["question_text"]
@@ -165,7 +181,7 @@ class LocalOllamaProvider:
             category_label=context.category_label,
             confirmed_facts_so_far=context.confirmed_facts_so_far,
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="judge_sufficiency", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             return SufficiencyResult(sufficient=bool(data["sufficient"]), reason=data.get("reason", ""))
@@ -182,7 +198,7 @@ class LocalOllamaProvider:
             asked_questions=context.asked_questions,
             profile_summary=context.profile_summary,
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="judge_drilldown", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             return DrilldownDecision(should_ask=bool(data["should_ask"]), question_text=data.get("question_text"))
@@ -191,7 +207,7 @@ class LocalOllamaProvider:
 
     async def extract_activity_items(self, category_label: str, answer_text: str) -> list[str]:
         prompt = _render("interview_activity_breakdown.jinja", category_label=category_label, answer_text=answer_text)
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="extract_activity_items", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             return [str(item) for item in data["items"]]
@@ -202,7 +218,7 @@ class LocalOllamaProvider:
         self, free_text: str, gap_start: date, gap_end: date
     ) -> list[CategorySuggestion]:
         prompt = _render("extract_categories.jinja", free_text=free_text, gap_start=gap_start, gap_end=gap_end)
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="extract_categories", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             return [
@@ -226,7 +242,7 @@ class LocalOllamaProvider:
             focus=focus,
         )
         # 되묻는 문장이라 매번 똑같으면 기계적으로 읽힌다 — 생성 계열이므로 CREATIVE.
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
+        response_text = await self._generate(prompt, label="probe_activity_question", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(response_text)
             return data["question_text"]
@@ -235,7 +251,7 @@ class LocalOllamaProvider:
 
     async def extract_period(self, free_text: str, today: date) -> PeriodSuggestion | None:
         prompt = _render("extract_period.jinja", free_text=free_text, today=today)
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="extract_period", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             if data["start_date"] is None or data["end_date"] is None:
@@ -261,7 +277,7 @@ class LocalOllamaProvider:
         # temperature는 _generate의 필수 키워드 인자다. 빠져 있던 동안 이 호출은
         # 매번 TypeError를 냈고, 호출부(_maybe_infer_category_period)가 예외를
         # 전부 삼켜서 활동기간 AI 추론이 조용히 죽어 있었다.
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="extract_activity_period", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             if data["start_date"] is None or data["end_date"] is None:
@@ -279,7 +295,7 @@ class LocalOllamaProvider:
             tone=tone,
             category_label=category_label,
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
+        response_text = await self._generate(prompt, label="generate_document", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(response_text)
             # 프롬프트(final_document.jinja)는 사실을 [1]부터 번호 매겨 보여주므로
@@ -308,7 +324,7 @@ class LocalOllamaProvider:
 
     async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]:
         prompt = _render("classify_job_info_query.jinja", query=query)
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="classify_job_info_query", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             return [
@@ -321,7 +337,7 @@ class LocalOllamaProvider:
 
     async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams:
         prompt = _render("extract_job_info_query_params.jinja", query=query, known_regions=known_regions)
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="extract_job_info_query_params", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             # 알 수 없는 지역명은 조회 계층에서 걸러지지만, 여기서도 문자열만
@@ -341,7 +357,7 @@ class LocalOllamaProvider:
         prompt = _render(
             "select_relevant_job_info_results.jinja", query=query, category_label=category_label, candidates=candidates
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="select_relevant_job_info_results", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             valid_indices = {c.index for c in candidates}
@@ -351,7 +367,7 @@ class LocalOllamaProvider:
 
     async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:
         prompt = _render("draft_job_info_query.jinja", confirmed_facts=confirmed_facts)
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
+        response_text = await self._generate(prompt, label="draft_job_info_query_from_facts", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(response_text)
             return str(data.get("draft_query") or "")
@@ -374,7 +390,7 @@ class LocalOllamaProvider:
             special=", ".join(vocabulary.SPECIAL_CHOICES),
             marital=", ".join(vocabulary.MARITAL_CHOICES),
         )
-        response_text = await self._generate(prompt, timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        response_text = await self._generate(prompt, label="extract_profile_attributes", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
             return [
@@ -399,7 +415,8 @@ class LocalOllamaProvider:
         except Exception:
             return False
 
-    async def _generate(self, prompt: str, timeout: float, *, temperature: float) -> str:
+    async def _generate(self, prompt: str, *, label: str, timeout: float, temperature: float) -> str:
+        """`label`은 계측 로그에 찍힐 호출 이름이다(보통 호출한 메서드 이름)."""
         # /api/chat은 system 메시지 분리를 지원해 JSON 스키마 준수율이 높다
         payload = {
             "model": self._model,
@@ -418,6 +435,9 @@ class LocalOllamaProvider:
             "keep_alive": _KEEP_ALIVE,
             "options": {"temperature": temperature, "num_ctx": _NUM_CTX},
         }
+        if settings.local_llm_disable_thinking:
+            payload["think"] = False
+        started = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream(
@@ -431,7 +451,9 @@ class LocalOllamaProvider:
                         # 아래 HTTPStatusError 핸들러가 본문 preview를 쓰므로 먼저 읽는다.
                         await resp.aread()
                     resp.raise_for_status()
-                    return await self._collect_stream(resp)
+                    content, stats = await self._collect_stream(resp)
+                    _log_generation_stats(label, self._model, time.monotonic() - started, stats)
+                    return content
         except LLMUnavailableError:
             raise
         except httpx.TimeoutException as exc:
@@ -454,15 +476,19 @@ class LocalOllamaProvider:
             raise LLMUnavailableError(f"Ollama unavailable: {exc}") from exc
 
     @staticmethod
-    async def _collect_stream(resp: httpx.Response) -> str:
+    async def _collect_stream(resp: httpx.Response) -> tuple[str, dict]:
         """Ollama의 NDJSON 스트림을 하나의 content 문자열로 이어붙인다.
 
         stream=true면 `{"message":{"content":"..."},"done":false}` 형태의 JSON이
         한 줄씩 내려오고 마지막 줄에 `done:true`가 온다. 호출부는 예전과 똑같이
         완성된 JSON 문자열 하나만 받는다 — 스트리밍은 Cloudflare의 100초 벽을
         넘기 위한 전송 방식이지, 인터페이스 변경이 아니다.
+
+        두 번째 값은 마지막 줄(done:true) 그 자체다. 거기에만 eval_count(출력
+        토큰 수)·eval_duration 같은 서버 측 계측이 실린다.
         """
         parts: list[str] = []
+        final: dict = {}
         async for line in resp.aiter_lines():
             line = line.strip()
             if not line:
@@ -474,5 +500,33 @@ class LocalOllamaProvider:
                 raise LLMUnavailableError(f"Ollama returned an error: {chunk['error']}")
             parts.append(chunk.get("message", {}).get("content", ""))
             if chunk.get("done"):
+                final = chunk
                 break
-        return "".join(parts)
+        return "".join(parts), final
+
+
+def _log_generation_stats(label: str, model: str, wall_seconds: float, stats: dict) -> None:
+    """호출 한 건의 속도를 한 줄로 남긴다.
+
+    Spark에서 응답 시간은 거의 출력 토큰 수 ÷ decode 속도로 정해진다. 그래서
+    프롬프트를 줄였는지, 모델을 바꿨는지의 효과는 이 줄의 out_tokens와 tok/s로
+    바로 보인다. wall은 Render에서 잰 전체 시간(터널 왕복 포함)이고, 나머지는
+    Ollama가 스스로 잰 값이다(ns). 계측이 빠진 응답이어도 호출은 실패시키지 않는다.
+    """
+    def _seconds(key: str) -> float:
+        return (stats.get(key) or 0) / 1e9
+
+    out_tokens = stats.get("eval_count") or 0
+    decode_s = _seconds("eval_duration")
+    logger.info(
+        "llm %s model=%s wall=%.1fs load=%.1fs prefill=%dtok/%.1fs out=%dtok/%.1fs (%.1f tok/s)",
+        label,
+        model,
+        wall_seconds,
+        _seconds("load_duration"),
+        stats.get("prompt_eval_count") or 0,
+        _seconds("prompt_eval_duration"),
+        out_tokens,
+        decode_s,
+        out_tokens / decode_s if decode_s else 0.0,
+    )

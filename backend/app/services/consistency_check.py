@@ -47,6 +47,42 @@ async def evaluate_sentence_consistency(
     return ConsistencyResult(passed=similarity >= settings.consistency_threshold, score=similarity)
 
 
+async def evaluate_sentences_consistency(
+    items: list[tuple[str, list[ConfirmedFact]]],
+    embedding_provider: EmbeddingProvider | None = None,
+) -> list[ConsistencyResult]:
+    """`evaluate_sentence_consistency`를 여러 문장에 한 번에 — 임베딩 호출은 1회.
+
+    문서 생성은 카테고리마다 문장이 수십 개이고, 문장마다 따로 부르면 그 수만큼
+    Render → Cloudflare → Spark를 왕복했다. 판정 규칙은 단건과 똑같다: 인용이
+    없으면 검사 없이 실패(score=None), 있으면 인용 사실과의 최대 유사도로 판정.
+    같은 텍스트는 한 번만 임베딩한다.
+    """
+    unique_texts: list[str] = []
+    seen: set[str] = set()
+    for sentence, facts in items:
+        if not facts:
+            continue
+        for text in (sentence, *(f.content for f in facts)):
+            if text not in seen:
+                seen.add(text)
+                unique_texts.append(text)
+
+    vectors: dict[str, list[float]] = {}
+    if unique_texts:
+        provider = embedding_provider or LocalOllamaEmbedding()
+        vectors = dict(zip(unique_texts, await provider.embed(unique_texts)))
+
+    results: list[ConsistencyResult] = []
+    for sentence, facts in items:
+        if not facts:
+            results.append(ConsistencyResult(passed=False, score=None))
+            continue
+        similarity = max(_cosine_similarity(vectors[sentence], vectors[f.content]) for f in facts)
+        results.append(ConsistencyResult(passed=similarity >= settings.consistency_threshold, score=similarity))
+    return results
+
+
 async def check_sentence_consistency(
     sentence: str,
     cited_facts: list[ConfirmedFact],
