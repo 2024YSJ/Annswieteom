@@ -21,8 +21,8 @@ param(
     [string]$AccessClientId = "",
     [string]$AccessClientSecret = "",
 
-    # 운영 기본값. 다른 모델을 검증할 때만 넘긴다.
-    [string]$Model = "qwen2.5:32b"
+    # 운영 기본값(2026-09-11 qwen2.5:32b에서 교체). 다른 모델을 검증할 때만 넘긴다.
+    [string]$Model = "qwen3.5:35b-a3b"
 )
 
 $url = $TunnelUrl.TrimEnd("/")
@@ -105,6 +105,9 @@ $chatBody = @{
     stream     = $false   # PowerShell에서 스트림 조각을 세는 건 의미가 없다. 총 시간만 본다.
     format     = "json"
     keep_alive = -1
+    # 운영 백엔드는 LOCAL_LLM_DISABLE_THINKING=true로 이걸 싣는다. 빼면 qwen3.5가
+    # 숨은 추론부터 해서 이 측정이 운영보다 느리게 나온다. qwen2.5에는 무해하다.
+    think      = $false
     options    = @{ temperature = 0.0; num_ctx = 8192 }
 } | ConvertTo-Json -Depth 6
 

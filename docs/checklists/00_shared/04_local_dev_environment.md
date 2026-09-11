@@ -15,7 +15,8 @@
 | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | 프로덕션 프로젝트 값 | `annswieteom-dev` 프로젝트 값 |
 | `LLM_ACCESS_CLIENT_ID` / `LLM_ACCESS_CLIENT_SECRET` | Cloudflare Access 서비스 토큰 (터널이 인증 뒤에 있다) | **비워둔다** — 로컬 Ollama는 Access 뒤에 없고, 비어 있으면 헤더를 붙이지 않는다 |
 | `LOCAL_LLM_BASE_URL` | `https://llm.annswieteom.com` (Cloudflare Tunnel → DGX Spark) | `http://localhost:11434` (이 노트북에 설치된 Ollama) |
-| `LOCAL_LLM_MODEL_NAME` | `qwen2.5:32b` | `qwen2.5:3b-instruct` (이 노트북에 이미 받아둔 작은 모델) |
+| `LOCAL_LLM_MODEL_NAME` | `qwen3.5:35b-a3b` (2026-09-11~, 이전 `qwen2.5:32b`) | `qwen2.5:3b-instruct` (이 노트북에 이미 받아둔 작은 모델) |
+| `LOCAL_LLM_DISABLE_THINKING` | `true` | 비워 둔다(기본 false) — 로컬 qwen2.5에는 필요 없다 |
 
 ## 새 dev용 Supabase 프로젝트를 처음 만들 때 순서
 

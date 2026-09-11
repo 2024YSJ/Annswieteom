@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""안쉬었음 — Spark 로컬 모델 벤치마크 (파이썬 기본 라이브러리만 사용)
+
+웹사이트 공백기 채우기 흐름에서 실제로 나가는 프롬프트(dev 기준, 앱 코드로 미리 렌더링)를
+이 기계의 Ollama(localhost:11434)에 그대로 보내 모델끼리 속도와 품질을 비교한다.
+요청 옵션도 앱과 같다: /api/chat, format=json, num_ctx 8192, 호출별 temperature.
+
+사용법:
+    python3 spark_model_bench.py qwen2.5:32b qwen3.5:35b-a3b gemma4:26b
+    python3 spark_model_bench.py qwen2.5:32b qwen3.5:35b-a3b --repeat 2 --out bench.md
+
+- think는 기본으로 끈다("think": false). 서버가 거부하면 그 모델만 think 없이 다시 보낸다.
+- 운영 모델(qwen2.5:32b)은 끝나도 상주를 유지하고, 나머지 후보는 끝에 메모리에서 내린다(--keep이면 유지).
+- 돌리는 동안 운영 요청은 이 벤치 뒤에 줄을 선다(Ollama 직렬 처리). 사용자 없는 시간에 돌린다.
+"""
+import argparse
+import json
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+
+PROD_MODEL = "qwen3.5:35b-a3b"  # 끝나도 내리지 않는 운영 모델
+DATA = json.loads(r"""__CASES_JSON__""")
+CATEGORY_TYPES = {"part_time", "freelance", "volunteer", "study", "project", "caregiving", "travel", "other"}
+
+
+def post(host, path, body, timeout=600):
+    req = urllib.request.Request(
+        host + path, data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def chat(host, model, prompt, temperature, think_off, keep_alive):
+    body = {
+        "model": model,
+        "messages": [{"role": "system", "content": DATA["system"]}, {"role": "user", "content": prompt}],
+        "stream": False,
+        "format": "json",
+        "keep_alive": keep_alive,
+        "options": {"temperature": temperature, "num_ctx": DATA["num_ctx"]},
+    }
+    if think_off:
+        body["think"] = False
+    started = time.monotonic()
+    try:
+        data = post(host, "/api/chat", body)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        if think_off and "think" in detail.lower():
+            return None, detail  # 호출부가 think 없이 재시도
+        raise RuntimeError(f"HTTP {exc.code}: {detail[:300]}") from exc
+    data["_wall"] = time.monotonic() - started
+    return data, None
+
+
+def made_up_numbers(text, facts):
+    source = " ".join(facts)
+    return [n for n in re.findall(r"\d+", text) if n not in source]
+
+
+def judge(case, obj):
+    """(요약 문자열, 경고 목록). 앱 파서가 거부할 모양이면 ValueError."""
+    kind, flags = case["kind"], []
+    if kind == "categories":
+        cats = obj["categories"]
+        lines = [f"- {c['category_type']}: {c['custom_label']}" for c in cats]
+        if not cats:
+            flags.append("카테고리를 하나도 못 찾음(카페/자격증/러닝 3개 기대)")
+        if any(c["category_type"] not in CATEGORY_TYPES for c in cats):
+            flags.append("허용 목록 밖 category_type(앱에서는 other로 바뀜)")
+        return "\n".join(lines), flags
+    if kind == "facts":
+        facts, lines, cited = obj["facts"], [], False
+        for f in facts:
+            b = f.get("based_on")
+            ids = []
+            if isinstance(b, dict) and b.get("type") == "record":
+                ids = b.get("chunk_ids") or [e.get("chunk_id") for e in b.get("excerpts") or [] if isinstance(e, dict)]
+            valid = [i for i in ids if i in case["chunk_ids"]]
+            cited = cited or bool(valid)
+            if ids and not valid:
+                flags.append(f"없는 chunk_id 인용 {ids} (앱에서는 버려짐)")
+            lines.append(f"- ({f['fact_type']}, {'record' if valid else 'generic'}) {f['content']}")
+        if not facts:
+            flags.append("사실을 하나도 못 뽑음")
+        if not cited:
+            flags.append("답변이 블로그 발췌와 일치하는데 기록물 인용을 안 함")
+        return "\n".join(lines), flags
+    if kind == "drilldown":
+        ask, q = obj["should_ask"], obj.get("question_text")
+        if ask and not q:
+            flags.append("should_ask=true인데 질문이 없음")
+        return f"should_ask={ask}\n{q}", flags
+    if kind == "draft":
+        text = obj["draft_answer"]
+        if not str(text).strip():
+            flags.append("빈 초안")
+        return str(text), flags
+    if kind == "sufficiency":
+        return f"sufficient={bool(obj['sufficient'])}", flags
+    if kind == "document":
+        n, lines = len(case["facts"]), []
+        for p in obj["paragraphs"]:
+            lines.append(f"[{p['topic']}]")
+            for s in p["sentences"]:
+                idx = [i for i in s["fact_indices"] if isinstance(i, int) and not isinstance(i, bool) and 1 <= i <= n]
+                lines.append(f"- {s['text']}  <- {idx}")
+                if not idx:
+                    flags.append(f"인용 없는 문장: {s['text'][:40]}")
+                cited = [case["facts"][i - 1] for i in idx] or case["facts"]
+                bad = made_up_numbers(s["text"], cited)
+                if bad:
+                    flags.append(f"근거에 없는 숫자 {bad}: {s['text'][:40]}")
+        return "\n".join(lines), flags
+    raise ValueError(kind)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("models", nargs="+")
+    ap.add_argument("--host", default="http://localhost:11434")
+    ap.add_argument("--repeat", type=int, default=1, help="케이스마다 반복 횟수(속도는 평균)")
+    ap.add_argument("--think-on", action="store_true", help="think를 끄지 않는다")
+    ap.add_argument("--keep", action="store_true", help="후보 모델을 끝나도 내리지 않는다")
+    ap.add_argument("--out", default="bench_result.md")
+    args = ap.parse_args()
+
+    try:
+        with urllib.request.urlopen(args.host + "/api/version", timeout=10) as r:
+            version = json.loads(r.read())["version"]
+    except Exception as exc:
+        sys.exit(f"Ollama({args.host})에 연결 못 함: {exc}")
+    print(f"Ollama {version} @ {args.host}  repeat={args.repeat}  think_off={not args.think_on}\n")
+
+    results = {}
+    for model in args.models:
+        keep_alive = -1 if model == PROD_MODEL else "15m"
+        think_off = not args.think_on
+        print(f"=== {model}")
+        t0 = time.monotonic()
+        try:
+            data, refused = chat(args.host, model, '{"ok": true} 를 그대로 출력해라', 0.0, think_off, keep_alive)
+            if refused:
+                print(f"    이 모델/버전은 think 필드를 거부 → think 없이 진행 ({refused[:120]})")
+                think_off = False
+                chat(args.host, model, '{"ok": true} 를 그대로 출력해라', 0.0, False, keep_alive)
+            print(f"    워밍업(적재 포함) {time.monotonic() - t0:.1f}s")
+        except Exception as exc:
+            print(f"    실패: {exc}\n    (ollama pull {model} 했는지 확인)\n")
+            results[model] = None
+            continue
+
+        rows = []
+        for case in DATA["cases"]:
+            walls, outs, decs, row = [], 0, 0.0, {"name": case["name"], "step": case["step"], "flags": [], "text": ""}
+            for _ in range(args.repeat):
+                try:
+                    data, _ = chat(args.host, model, case["prompt"], case["temperature"], think_off, keep_alive)
+                    walls.append(data["_wall"])
+                    outs += data.get("eval_count") or 0
+                    decs += (data.get("eval_duration") or 0) / 1e9
+                    thinking = data["message"].get("thinking") or ""
+                    content = data["message"].get("content") or ""
+                    try:
+                        row["text"], row["flags"] = judge(case, json.loads(content))
+                    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                        row["text"], row["flags"] = content[:800], [f"앱 파서가 거부할 응답 → 운영에선 503 ({type(exc).__name__}: {exc})"]
+                    if thinking:
+                        row["flags"].append(f"숨은 추론 {len(thinking)}자 출력(think를 못 끔 → 느려짐)")
+                except Exception as exc:
+                    row["text"], row["flags"] = "", [f"호출 실패: {exc}"]
+                    break
+            row["wall"] = sum(walls) / len(walls) if walls else 0.0
+            row["out"] = outs // max(len(walls), 1)
+            row["tps"] = outs / decs if decs else 0.0
+            rows.append(row)
+            mark = "OK  " if not row["flags"] else "WARN"
+            print(f"  [{mark}] {row['name']:<18} {row['wall']:6.1f}s  out {row['out']:4d}tok  {row['tps']:5.1f} tok/s")
+        total = sum(r["wall"] for r in rows)
+        print(f"  합계 {total:.1f}s\n")
+        results[model] = rows
+
+    models = [m for m in args.models if results.get(m)]
+    md = [f"# 안쉬었음 모델 벤치 (Spark, Ollama {version})", "", f"repeat={args.repeat}, think_off={not args.think_on}", ""]
+    if models:
+        md.append("| 단계 | " + " | ".join(models) + " |")
+        md.append("|---|" + "---|" * len(models))
+        for i, case in enumerate(DATA["cases"]):
+            cells = []
+            for m in models:
+                r = results[m][i]
+                cells.append(f"{r['wall']:.1f}s · {r['out']}tok · {r['tps']:.1f}t/s" + (" ⚠" if r["flags"] else ""))
+            md.append(f"| {case['name']} | " + " | ".join(cells) + " |")
+        md.append("| **합계** | " + " | ".join(f"**{sum(r['wall'] for r in results[m]):.1f}s**" for m in models) + " |")
+        for m in models:
+            md += ["", f"## {m}"]
+            for r in results[m]:
+                md += ["", f"### {r['name']} — {r['step']}"] + [f"> ⚠ {f}" for f in r["flags"]] + ["", "```", r["text"], "```"]
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(md) + "\n")
+    print(f"결과 저장: {args.out}")
+
+    if not args.keep:
+        for m in args.models:
+            if m != PROD_MODEL and results.get(m) is not None:
+                try:
+                    post(args.host, "/api/generate", {"model": m, "keep_alive": 0}, 60)
+                    print(f"메모리에서 내림: {m}")
+                except Exception as exc:
+                    print(f"{m} 내리기 실패 — 직접 `ollama stop {m}`: {exc}")
+
+
+if __name__ == "__main__":
+    main()
