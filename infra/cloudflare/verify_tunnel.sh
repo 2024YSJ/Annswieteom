@@ -20,7 +20,7 @@ set -u
 URL=""
 CLIENT_ID=""
 CLIENT_SECRET=""
-MODEL="${LOCAL_LLM_MODEL_NAME:-qwen2.5:32b}"
+MODEL="${LOCAL_LLM_MODEL_NAME:-qwen3.5:35b-a3b}"   # 2026-09-11 qwen2.5:32b에서 교체
 EMBED_MODEL="bge-m3"   # 하드코딩이 맞다 — 코드도 하드코딩이고 1024차원이 DB 컬럼 타입이다
 EXPECTED_DIM=1024
 
@@ -89,7 +89,7 @@ done
 
 # --- 3. 백엔드와 같은 페이로드로 생성 + 시간 측정 ------------------------------
 echo "[3/4] POST /api/chat (백엔드와 동일한 페이로드, 첫 바이트/총 시간 측정)"
-CHAT_BODY=$(printf '{"model":"%s","messages":[{"role":"system","content":"Output JSON only."},{"role":"user","content":"{\\"ping\\":true} 를 그대로 반환해줘"}],"stream":true,"format":"json","keep_alive":-1,"options":{"temperature":0.0,"num_ctx":8192}}' "$MODEL")
+CHAT_BODY=$(printf '{"model":"%s","messages":[{"role":"system","content":"Output JSON only."},{"role":"user","content":"{\\"ping\\":true} 를 그대로 반환해줘"}],"stream":true,"format":"json","keep_alive":-1,"think":false,"options":{"temperature":0.0,"num_ctx":8192}}' "$MODEL")
 # shellcheck disable=SC2086
 TIMING=$(curl -sN --max-time 300 -o /dev/null -w '%{time_starttransfer} %{time_total} %{http_code}' \
   $AUTH -H 'Content-Type: application/json' -d "$CHAT_BODY" "$URL/api/chat" 2>&1)
