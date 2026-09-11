@@ -14,7 +14,7 @@
 [USER]
 활동 카테고리: {{ category_label }}
 공백 기간: {{ gap_start }} ~ {{ gap_end }}
-이미 확인된 사실:
+지금까지 들은 내용:
 {% for fact in confirmed_facts_so_far %}
 - ({{ fact.fact_type }}) {{ fact.content }}
 {% endfor %}

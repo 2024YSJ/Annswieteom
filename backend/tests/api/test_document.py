@@ -27,15 +27,25 @@ def _register_and_login(client, email="alice@example.com"):
 
 
 def _do_one_turn(client, headers, session_id):
+    """ask -> answer 한 턴. 카테고리 단위 확인(2026-09-11) 이후 답은 초안으로 쌓이고,
+    카테고리 질문이 끝나면 응답의 mode가 "review"가 된다(_submit_review로 확정)."""
     resp = client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
     assert resp.status_code == 200
     resp = client.post(f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "답변입니다"})
     assert resp.status_code == 200
-    candidates = resp.json()["candidates"]
+    return resp.json()
+
+
+def _submit_review(client, headers, session_id):
+    body = client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert body["mode"] == "review"
+    confirmations = [
+        {"turn_id": g["turn_id"], "index": d["index"], "final_text": d["content"], "was_edited": False}
+        for g in body["review"]["groups"]
+        for d in g["drafts"]
+    ]
     resp = client.post(
-        f"/api/v1/sessions/{session_id}/interview/confirm",
-        headers=headers,
-        json={"confirmations": [{"index": c["index"], "final_text": c["content"], "was_edited": False} for c in candidates]},
+        f"/api/v1/sessions/{session_id}/interview/review", headers=headers, json={"confirmations": confirmations}
     )
     assert resp.status_code == 200
     return resp.json()
@@ -86,6 +96,7 @@ def _advance_to_result_generate(client, headers, category_types=("part_time",)):
         _skip_activity_breakdown(client, headers, session_id)
         for _ in range(len(BASE_QUESTIONS[category_type])):
             _do_one_turn(client, headers, session_id)
+        _submit_review(client, headers, session_id)
 
     ctx = client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
     assert ctx["status"] == "RESULT_GENERATE"

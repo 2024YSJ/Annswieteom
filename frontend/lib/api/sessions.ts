@@ -52,6 +52,14 @@ export interface ConfirmedFactRead {
   created_at: string;
 }
 
+/** 이 카테고리에서 답했지만 아직 카테고리 끝 확인 전인 턴 — 대화 기록 표시용
+ * (질문·답변 원문만). 뽑힌 사실 초안은 확인 카드(CategoryReviewRead)로만 온다. */
+export interface DraftTurnRead {
+  turn_id: string;
+  question_text: string;
+  answer_text: string;
+}
+
 export interface ActivityCategoryRead {
   id: string;
   category_type: CategoryType;
@@ -60,6 +68,7 @@ export interface ActivityCategoryRead {
   status: "PENDING" | "IN_PROGRESS" | "DONE";
   parent_category_id: string | null;
   confirmed_facts: ConfirmedFactRead[];
+  draft_turns: DraftTurnRead[];
   records: RecordRead[];
 }
 
@@ -116,13 +125,6 @@ export interface BasedOnRead {
   excerpts: RecordExcerptRead[];
 }
 
-export interface InterviewAskRead {
-  category_id: string;
-  question_text: string;
-  question_source: "base" | "followup" | "split_check";
-  draft_answer: string;
-}
-
 export interface FactCandidateRead {
   index: number;
   content: string;
@@ -130,11 +132,51 @@ export interface FactCandidateRead {
   based_on: BasedOnRead;
 }
 
+/** 카테고리 끝 확인의 한 묶음 — 질문 하나에 대한 답과 거기서 뽑은 사실 초안들. */
+export interface ReviewGroupRead {
+  turn_id: string;
+  question_text: string;
+  answer_text: string;
+  fact_type: string;
+  drafts: FactCandidateRead[];
+}
+
+export interface CategoryReviewRead {
+  category_id: string;
+  category_label: string;
+  groups: ReviewGroupRead[];
+}
+
+/** mode="question"이면 question_*가, mode="review"면 review가 채워진다
+ * (카테고리 질문이 끝나 확인을 기다리는 상태 — 새로고침 복원 경로). */
+export interface InterviewAskRead {
+  category_id: string;
+  mode: "question" | "review";
+  question_text: string | null;
+  question_source: "base" | "followup" | "split_check" | null;
+  draft_answer: string;
+  review: CategoryReviewRead | null;
+}
+
+/** mode="candidates"는 "여러 활동 있나요?" 구조 질문 전용(즉시 확인). 일반 답변은
+ * 초안으로 쌓이고 다음 질문(question) 또는 카테고리 끝 확인(review)이 온다. */
 export interface InterviewAnswerRead {
+  mode: "candidates" | "question" | "review";
   candidates: FactCandidateRead[];
+  question: InterviewAskRead | null;
+  review: CategoryReviewRead | null;
 }
 
 export interface FactConfirmation {
+  index: number;
+  final_text: string;
+  was_edited: boolean;
+  include?: boolean;
+}
+
+/** index가 그 턴의 초안 수 이상이면 사용자가 직접 추가한 항목이다. */
+export interface ReviewConfirmation {
+  turn_id: string;
   index: number;
   final_text: string;
   was_edited: boolean;
@@ -228,6 +270,13 @@ export const sessionApi = {
 
   interviewConfirm: (sessionId: string, confirmations: FactConfirmation[], accessToken: string) =>
     request<InterviewConfirmRead>(`/api/v1/sessions/${sessionId}/interview/confirm`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ confirmations }),
+    }),
+
+  interviewReview: (sessionId: string, confirmations: ReviewConfirmation[], accessToken: string) =>
+    request<InterviewConfirmRead>(`/api/v1/sessions/${sessionId}/interview/review`, {
       method: "POST",
       headers: authHeaders(accessToken),
       body: JSON.stringify({ confirmations }),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.interview import ConfirmedFactRead, GapPeriodRead
 from app.schemas.record import RecordRead
@@ -32,6 +32,15 @@ class SessionRename(BaseModel):
     title: str = Field(max_length=200)
 
 
+class DraftTurnRead(BaseModel):
+    """아직 확인 전인 답변 한 턴 — 대화 화면이 새로고침 뒤에도 "질문·내 답" 말풍선을
+    다시 그릴 수 있게 질문과 답 원문만 내려준다(초안 사실은 확인 화면에서만)."""
+
+    turn_id: str
+    question_text: str
+    answer_text: str = ""
+
+
 class ActivityCategoryRead(BaseModel):
     id: uuid.UUID
     category_type: str
@@ -40,9 +49,16 @@ class ActivityCategoryRead(BaseModel):
     status: str
     parent_category_id: uuid.UUID | None = None
     confirmed_facts: list[ConfirmedFactRead] = []
+    draft_turns: list[DraftTurnRead] = []
     records: list[RecordRead] = []
 
     model_config = {"from_attributes": True}
+
+    @field_validator("draft_turns", mode="before")
+    @classmethod
+    def _none_to_empty(cls, value):
+        # 확인이 끝났거나 아직 답이 없으면 컬럼이 NULL이다.
+        return value or []
 
 
 class RecordChunkExcerptRead(BaseModel):
