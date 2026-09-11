@@ -39,7 +39,7 @@
 [USER]
 활동 카테고리: {{ category_label }}
 공백 기간: {{ gap_start }} ~ {{ gap_end }}
-지금까지 확인된 사실 (가장 최근 것이 방금 답변):
+지금까지 들은 내용 (가장 최근 것이 방금 답변):
 {% for fact in confirmed_facts_so_far %}
 - ({{ fact.fact_type }}) {{ fact.content }}
 {% endfor %}

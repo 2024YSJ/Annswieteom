@@ -50,6 +50,21 @@ export interface CandidateDraft {
   isManual?: boolean;
 }
 
+/** 카테고리 끝 확인(2026-09-11)의 화면 상태 — 질문별 묶음마다 편집 가능한 행들. */
+export interface CategoryReviewDraft {
+  categoryId: string;
+  categoryLabel: string;
+  groups: {
+    turnId: string;
+    questionText: string;
+    answerText: string;
+    factType: string;
+    rows: CandidateDraft[];
+  }[];
+}
+
+type RowPatch = Partial<Omit<CandidateDraft, "candidate">>;
+
 export function InterviewChatThread({
   categories,
   currentCategoryId,
@@ -59,6 +74,10 @@ export function InterviewChatThread({
   onUpdateCandidate,
   onAddCandidate,
   onSubmit,
+  review,
+  onUpdateReviewRow,
+  onAddReviewRow,
+  onSubmitReview,
   isSubmitting,
   isWaitingForAnswer,
 }: {
@@ -69,17 +88,22 @@ export function InterviewChatThread({
    * finishes) so sending never looks like the input vanished — cleared once
    * candidates take over, but left in place if the request errors. */
   pendingAnswerText?: string | null;
+  /** "여러 활동 있나요?" 구조 질문의 즉시 확인 카드 — 일반 답변에는 쓰이지 않는다. */
   candidates: CandidateDraft[] | null;
-  onUpdateCandidate: (index: number, patch: Partial<Omit<CandidateDraft, "candidate">>) => void;
+  onUpdateCandidate: (index: number, patch: RowPatch) => void;
   /** Appends a new, empty, user-authored row to the review list — the only
    * way to grow the list beyond what the AI proposed (excluding a row can
    * only shrink it). */
   onAddCandidate: () => void;
   onSubmit: () => void;
+  review: CategoryReviewDraft | null;
+  onUpdateReviewRow: (groupIndex: number, rowIndex: number, patch: RowPatch) => void;
+  onAddReviewRow: (groupIndex: number) => void;
+  onSubmitReview: () => void;
   isSubmitting: boolean;
-  /** True while the just-submitted answer is being processed by the AI (no
-   * candidates yet) — local models can take a while, so this renders a
-   * visible "생각 중" bubble instead of leaving the question looking frozen. */
+  /** True while the just-submitted answer is being processed by the AI —
+   * local models can take a while, so this renders a visible "생각 중" bubble
+   * instead of leaving the question looking frozen. */
   isWaitingForAnswer?: boolean;
 }) {
   // A category the interview split into sub-categories (parent_category_id
@@ -95,9 +119,9 @@ export function InterviewChatThread({
     return [parent?.order_index ?? c.order_index, c.order_index];
   }
 
-  // Only categories that have at least one confirmed fact, or are the one
-  // currently being interviewed, are shown — categories not reached yet
-  // stay invisible (the AI doesn't preview future questions).
+  // Only categories that have at least one confirmed fact or answered turn,
+  // or are the one currently being interviewed, are shown — categories not
+  // reached yet stay invisible (the AI doesn't preview future questions).
   const visibleCategories = categories
     .filter((c) => !parentIds.has(c.id))
     .slice()
@@ -106,7 +130,7 @@ export function InterviewChatThread({
       const [bParent, bOwn] = sortKey(b);
       return aParent - bParent || aOwn - bOwn;
     })
-    .filter((c) => c.confirmed_facts.length > 0 || c.id === currentCategoryId);
+    .filter((c) => c.confirmed_facts.length > 0 || (c.draft_turns ?? []).length > 0 || c.id === currentCategoryId);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -126,6 +150,24 @@ export function InterviewChatThread({
             </div>
           ))}
 
+          {/* 답했지만 아직 카테고리 끝 확인 전인 턴 — 대화 기록일 뿐 "확인됨"이 아니다. */}
+          {(category.draft_turns ?? []).map((turn) => (
+            <div key={turn.turn_id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <ChatBubble side="left">{turn.question_text}</ChatBubble>
+              {turn.answer_text && <ChatBubble side="right">{turn.answer_text}</ChatBubble>}
+            </div>
+          ))}
+
+          {review && review.categoryId === category.id && (
+            <CategoryReviewCard
+              review={review}
+              onUpdateRow={onUpdateReviewRow}
+              onAddRow={onAddReviewRow}
+              onSubmit={onSubmitReview}
+              isSubmitting={isSubmitting}
+            />
+          )}
+
           {category.id === currentCategoryId && questionText && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }} aria-live="polite">
               <ChatBubble side="left">{questionText}</ChatBubble>
@@ -134,7 +176,7 @@ export function InterviewChatThread({
 
               {isWaitingForAnswer && (
                 <ChatBubble side="left">
-                  <TypingDots label="답변을 정리하고 있어요" />
+                  <TypingDots label="답변을 정리하고 다음 질문을 준비하고 있어요" />
                 </ChatBubble>
               )}
 
@@ -167,6 +209,67 @@ export function InterviewChatThread({
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** 카테고리 질문이 끝나면 한 번 보여주는 종합 확인 — 질문별로 뽑은 사실을 고치고·빼고·
+ * 더한 뒤 "모두 맞아요, 다음으로" 한 번으로 확정한다. 사실이 하나도 안 뽑힌 질문도
+ * 묶음은 보여줘서 직접 추가할 수 있게 한다. */
+function CategoryReviewCard({
+  review,
+  onUpdateRow,
+  onAddRow,
+  onSubmit,
+  isSubmitting,
+}: {
+  review: CategoryReviewDraft;
+  onUpdateRow: (groupIndex: number, rowIndex: number, patch: RowPatch) => void;
+  onAddRow: (groupIndex: number) => void;
+  onSubmit: () => void;
+  isSubmitting: boolean;
+}) {
+  return (
+    <div
+      aria-live="polite"
+      style={{ display: "flex", flexDirection: "column", gap: 16, border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}
+    >
+      <div>
+        <p style={{ margin: 0, fontWeight: "bold" }}>{review.categoryLabel}에서 정리한 내용이에요</p>
+        <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--muted-text)" }}>
+          맞는지 확인해 주세요. 확인한 내용만 문서에 쓰여요. 틀린 건 고쳐 쓰고, 빼고 싶은 건 제외하세요.
+        </p>
+      </div>
+
+      {review.groups.map((group, groupIndex) => (
+        <div key={group.turnId} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--muted-text)" }}>Q. {group.questionText}</p>
+          {group.rows.length === 0 && (
+            <p style={{ margin: 0, fontSize: 13, color: "var(--muted-text)" }}>
+              이 답변에서는 정리된 내용이 없어요. 필요하면 직접 추가해 주세요.
+            </p>
+          )}
+          {group.rows.map((row, rowIndex) => (
+            <CandidateRow
+              key={rowIndex}
+              index={rowIndex}
+              draft={row}
+              onUpdate={(patch) => onUpdateRow(groupIndex, rowIndex, patch)}
+            />
+          ))}
+          <div>
+            <button type="button" disabled={isSubmitting} onClick={() => onAddRow(groupIndex)} style={{ fontSize: 13 }}>
+              + 항목 추가
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <div>
+        <button type="button" disabled={isSubmitting} onClick={onSubmit}>
+          모두 맞아요, 다음으로
+        </button>
+      </div>
     </div>
   );
 }

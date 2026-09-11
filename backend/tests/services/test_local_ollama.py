@@ -351,6 +351,111 @@ async def test_extract_activity_period_sends_a_temperature(ollama_calls):
     assert result is not None and result.start_date == date(2026, 3, 1)
 
 
+def _interview_context(excerpts):
+    from datetime import date
+
+    from app.services.llm.base import InterviewContext
+
+    return InterviewContext(
+        session_id="s",
+        category_label="카페 아르바이트",
+        gap_start=date(2025, 1, 1),
+        gap_end=date(2025, 12, 31),
+        confirmed_facts_so_far=[],
+        record_excerpts=excerpts,
+    )
+
+
+def _excerpt():
+    from datetime import date
+
+    from app.services.llm.base import RecordExcerpt
+
+    return RecordExcerpt(chunk_id="c-1", text="블로그 원문: 주 3회 오픈 근무", published_at=date(2025, 3, 2))
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_fills_excerpt_text_from_what_we_sent(ollama_calls):
+    # 모델에게는 chunk_id만 받는다. 원문을 다시 쓰게 하면 그만큼 decode 시간이
+    # 들고, 모델이 바꿔 쓴 text가 인용으로 저장된다.
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps(
+        {"facts": [{"content": "주 3회 근무", "fact_type": "frequency", "based_on": {"type": "record", "chunk_ids": ["c-1"]}}]}
+    )
+
+    [fact] = await LocalOllamaProvider().extract_facts(_interview_context([_excerpt()]), "질문", "답", "frequency")
+
+    assert fact.based_on.type == "record"
+    assert fact.based_on.excerpts == [_excerpt()]
+    assert '"chunk_ids"' in calls[0]["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_ignores_text_the_model_rewrote_in_the_old_format(ollama_calls):
+    _, canned = ollama_calls
+    canned["content"] = json.dumps(
+        {
+            "facts": [
+                {
+                    "content": "주 3회 근무",
+                    "fact_type": "frequency",
+                    "based_on": {"type": "record", "excerpts": [{"chunk_id": "c-1", "text": "모델이 지어낸 인용"}]},
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    [fact] = await LocalOllamaProvider().extract_facts(_interview_context([_excerpt()]), "질문", "답", "frequency")
+
+    assert [e.text for e in fact.based_on.excerpts] == ["블로그 원문: 주 3회 오픈 근무"]
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_unknown_chunk_id_is_not_a_citation(ollama_calls):
+    _, canned = ollama_calls
+    canned["content"] = json.dumps(
+        {"facts": [{"content": "주 3회 근무", "fact_type": "frequency", "based_on": {"type": "record", "chunk_ids": ["made-up"]}}]}
+    )
+
+    [fact] = await LocalOllamaProvider().extract_facts(_interview_context([_excerpt()]), "질문", "답", "frequency")
+
+    assert fact.based_on.type == "generic_pattern"
+    assert fact.based_on.excerpts == []
+
+
+@pytest.mark.asyncio
+async def test_think_is_not_sent_unless_configured(ollama_calls, monkeypatch):
+    # 기본은 보내지 않는다 — 운영 Ollama가 이 필드에 어떻게 반응하는지 확인 전이다.
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps({"items": []})
+    monkeypatch.setattr(local_ollama.settings, "local_llm_disable_thinking", False, raising=False)
+    await LocalOllamaProvider().extract_activity_items("아르바이트", "카페")
+
+    monkeypatch.setattr(local_ollama.settings, "local_llm_disable_thinking", True, raising=False)
+    await LocalOllamaProvider().extract_activity_items("아르바이트", "카페")
+
+    assert "think" not in calls[0]
+    assert calls[1]["think"] is False
+
+
+def test_generation_stats_are_logged_per_call(monkeypatch):
+    lines: list[str] = []
+    monkeypatch.setattr(local_ollama.logger, "info", lambda msg, *args: lines.append(msg % args))
+
+    local_ollama._log_generation_stats(
+        "extract_facts",
+        "qwen2.5:32b",
+        12.3,
+        {"eval_count": 130, "eval_duration": 10_000_000_000, "prompt_eval_count": 900, "prompt_eval_duration": 1_000_000_000},
+    )
+    # 계측이 빠진 응답(옛 Ollama, 테스트 스텁)이어도 호출을 실패시키지 않는다.
+    local_ollama._log_generation_stats("extract_facts", "qwen2.5:32b", 1.0, {})
+
+    assert "llm extract_facts" in lines[0] and "out=130tok" in lines[0] and "(13.0 tok/s)" in lines[0]
+    assert "out=0tok" in lines[1]
+
+
 @pytest.mark.asyncio
 async def test_generate_document_converts_prompt_numbers_to_zero_based_indices(ollama_calls):
     # 프롬프트는 사실을 [1]부터 보여준다. 모델이 "[1]번 사실"이라 답하면 그건

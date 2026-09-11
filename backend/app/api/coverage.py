@@ -129,6 +129,10 @@ async def fill_uncovered_range(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_date_order")
 
     gap_period, categories = await _load_gap_and_categories(session, db)
+    # 카테고리 단위 확인(2026-09-11): 확인 전 초안이 남은 카테고리를 두고 새 카테고리로
+    # 옮겨 가면 그 초안은 다시는 확인받을 기회가 없다(순회가 새 카테고리 뒤로 이어진다).
+    if any(c.draft_turns for c in categories) or (session.pending_turn or {}).get("kind") == "category_review":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="category_review_pending")
     requested = DateRange(payload.start_date, payload.end_date)
     if requested.start < gap_period.start_date or requested.end > gap_period.end_date:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="range_outside_gap_period")

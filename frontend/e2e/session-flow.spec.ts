@@ -105,9 +105,11 @@ test.describe("unified session chat flow", () => {
         contentType: "application/json",
         body: JSON.stringify({
           category_id: "00000000-0000-0000-0000-000000000000",
+          mode: "question",
           question_text: "이 아르바이트를 얼마나 자주, 어느 정도 기간 동안 하셨나요?",
           question_source: "base",
           draft_answer: "주로 저녁 시간대에, 주 3~4회 정도 근무했던 것 같아요.",
+          review: null,
         }),
       }),
     );
