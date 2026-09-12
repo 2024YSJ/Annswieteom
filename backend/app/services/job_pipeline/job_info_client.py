@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -10,6 +11,8 @@ import httpx
 from app.core.config import settings
 from app.services.job_pipeline.regions import RegionFilter, resolve_region_filters
 from app.services.llm.base import JobInfoQueryParams
+
+logger = logging.getLogger(__name__)
 
 # 훈련과정 조회는 날짜 범위가 필수인데(공식 명세) 사용자 질문에서 날짜를
 # 뽑아내는 건 이번 범위 밖이라(devlog 16 계획 참고) 항상 "오늘부터 90일"로
@@ -99,7 +102,11 @@ def _check_error(root: ET.Element, category: str) -> None:
     message_el = root.find("message")
     error_text_el = message_el if message_el is not None else root.find("error")
     if error_text_el is not None:
-        raise WorknetApiError(category, error_text_el.text.strip() if error_text_el.text else None)
+        msg = error_text_el.text.strip() if error_text_el.text else None
+        # 고용24가 자기 XML 본문에 실어 보낸 문구 그대로다 — 우리 URL/authKey는
+        # 들어 있지 않으므로 그대로 로깅해도 안전하다.
+        logger.warning("job_pipeline: %s api error: %s", category, msg)
+        raise WorknetApiError(category, msg)
 
 
 async def _get(url: str, params: dict[str, str], category: str) -> ET.Element:
@@ -107,12 +114,18 @@ async def _get(url: str, params: dict[str, str], category: str) -> ET.Element:
     # authKey — 가 통째로 들어 있다. 그대로 올리면 피드 수집이 last_error에 저장하고
     # /feed/sources가 로그인 사용자에게 보여준다(온통청년에서 같은 경로를 막은 것과
     # 같은 이유, devlog 31). 상태코드를 직접 보고 URL 없는 WorknetApiError로 바꾼다.
+    #
+    # 2026-09-12까지는 이 파일에 로깅이 전혀 없어서, 고용24 전면 점검 장애를 API
+    # 응답(0건/skipped)만으로는 원인까지 진단할 수 없었다. 아래 두 곳은 카테고리명과
+    # 상태코드/예외 종류만 남긴다 — URL·authKey는 절대 포함하지 않는다.
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url, params=params)
     except httpx.HTTPError as exc:
+        logger.warning("job_pipeline: %s transport error: %s", category, type(exc).__name__)
         raise WorknetApiError(category, f"transport error: {type(exc).__name__}") from None
     if resp.status_code >= 400:
+        logger.warning("job_pipeline: %s http %s", category, resp.status_code)
         raise WorknetApiError(category, f"http {resp.status_code}")
     root = ET.fromstring(resp.text)
     _check_error(root, category)
@@ -355,28 +368,35 @@ async def search_training_courses(params: JobInfoQueryParams | None = None) -> l
     # 뒤에는 추가로 자르지 않아 4개 전부 골고루 후보에 들어가게 한다.
     today = date.today()
 
-    async def _safe(label: str, url: str, key_field: str, region: RegionFilter | None, keyword: str | None) -> list[JobInfoResult]:
+    async def _safe(
+        label: str, url: str, key_field: str, region: RegionFilter | None, keyword: str | None
+    ) -> tuple[list[JobInfoResult], bool]:
+        """두 번째 값은 이 호출이 실제로 성공했는지다.
+
+        2026-09-12까지는 실패도 성공도 똑같이 `[]`로 뭉개졌다 — "이 조건엔 과정이
+        없다"와 "고용24가 오류를 냈다"(그날의 전면 점검 장애 등)가 화면에서
+        구분되지 않았다. `_get`/`_check_error`가 이미 로깅하므로 여기서는
+        성공 여부만 들고 올라간다.
+        """
         api_key = getattr(settings, key_field)
         try:
-            return await _search_one_training_endpoint(label, url, api_key, today, region, keyword)
+            return await _search_one_training_endpoint(label, url, api_key, today, region, keyword), True
         except WorknetApiError:
-            # 훈련과정 4개 중 하나가 실패해도(개별 카테고리 승인 상태가 다를 수
-            # 있음) 나머지로 계속 진행한다 — 전부 실패하면 결과가 빈 채로
-            # 돌아가고, 라우트가 그걸 그대로 "결과 없음"으로 보여준다.
-            return []
+            return [], False
 
-    async def _run(combos: list[tuple[RegionFilter | None, str | None]]) -> list[JobInfoResult]:
-        groups = await asyncio.gather(
+    async def _run(combos: list[tuple[RegionFilter | None, str | None]]) -> tuple[list[JobInfoResult], bool]:
+        outcomes = await asyncio.gather(
             *[
                 _safe(label, url, key_field, region, keyword)
                 for region, keyword in combos
                 for label, url, key_field in _TRAINING_ENDPOINTS
             ]
         )
+        any_ok = any(ok for _, ok in outcomes)
         # 조합을 여러 개 던지면 같은 과정이 중복으로 들어온다.
         merged: list[JobInfoResult] = []
         seen: set[tuple] = set()
-        for group in groups:
+        for group, _ in outcomes:
             for r in group:
                 # 부제가 이제 훈련기관명이라 유형(meta 첫 줄)까지 넣어야 서로 다른
                 # 엔드포인트의 과정이 합쳐지지 않는다. 같은 엔드포인트를 다른 지역
@@ -386,15 +406,24 @@ async def search_training_courses(params: JobInfoQueryParams | None = None) -> l
                     continue
                 seen.add(key)
                 merged.append(r)
-        return merged
+        return merged, any_ok
+
+    def _results_or_raise(results: list[JobInfoResult], any_ok: bool) -> list[JobInfoResult]:
+        if not any_ok:
+            # 이번에 시도한 조합의 엔드포인트가 전부 실패했다 — 다른 5개
+            # 카테고리처럼 job_search.py가 skipped_category_labels로 분류하게
+            # 다시 던진다. 성공한 호출이 하나라도 있었으면(0건 포함) 여기 안 온다.
+            raise WorknetApiError("training_course", "all endpoints failed")
+        return results
 
     combos = _training_combos(params)
     if combos == [(None, None)]:
-        return await _run(combos)
+        results, any_ok = await _run(combos)
+        return _results_or_raise(results, any_ok)
 
-    results = await _run(combos)
+    results, any_ok = await _run(combos)
     if len(results) >= _MIN_RESULTS_BEFORE_WIDENING:
-        return results
+        return _results_or_raise(results, any_ok)
 
     # 조건이 너무 좁으면 단계적으로 넓힌다. 실측(devlog 20): "경기 북부 +
     # 자바/웹 개발"은 2건만 남았는데, 지역만으로 조회하면 경기 북부 과정이
@@ -402,16 +431,18 @@ async def search_training_courses(params: JobInfoQueryParams | None = None) -> l
     # 지역은 사용자가 명시한 조건이라 유지하고 키워드만 떼는 것이 순서상 맞다.
     regions = resolve_region_filters(params.regions, limit=_MAX_REGION_FILTERS) if params else []
     if regions:
-        widened = await _run([(region, None) for region in regions])
+        widened, widened_ok = await _run([(region, None) for region in regions])
+        any_ok = any_ok or widened_ok
         merged = {(r.title, r.subtitle): r for r in [*results, *widened]}
         if merged:
-            return list(merged.values())
+            return _results_or_raise(list(merged.values()), any_ok)
 
     # 그래도 0건이면 조건을 다 뗀다. 고용24은 유효하지 않은 코드에도 에러가
     # 아니라 빈 목록을 주기 때문에(실측: 광주 29는 두 엔드포인트 모두 0건)
     # "코드가 틀렸다"와 "그 지역에 과정이 없다"를 구분할 수 없다 — 조용히 빈
     # 화면을 주는 것보다 넓은 결과를 주고 관련성 판단에 맡기는 쪽이 낫다.
-    return await _run([(None, None)])
+    final, final_ok = await _run([(None, None)])
+    return _results_or_raise(final, any_ok or final_ok)
 
 
 CATEGORY_SEARCH_FUNCTIONS = {

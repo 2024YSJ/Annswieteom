@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -25,6 +26,8 @@ from app.services.llm.base import JobInfoCandidate, LLMProvider, LLMUnavailableE
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
 from app.services.llm import get_llm_provider
 from app.services.profile.attributes import get_profile_extractor
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sessions", tags=["job_search"])
 
@@ -113,9 +116,12 @@ async def query_job_info(
     async def _fetch(category: str) -> list | None:
         try:
             return await job_client.search(category, query_params)
-        except WorknetApiError:
+        except WorknetApiError as exc:
             # 이 카테고리만 실패 처리하고 나머지는 계속 보여준다 — 카테고리
             # 하나가 승인 대기/오류라고 질문 전체가 실패로 보이면 안 된다.
+            # 로깅이 아예 없어 2026-09-12 고용24 전면 장애를 API 응답만으로는
+            # 진단할 수 없었다 — 원인(카테고리명 + 오류 메시지, authKey 없음)을 남긴다.
+            logger.warning("job_search: %s skipped: %s", category, exc)
             return None
 
     fetched = await asyncio.gather(*[_fetch(category) for category in selected_categories])
@@ -154,11 +160,12 @@ async def query_job_info(
         # httpx 타임아웃을 이미 흡수하지만, 여기 asyncio.timeout(remaining)은
         # 그 바깥에서 도는 전체 예산 타이머라 여전히 맨 TimeoutError를 던진다
         # — 이걸 빼면 큐에 밀린 호출이 예산을 태울 때 라우트가 500으로 죽는다.
-        except (LLMUnavailableError, TimeoutError):
+        except (LLMUnavailableError, TimeoutError) as exc:
             # 원본 목록은 받아왔지만 관련성 판단이 안 되면, 걸러지지 않은
             # 목록을 그대로 보여주느니 이 카테고리를 빼는 쪽이 낫다 — 그게
             # 바로 devlog 18에서 고친 문제(무관한 결과 노출)이기 때문이다.
             # 다만 예전처럼 조용히 버리지 않고 무엇이 빠졌는지 알려준다.
+            logger.warning("job_search: %s relevance judging skipped: %s", category, exc)
             skipped.append(label)
             continue
 

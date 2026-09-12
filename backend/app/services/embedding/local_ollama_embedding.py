@@ -8,6 +8,7 @@ from app.services.embedding.base import (
     EmbeddingDimensionMismatchError,
     EmbeddingUnavailableError,
 )
+from app.services.llm.ollama_gate import OLLAMA_GATE
 
 _MODEL = "bge-m3"
 
@@ -26,14 +27,17 @@ class LocalOllamaEmbedding:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         base_url = settings.local_llm_base_url.rstrip("/")
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    f"{base_url}/api/embed",
-                    json={"model": _MODEL, "input": texts, "keep_alive": _KEEP_ALIVE},
-                    headers=settings.ollama_headers(),
-                )
-                resp.raise_for_status()
-                vectors: list[list[float]] = resp.json()["embeddings"]
+            # 생성 호출과 같은 Ollama 러너를 쓰므로 같은 게이트를 공유한다
+            # (ollama_gate.py 모듈독스트링 참고 — 겹치는 요청이 크래시 반경을 넓힌다).
+            async with OLLAMA_GATE:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        f"{base_url}/api/embed",
+                        json={"model": _MODEL, "input": texts, "keep_alive": _KEEP_ALIVE},
+                        headers=settings.ollama_headers(),
+                    )
+                    resp.raise_for_status()
+                    vectors: list[list[float]] = resp.json()["embeddings"]
         except httpx.TimeoutException as exc:
             raise EmbeddingUnavailableError("Ollama embedding timed out") from exc
         except Exception as exc:
