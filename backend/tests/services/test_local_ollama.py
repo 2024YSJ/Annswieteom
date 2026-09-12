@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
+import httpx
 import pytest
 
 from app.services.llm import local_ollama
@@ -285,6 +287,11 @@ async def test_error_inside_the_stream_raises_unavailable(ollama_calls, monkeypa
     # (예: 모델이 없을 때). raise_for_status로는 잡히지 않는 경로다.
     from app.services.llm import local_ollama as mod
 
+    # 2026-09-12 재시도 추가 이후 이 실패도 한 번 더 시도된다(아래 같은 스텁이
+    # 두 번째 시도에서도 똑같이 실패해 결국 LLMUnavailableError가 그대로 올라온다) —
+    # 재시도 대기(_RETRY_DELAY_SECONDS)까지 실제로 기다리지 않게 0으로 줄인다.
+    monkeypatch.setattr(mod, "_RETRY_DELAY_SECONDS", 0)
+
     class _ErrorStream:
         status_code = 200
 
@@ -487,3 +494,198 @@ async def test_generate_document_converts_prompt_numbers_to_zero_based_indices(o
     prompt = calls[0]["messages"][1]["content"]
     assert "[1] (user_confirmed) 사실 A" in prompt
     assert [s.fact_indices for s in draft.paragraphs[0].sentences] == [[0], [0, 1], [-1, 1]]
+
+
+# ── 2026-09-12: Spark CUDA 크래시(ollama/ollama#17434) 대응 — 재시도·직렬화 ────
+#
+# 운영 검증에서 확인된 사실: Spark의 Ollama 러너가 재적재 직후 죽으면 HTTP
+# 500(`CUDA error: an illegal memory access ...`)이 오고, 재시도하면 대부분
+# 성공했다(관찰된 실패 5건 중 4건). 아래 테스트들은 그 대응(1회 재시도, 타임아웃은
+# 재시도 안 함, 우리 쪽 요청끼리 겹치지 않게 직렬화)이 실제로 동작하는지 검증한다.
+
+
+class _CrashThenRecoverStream:
+    """`ok=False`면 실제 Cloudflare 뒤 500 응답과 같은 모양으로 실패한다 —
+    본문에 담긴 Ollama의 실제 오류 문구를 그대로 흉내낸다."""
+
+    def __init__(self, ok: bool) -> None:
+        self._ok = ok
+        self.status_code = 200 if ok else 500
+
+    def raise_for_status(self) -> None:
+        if not self._ok:
+            request = httpx.Request("POST", "http://spark/api/chat")
+            response = httpx.Response(
+                500, request=request, text='{"error":"CUDA error: an illegal memory access was encountered"}'
+            )
+            raise httpx.HTTPStatusError("500", request=request, response=response)
+
+    async def aread(self) -> bytes:
+        return b""
+
+    async def aiter_lines(self):
+        if self._ok:
+            yield json.dumps({"message": {"content": '{"items": ["카페 아르바이트"]}'}, "done": True})
+
+
+@pytest.mark.asyncio
+async def test_generate_retries_once_after_a_transient_failure(monkeypatch):
+    monkeypatch.setattr(local_ollama, "_RETRY_DELAY_SECONDS", 0)
+    attempts = {"n": 0}
+
+    class _Ctx:
+        def __init__(self, ok: bool) -> None:
+            self._ok = ok
+
+        async def __aenter__(self):
+            return _CrashThenRecoverStream(self._ok)
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+        def stream(self, *args, **kwargs):
+            attempts["n"] += 1
+            return _Ctx(ok=attempts["n"] >= 2)  # 첫 시도는 실패, 재시도는 성공
+
+    monkeypatch.setattr(local_ollama.httpx, "AsyncClient", _Client)
+
+    items = await LocalOllamaProvider().extract_activity_items("아르바이트", "카페에서 일했어요")
+
+    assert attempts["n"] == 2
+    assert items == ["카페 아르바이트"]
+
+
+@pytest.mark.asyncio
+async def test_generate_gives_up_after_two_consecutive_failures(monkeypatch):
+    # 재시도는 딱 한 번뿐이다 — 재적재해도 Spark가 계속 죽는 상황이면 두 번째도
+    # 실패로 보고해야 사용자가 무한정 기다리지 않는다.
+    monkeypatch.setattr(local_ollama, "_RETRY_DELAY_SECONDS", 0)
+    attempts = {"n": 0}
+
+    class _Ctx:
+        async def __aenter__(self):
+            return _CrashThenRecoverStream(ok=False)
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+        def stream(self, *args, **kwargs):
+            attempts["n"] += 1
+            return _Ctx()
+
+    monkeypatch.setattr(local_ollama.httpx, "AsyncClient", _Client)
+
+    with pytest.raises(LLMUnavailableError):
+        await LocalOllamaProvider().extract_activity_items("아르바이트", "카페에서 일했어요")
+
+    assert attempts["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_generate_does_not_retry_after_a_timeout(monkeypatch):
+    # timeout으로 실패했다는 건 이미 _GENERATE_TIMEOUT(240초)을 다 썼다는 뜻이다 —
+    # 재시도하면 똑같이 그만큼 기다리다 또 실패할 뿐이므로 건너뛴다(_TimedOutRequest).
+    monkeypatch.setattr(local_ollama, "_RETRY_DELAY_SECONDS", 0)
+    attempts = {"n": 0}
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+        def stream(self, *args, **kwargs):
+            attempts["n"] += 1
+            raise httpx.TimeoutException("timed out")
+
+    monkeypatch.setattr(local_ollama.httpx, "AsyncClient", _Client)
+
+    with pytest.raises(LLMUnavailableError):
+        await LocalOllamaProvider().extract_activity_items("아르바이트", "카페에서 일했어요")
+
+    assert attempts["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_serializes_concurrent_calls_through_the_ollama_gate(monkeypatch):
+    """같은 Ollama 러너에 우리 쪽 요청끼리 겹치지 않게 한다 — 겹치면 크래시 한 번이
+    여러 요청을 한꺼번에 죽인다(2026-09-12 검증: 순차 8.3% -> 동시 3건 33.3%).
+    실제 스트림이 열려 있는 구간이 절대 동시에 1개를 넘지 않는지 확인한다."""
+    concurrent = {"now": 0, "max": 0}
+
+    class _Stream:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            pass
+
+        async def aread(self) -> bytes:
+            return b""
+
+        async def aiter_lines(self):
+            # 감소를 yield 앞에 둔다 — _collect_stream은 done:true를 보면 그 줄을
+            # 넘겨받은 즉시 break로 빠져나가는데, break 이후에도 이 제너레이터
+            # 자체는 (aclose가 나중에 GC로 불릴 때까지) 안 닫힌다. yield 뒤에
+            # 감소를 두면 break가 그 코드를 건너뛰어 카운터가 절대 안 줄어드는
+            # 단조증가 카운터가 되고, 완벽히 직렬화돼도 max가 호출 수만큼 나온다
+            # (실제로 이 버그로 한 번 잘못된 실패를 봤다).
+            concurrent["now"] += 1
+            concurrent["max"] = max(concurrent["max"], concurrent["now"])
+            await asyncio.sleep(0.02)  # 세마포어가 없으면 이 사이에 다른 호출이 끼어든다
+            concurrent["now"] -= 1
+            yield json.dumps({"message": {"content": '{"items": []}'}, "done": True})
+
+    class _Ctx:
+        async def __aenter__(self):
+            return _Stream()
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+        def stream(self, *args, **kwargs):
+            return _Ctx()
+
+    monkeypatch.setattr(local_ollama.httpx, "AsyncClient", _Client)
+
+    provider = LocalOllamaProvider()
+    await asyncio.gather(
+        provider.extract_activity_items("a", "1"),
+        provider.extract_activity_items("b", "2"),
+        provider.extract_activity_items("c", "3"),
+    )
+
+    assert concurrent["max"] == 1

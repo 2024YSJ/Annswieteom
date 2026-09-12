@@ -72,7 +72,10 @@ export default function Home() {
     );
   }
 
-  const hasSessions = !!sessions && sessions.length > 0;
+  // !!user도 함께 본다 — 로그아웃 직후 세션 목록 캐시가 아직 안 지워진 찰나에도
+  // 이전 사용자의 이름·"이어서 하기" 카드가 뜨지 않게 한다(2026-09-12 검증 발견;
+  // AuthHeader.handleLogout에서 캐시 자체도 지우므로 이 조건은 이중 방어다).
+  const hasSessions = !!user && !!sessions && sessions.length > 0;
 
   return (
     <main className="landing">

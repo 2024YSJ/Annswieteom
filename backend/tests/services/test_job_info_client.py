@@ -260,6 +260,37 @@ async def test_search_training_courses_continues_when_one_endpoint_fails(monkeyp
     assert len(results) == 3
 
 
+@pytest.mark.asyncio
+async def test_search_training_courses_raises_when_all_four_endpoints_fail(monkeypatch):
+    """2026-09-12 검증: 훈련과정 4개가 전부 실패해도(그날의 고용24 전면 점검처럼)
+    조용히 빈 목록으로 바뀌면, job_search.py 입장에선 "조건에 맞는 과정 0건"과
+    구분이 안 된다. 다른 5개 카테고리처럼 여기서도 다시 던져서
+    skipped_category_labels로 분류되게 한다."""
+    async def always_fails(self, url, params=None, **kwargs):
+        request = httpx.Request("GET", url, params=params)
+        return httpx.Response(200, text=_ERROR_XML_GO24, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", always_fails)
+
+    with pytest.raises(WorknetApiError) as exc_info:
+        await jic.search_training_courses()
+    assert exc_info.value.category == "training_course"
+
+
+@pytest.mark.asyncio
+async def test_search_training_courses_raises_when_every_widening_stage_fails(monkeypatch):
+    """조건이 있는 조회는 좁게 → 지역만 → 무조건 순으로 최대 3단계까지 넓혀본다.
+    그 세 단계 전부에서 엔드포인트가 매번 실패하면(조건과 무관한 전면 장애),
+    "조건에 맞는 과정 없음"이 아니라 여전히 오류로 분류돼야 한다."""
+    async def always_fails(label, url, api_key, today, region=None, keyword=None):
+        raise jic.WorknetApiError("training_course", "테스트용 오류")
+
+    monkeypatch.setattr(jic, "_search_one_training_endpoint", always_fails)
+
+    with pytest.raises(WorknetApiError):
+        await jic.search_training_courses(JobInfoQueryParams(regions=["경기 북부"], keywords=["자바"]))
+
+
 # --- 조회 조건을 실어 보내는 경로 (devlog 20) ---
 #
 # 예전에는 조건을 넘길 수단이 없어 전국 첫 20건을 무조건 받아왔다. 그래서

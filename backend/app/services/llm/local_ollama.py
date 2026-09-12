@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -11,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from app.core.config import settings
 from app.models.activity_category import CATEGORY_TYPES
+from app.services.llm.ollama_gate import OLLAMA_GATE
 from app.services.llm.base import (
     AttributeCandidate,
     BasedOn,
@@ -65,6 +67,13 @@ _STREAM = True
 # Ollama는 snap이라 설정 키가 제한적이어서, 요청에 실어 보내는 쪽이 확실하다.
 _KEEP_ALIVE = -1
 
+# 2026-09-12: 간헐적 503의 근본 원인은 Spark의 Ollama 러너가 재적재 직후(cold)
+# 긴 프롬프트를 받으면 CUDA illegal memory access로 죽는 것이었다(ollama/ollama#17434,
+# 운영 devlog 참고). 근본 수정은 Spark에서 해야 하지만(운영 체크리스트), 앱 쪽에서도
+# 재시도 1회로 사용자 노출을 없앨 수 있다 — 실측: 관찰된 실패 5건 중 4건이 동일
+# 재전송으로 성공했고, 크래시 후 재적재는 11~21초 걸렸다.
+_RETRY_DELAY_SECONDS = 4.0
+
 
 def _render(template_name: str, **kwargs: object) -> str:
     return _jinja_env.get_template(template_name).render(**kwargs)
@@ -102,6 +111,14 @@ def _parse_based_on(raw: str | dict, known_excerpts: list[RecordExcerpt]) -> Bas
     if not excerpts:
         return BasedOn(type="generic_pattern")
     return BasedOn(type="record", excerpts=excerpts)
+
+
+class _TimedOutRequest(LLMUnavailableError):
+    """`_generate_once`이 `timeout`을 전부 쓰고 실패했다는 표시.
+
+    `LLMUnavailableError`를 상속하므로 그걸 잡는 기존 호출부(interview.py 등)는
+    그대로 503으로 처리한다 — `_generate`의 재시도 로직만 이 타입을 따로 봐서
+    건너뛴다(이미 최대 대기 시간을 다 썼으므로 재시도해도 똑같이 실패한다)."""
 
 
 class LocalOllamaProvider:
@@ -399,7 +416,22 @@ class LocalOllamaProvider:
             return False
 
     async def _generate(self, prompt: str, *, label: str, timeout: float, temperature: float) -> str:
-        """`label`은 계측 로그에 찍힐 호출 이름이다(보통 호출한 메서드 이름)."""
+        """`label`은 계측 로그에 찍힐 호출 이름이다(보통 호출한 메서드 이름).
+
+        실패하면 짧게 기다렸다가 **한 번만** 재시도한다 — Spark 크래시 후 재적재
+        (11~21초 실측)를 흡수하기 위해서다. 타임아웃으로 실패한 경우는 재시도하지
+        않는다: 이미 `timeout`을 다 써서 실패한 것이므로 다시 걸어도 똑같이 그만큼
+        기다리다 또 실패할 뿐이다(`_TimedOutRequest`로 구분해서 건너뛴다).
+        """
+        try:
+            return await self._generate_once(prompt, label=label, timeout=timeout, temperature=temperature)
+        except _TimedOutRequest:
+            raise
+        except LLMUnavailableError:
+            await asyncio.sleep(_RETRY_DELAY_SECONDS)
+            return await self._generate_once(prompt, label=label, timeout=timeout, temperature=temperature)
+
+    async def _generate_once(self, prompt: str, *, label: str, timeout: float, temperature: float) -> str:
         # /api/chat은 system 메시지 분리를 지원해 JSON 스키마 준수율이 높다
         payload = {
             "model": self._model,
@@ -422,25 +454,28 @@ class LocalOllamaProvider:
             payload["think"] = False
         started = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self._base_url}/api/chat",
-                    json=payload,
-                    headers=settings.ollama_headers(),
-                ) as resp:
-                    if resp.status_code >= 400:
-                        # 스트리밍 응답은 본문을 읽기 전에 .text에 접근할 수 없다.
-                        # 아래 HTTPStatusError 핸들러가 본문 preview를 쓰므로 먼저 읽는다.
-                        await resp.aread()
-                    resp.raise_for_status()
-                    content, stats = await self._collect_stream(resp)
-                    _log_generation_stats(label, self._model, time.monotonic() - started, stats)
-                    return content
+            # 같은 Ollama 러너를 우리 쪽 요청끼리 겹치지 않게 한다 — 겹치면 크래시
+            # 한 번이 여러 요청을 한꺼번에 죽인다(ollama_gate.py 모듈독스트링 참고).
+            async with OLLAMA_GATE:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{self._base_url}/api/chat",
+                        json=payload,
+                        headers=settings.ollama_headers(),
+                    ) as resp:
+                        if resp.status_code >= 400:
+                            # 스트리밍 응답은 본문을 읽기 전에 .text에 접근할 수 없다.
+                            # 아래 HTTPStatusError 핸들러가 본문 preview를 쓰므로 먼저 읽는다.
+                            await resp.aread()
+                        resp.raise_for_status()
+                        content, stats = await self._collect_stream(resp)
+                        _log_generation_stats(label, self._model, time.monotonic() - started, stats)
+                        return content
         except LLMUnavailableError:
             raise
         except httpx.TimeoutException as exc:
-            raise LLMUnavailableError("Ollama request timed out") from exc
+            raise _TimedOutRequest("Ollama request timed out") from exc
         except httpx.HTTPStatusError as exc:
             # The bare status code alone doesn't say who returned it — a
             # Cloudflare edge block (bot/WAF) and Ollama's own rejection both
