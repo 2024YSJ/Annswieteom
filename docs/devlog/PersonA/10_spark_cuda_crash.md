@@ -95,7 +95,7 @@ SSH는 비밀번호 인증이라 이 세션이 직접 적용할 수 없다 — �
 
 ## 관련 커밋
 
-- (PR 머지 후 채움 — 07_server_ops_checklist.md 수정 + 이 devlog)
+- `bdc871f` — 07_server_ops_checklist.md 수정 + 이 devlog ([PR #67](https://github.com/2024YSJ/Annswieteom/pull/67))
 
 ## 남은 작업
 

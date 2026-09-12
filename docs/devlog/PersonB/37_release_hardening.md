@@ -89,7 +89,7 @@
 
 ## 관련 커밋
 
-- (PR 머지 후 채움)
+- `bdc871f` — fix: harden app against Ollama crash and clean up interview/job-search UX gaps ([PR #67](https://github.com/2024YSJ/Annswieteom/pull/67))
 
 ## 남은 작업
 
