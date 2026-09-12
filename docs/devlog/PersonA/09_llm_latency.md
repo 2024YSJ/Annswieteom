@@ -2,8 +2,11 @@
 
 ## 배경
 
+> **결과 (같은 날 후속)**: Spark 벤치 후 운영 모델을 **`qwen3.5:35b-a3b`로 교체**했다 — 아래 "모델 교체" 절.
+> 그리고 이번 Spark 벤치에서 32b는 13이 아니라 **6.8 tok/s**로 나왔다(`eval_duration` 기준, 차이의 원인은 미확인 — 트러블슈팅).
+
 운영 추론은 Render → Cloudflare Tunnel/Access → DGX Spark의 Ollama(`qwen2.5:32b`)다. Spark는
-메모리 대역폭(273GB/s)이 decode 병목이라 32b가 **약 13 tok/s**다(devlog 08 실측). prefill은 빠르다.
+메모리 대역폭(273GB/s)이 decode 병목이라 32b가 **약 13 tok/s**다(devlog 08 실측 — 뒤에 6.8로 정정). prefill은 빠르다.
 그래서 응답 시간은 거의 이 식으로 정해진다.
 
 ```
@@ -32,7 +35,7 @@
 ## 미완 / 이번 범위 밖
 
 - [ ] **HTTP 연결 재사용(공유 `httpx.AsyncClient`)** — 계획에 넣었다가 뺐다. 아래 "결정" 참고.
-- [ ] **운영 모델 교체 판단** — 사용자가 Spark에서 후보를 pull하고 스크립트를 터널로 돌려야 한다(아래 실행 방법).
+- [x] **운영 모델 교체** — Spark 벤치 후 `qwen3.5:35b-a3b` + `LOCAL_LLM_DISABLE_THINKING=true`로 교체, 운영 `/health/llm`에서 `model_name` 확인(아래 "모델 교체").
 - [ ] **3단계: 동시 처리(`OLLAMA_NUM_PARALLEL` + 문서 생성 카테고리 병렬화)** — 데모 이후. 아래 "남은 작업".
 - [ ] 배포 후 Render 로그의 `llm …` 줄로 before/after 실측값을 이 문서에 채우기.
 
@@ -90,12 +93,52 @@ MoE는 토큰당 활성 파라미터만 읽으므로 대역폭이 병목인 Spar
 두 모델 모두 5개 케이스가 끝까지 돌았고 합계 77s / 85s, 18~20 tok/s. 둘 다 `extract_facts`에서 답변과 일치하는 발췌를
 인용하지 않아 ⚠가 떴다 — 스크립트가 잡아야 할 종류의 품질 차이를 실제로 잡는다는 확인이기도 하다.
 
+## 모델 교체 (2026-09-11)
+
+### 벤치 방법
+노트북에서 터널로 재는 대신 **Spark 안에서 `localhost:11434`로** 쟀다(터널·Access 토큰이 필요 없고, 순수 모델 속도만 본다).
+`backend/scripts/build_spark_bench.py`가 앱 코드로 **실제 프롬프트**(PR #62 문구 포함)를 렌더링해 파이썬 기본 라이브러리만 쓰는
+스크립트 하나를 만들고, 그걸 Spark 터미널에 붙여넣어 돌렸다. 요청 옵션도 앱과 같다(`format:json`, `num_ctx` 8192, 호출별 temperature, `think:false`).
+웹사이트 공백기 채우기 흐름 6단계: 카테고리 추출 → 사실 추출(블로그 인용 기대) → 파고들기 판단 → 입력창 초안 → 충분성 판단 → 문서 생성.
+자동 판정: 앱 파서가 거부할 응답, 인용 없는 문장, 인용한 근거에 없는 숫자, 기록물 인용 누락, 숨은 추론 출력.
+
+### 결과 (Spark, Ollama 0.33.3, 각 1회)
+
+| 단계 | qwen2.5:32b | qwen3.5:35b-a3b | gemma4:26b |
+|---|---|---|---|
+| extract_categories | 11.8s · 6.9 t/s | 2.3s · 41.1 t/s | 2.2s · 67.2 t/s |
+| extract_facts | 24.0s · 6.8 t/s | 6.4s · 40.8 t/s | 4.0s · 64.0 t/s |
+| judge_drilldown | 8.7s · 6.9 t/s | 2.5s · 41.2 t/s | 15.3s · 50.0 t/s |
+| draft_answer | 10.5s · 6.9 t/s | 1.9s · 42.1 t/s | 1.7s · 51.8 t/s |
+| judge_sufficiency | 2.3s · 7.8 t/s | 0.8s · 44.5 t/s | 0.8s · 56.7 t/s |
+| generate_document | 34.5s · 6.8 t/s | 6.1s · 41.5 t/s | 5.2s · 60.3 t/s ⚠ |
+| **합계** | **91.9s** | **20.1s** | **29.1s** |
+
+`qwen3.5:35b-a3b` 3회 반복: 합계 20.5 / 17.1 / 17.6초, `should_ask=True`·`sufficient=False`로 매번 같고 경고 0건.
+
+### 판단
+- **`qwen3.5:35b-a3b` 채택.** 약 6배 빠른 decode, 정직성 경고 0건. 사실 추출에서 "오픈 준비"와 "음료 제조"를 별개 사실로 나누고
+  블로그 인용도 정확했다. 문서에서 사실 1·2를 한 문장으로 묶으면서 둘 다 인용했다.
+- **`gemma4:26b` 탈락.** 가장 빠르지만 문서 문장 **본문에 `[1]` 같은 인용 번호를 그대로 적었고**(그대로 경력기술서에 찍힌다),
+  첫 문장이 "…수행하며 [1]"로 끊겼다. 파고들기 판단은 출력 1초 분량인데 15.3초 — 원인은 1회 측정으로 모름.
+- **바뀌는 동작:** qwen3.5는 사실 4개로는 `sufficient=False`(32b·gemma는 True). 고정 질문 뒤 후속 질문 예산을 더 쓴다 —
+  인터뷰가 카테고리당 한두 턴 길어질 수 있지만 턴당 대기는 크게 줄었다. 부담되면 `interview_sufficiency.jinja` 기준을 조정.
+- 세 모델 모두 입력창 초안에서 약간 추측한다("수기로 관리" 등). 초안은 원래 추측해도 되는 출발점이라 교체와 무관.
+
+### 교체 / 롤백
+- Render: `LOCAL_LLM_MODEL_NAME=qwen3.5:35b-a3b`, `LOCAL_LLM_DISABLE_THINKING=true` → 재배포 후 `GET /api/v1/health/llm`의
+  `model_name`이 `qwen3.5:35b-a3b`인 것 확인. (이 엔드포인트는 연결만 본다 — 실제 생성은 사이트에서 한 번 돌려 확인)
+- 롤백: `qwen2.5:32b` + `LOCAL_LLM_DISABLE_THINKING=false`. 32b는 Spark에 남겨 둔다.
+- 운영 체크리스트(07), CLAUDE.md, 스펙, 로컬 개발 문서, `infra/cloudflare/verify_tunnel.*`(기본 모델 + `think:false`)를 새 모델 기준으로 갱신.
+
 ## 트러블슈팅
 
 | 문제 | 원인 | 해결 |
 |---|---|---|
 | 계측 로그를 넣을 곳을 찾다가, 기존 `logger.info`(피드 수집 등)가 운영에서 한 번도 안 보였을 것을 발견 | 앱 어디에도 로깅 설정이 없어 루트 기본 레벨(WARNING)이 적용됨 | `main.py`에서 `app` 로거에만 핸들러 + INFO |
 | 기간 추론을 백그라운드로 옮기면 테스트가 설정 DB로 붙음 | 워커가 여는 세션은 `get_db` 오버라이드 밖 | `get_background_session_factory` 훅 + conftest 오버라이드 |
+| 문서엔 32b가 약 13 tok/s였는데 벤치에선 6.8 | **원인 미확인.** devlog 08의 13은 844토큰/63초(총 시간 역산)라 순수 decode는 그보다 빨라야 맞는데, 이번 `eval_duration` 기준은 절반이다. 측정 조건(동시 운영 요청, Ollama 버전, 벤치 중 다른 모델 적재 여부)이 달랐을 수 있다 | 운영 모델을 바꿨으므로 32b를 다시 잴 필요는 크지 않다. 새 모델 속도는 운영 `llm …` 로그로 계속 확인 |
+| Spark SSH가 비밀번호 인증이라 원격 실행 불가, 긴 스크립트를 옮기기 번거로움 | 키 인증 미설정, 저장소는 private라 Spark가 raw URL로 받을 수 없음 | 스크립트를 파이썬 기본 라이브러리만 쓰는 파일 하나로 만들어 heredoc 한 번 붙여넣기로 저장·실행 |
 
 ## 관련 커밋
 

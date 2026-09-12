@@ -62,7 +62,6 @@ export function InterviewSection({
   categories,
   currentCategoryId,
   composerEvent,
-  onPrefillChange,
   onSubmittingChange,
 }: {
   sessionId: string;
@@ -71,11 +70,6 @@ export function InterviewSection({
   categories: ActivityCategoryRead[];
   currentCategoryId: string | null;
   composerEvent: ComposerEvent | null;
-  /** Reports the current question's AI-drafted answer up to the page, which
-   * feeds it into the shared ChatComposer's prefill. Called with null once
-   * the composer shouldn't show a prefill anymore (answered, or no question
-   * loaded yet). */
-  onPrefillChange: (text: string | null) => void;
   /** Reports whether an answer/confirm round-trip is in flight, so the page
    * can disable the composer — the local dev LLM can take ~20s per call
    * (verified live), and with nothing disabling input or showing progress
@@ -116,11 +110,9 @@ export function InterviewSection({
     if (ask.mode === "review" && ask.review) {
       setQuestion(null);
       setReview(toReviewDraft(ask.review));
-      onPrefillChange(null);
     } else {
       setReview(null);
       setQuestion(ask);
-      onPrefillChange(ask.draft_answer || null);
     }
   }
 
@@ -135,7 +127,6 @@ export function InterviewSection({
       .interviewAsk(sessionId, accessToken)
       .then(applyAsk)
       .catch((err) => setError(errorMessage(err)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, currentCategoryId, sessionId, accessToken]);
 
   async function submitAnswer(text: string) {
@@ -158,13 +149,11 @@ export function InterviewSection({
         return;
       }
       if (answer.question) {
-        // /answer leaves the composer prefill to /ask (one fewer LLM call on
-        // the blocking path). Show the question right away, but keep the
-        // composer disabled until the prefill arrives — a prefill landing
-        // later would replace whatever the user had started typing.
+        // /answer already carries the next question — show it directly. Until
+        // 2026-09-12 this also called /ask again, purely to fetch the AI's
+        // composer prefill; with that feature gone the extra round trip
+        // (and its LLM call) is gone too.
         setQuestion(answer.question);
-        const ask = await sessionApi.interviewAsk(sessionId, accessToken);
-        applyAsk(ask);
       }
     } catch (err) {
       setError(errorMessage(err));
@@ -182,7 +171,6 @@ export function InterviewSection({
     if (answeredNonceRef.current === composerEvent.nonce) return;
     answeredNonceRef.current = composerEvent.nonce;
 
-    onPrefillChange(null); // answered — the "AI가 미리 써봤어요" tag no longer applies
     setError(null);
     setPendingAnswerText(composerEvent.value);
     setIsSubmitting(true);

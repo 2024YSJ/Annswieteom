@@ -226,7 +226,7 @@ async def infer_category_period_in_background(
     본다 — 기간은 인용되지 않는 메타데이터이고, 카테고리 도중에 알아야 후속 질문
     예산(orchestrator.followup_budget)에 반영된다.
 
-    예전에는 confirm 요청 안에서 judge_drilldown·draft_answer보다 먼저 순차로
+    예전에는 confirm 요청 안에서 judge_drilldown보다 먼저 순차로
     불렀다. Spark에서 LLM 호출 하나가 수 초씩이라, 사용자는 결과를 화면에 쓰지도
     않는 메타데이터 때문에 그만큼 더 기다렸다. 사용자가 다음 답을 읽고 쓰는
     동안은 Ollama가 비어 있으니 그때 돌린다(프로필 속성 추출과 같은 이유).
@@ -285,7 +285,7 @@ async def _build_context(
         excerpts = []
 
     # 다른 세션·검색에서 이미 알게 된 사람 단위 속성(비민감만). 후속/드릴다운
-    # 질문이 아는 걸 다시 묻지 않게 한다 — draft_answer에는 넣지 않는다
+    # 질문이 아는 걸 다시 묻지 않게 한다 — 사실 추출·문서 생성에는 넣지 않는다
     # (InterviewContext.profile_summary 주석 참고).
     profile_summary = await profile_summary_lines(db, session.user_id)
 
@@ -467,39 +467,20 @@ async def skip_records(
     return RecordsSkipRead(status=session.status, current_category_id=next_category.id)
 
 
-async def _build_pending_turn(
-    llm: LLMProvider,
+def _build_pending_turn(
     context: InterviewContext,
     category: ActivityCategory,
     question_text: str,
     question_source: str,
     fact_type_hint: str,
     is_structural: bool = False,
-    with_draft: bool = True,
 ) -> dict:
     """`is_structural=True` is for the "여러 활동 있나요?" check only — it's
     routing info, not a content question, so it shouldn't eat into either
-    question budget, and there's nothing meaningful for the AI to draft an
-    answer to.
+    question budget.
 
-    `with_draft=False`는 /answer가 다음 질문을 정할 때다 — 답변 초안(입력창 미리
-    채우기)을 만들지 않고 None으로 둔다. 초안은 사용자가 그 질문을 받는 /ask에서 처음
-    한 번 만든다(_ensure_draft_answer). 답변 요청 하나에 추출·판단·초안 LLM 호출이
-    줄줄이 붙어 기다리는 시간이 길어지는 걸 막으려는 것이다(Spark 32b ≈ 13 tok/s)."""
-    draft_answer: str | None
-    if is_structural:
-        draft_answer = ""
-    elif not with_draft:
-        draft_answer = None
-    else:
-        try:
-            draft_answer = await llm.draft_answer(context, question_text)
-        except LLMUnavailableError:
-            # The composer prefill is a convenience, not a required part of
-            # the flow (the user can always type from a blank box), so a
-            # failure here shouldn't block the question itself from being shown.
-            draft_answer = ""
-
+    LLM을 부르지 않는다(2026-09-12 입력창 자동 채우기 제거 이후) — 질문 문구는 이미
+    정해져 들어오고, 여기서 하는 일은 질문 예산 집계와 대기 턴 저장뿐이다."""
     # Every fresh question — whether the next fixed one, an interleaved
     # drill-down, or a post-base followup — goes through this one function,
     # so incrementing here (rather than at each of its call sites) is the
@@ -520,35 +501,8 @@ async def _build_pending_turn(
         "question_source": question_source,
         "fact_type_hint": fact_type_hint,
         "context_excerpt_ids": [e.chunk_id for e in context.record_excerpts],
-        "draft_answer": draft_answer,
         "candidate_facts": None,
     }
-
-
-async def _ensure_draft_answer(
-    db: AsyncSession,
-    session: SessionModel,
-    category: ActivityCategory,
-    pending: dict,
-    llm: LLMProvider,
-    chunk_search,
-) -> dict:
-    """대기 중인 질문에 답변 초안이 아직 없으면(/answer가 만든 질문) 지금 한 번 만든다.
-
-    /ask는 멱등이라 두 번째부터는 저장된 초안을 그대로 돌려준다. 초안 생성 실패는
-    빈 문자열 — 입력창 미리 채우기는 편의 기능이지 필수 단계가 아니다.
-    """
-    if pending.get("draft_answer") is not None:
-        return pending
-    context, _ = await _build_context(db, session, category, chunk_search, query_text=pending["question_text"])
-    try:
-        draft_answer = await llm.draft_answer(context, pending["question_text"])
-    except LLMUnavailableError:
-        draft_answer = ""
-    pending = {**pending, "draft_answer": draft_answer}
-    session.pending_turn = pending
-    await db.commit()
-    return pending
 
 
 def _ask_read(category: ActivityCategory, pending: dict) -> InterviewAskRead:
@@ -557,7 +511,6 @@ def _ask_read(category: ActivityCategory, pending: dict) -> InterviewAskRead:
         category_id=category.id,
         question_text=pending["question_text"],
         question_source=pending["question_source"],
-        draft_answer=pending.get("draft_answer") or "",
     )
 
 
@@ -691,13 +644,11 @@ async def _decide_next(
             if should_ask and drilldown_text:
                 if context is None:
                     context, _ = await _build_context(db, session, category, chunk_search, query_text=drilldown_text)
-                return "question", await _build_pending_turn(
-                    llm, context, category, drilldown_text, "followup", "followup", with_draft=False
+                return "question", _build_pending_turn(
+                    context, category, drilldown_text, "followup", "followup"
                 )
         context, _ = await _build_context(db, session, category, chunk_search, query_text=remaining.text)
-        return "question", await _build_pending_turn(
-            llm, context, category, remaining.text, "base", remaining.fact_type, with_draft=False
-        )
+        return "question", _build_pending_turn(context, category, remaining.text, "base", remaining.fact_type)
 
     if not budget_left:
         # 예산 소진 — LLM이 계속 부족하다고 판단하더라도 더 묻지 않는다.
@@ -716,9 +667,7 @@ async def _decide_next(
     # 후속 질문은 질문 문구가 아직 없으므로 카테고리 이름을 검색어로 쓴다.
     context, _ = await _build_context(db, session, category, chunk_search, query_text=category.label)
     question_text = await llm.followup_question(context)
-    return "question", await _build_pending_turn(
-        llm, context, category, question_text, "followup", "followup", with_draft=False
-    )
+    return "question", _build_pending_turn(context, category, question_text, "followup", "followup")
 
 
 @router.post("/{session_id}/interview/ask", response_model=InterviewAskRead)
@@ -749,9 +698,7 @@ async def interview_ask(
             return InterviewAskRead(mode="review", category_id=category.id, review=_review_read(category))
         # Idempotent: if a question is already pending and unanswered, return it
         # as-is instead of calling the LLM again (covers refresh/duplicate calls).
-        # /answer가 정한 질문이면 답변 초안이 아직 없어 여기서 처음 한 번 만든다.
         if pending.get("candidate_facts") is None:
-            pending = await _ensure_draft_answer(db, session, category, pending, llm, chunk_search)
             return _ask_read(category, pending)
 
     # 질문을 먼저 정하고, 그 질문 문구로 기록물을 검색한다. 순서가 반대였을 때는
@@ -759,8 +706,8 @@ async def interview_ask(
     # 전부였고, record_chunks.embedding은 한 번도 조회되지 않았다.
     if not category.activity_split_checked:
         context, _ = await _build_context(db, session, category, chunk_search, query_text=None)
-        session.pending_turn = await _build_pending_turn(
-            llm, context, category, ACTIVITY_BREAKDOWN_QUESTION, "split_check", "activity_breakdown", is_structural=True
+        session.pending_turn = _build_pending_turn(
+            context, category, ACTIVITY_BREAKDOWN_QUESTION, "split_check", "activity_breakdown", is_structural=True
         )
         await db.commit()
         return _ask_read(category, session.pending_turn)
@@ -777,8 +724,7 @@ async def interview_ask(
 
     session.pending_turn = next_pending
     await db.commit()
-    pending = await _ensure_draft_answer(db, session, category, next_pending, llm, chunk_search)
-    return _ask_read(category, pending)
+    return _ask_read(category, next_pending)
 
 
 @router.post("/{session_id}/interview/answer", response_model=InterviewAnswerRead)

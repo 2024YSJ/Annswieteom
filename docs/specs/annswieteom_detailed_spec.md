@@ -505,11 +505,13 @@ class LLMProvider(Protocol):
 - **응답을 스트리밍으로 받는 이유는 성능이 아니라 Cloudflare다.** 무료·Pro·Business 플랜의 프록시 read timeout(약 100초)은 **첫 바이트까지의 시간**에 걸리므로, non-streaming으로 72b를 호출하면 완성 전에 524가 난다. 조각을 이어붙이면 첫 토큰만 빨리 나오면 되므로 이 벽을 넘는다.
 - 요청 페이로드에 `keep_alive`를 실어 43GB 모델이 호출마다 재적재되지 않게 한다 — 재적재 시간만으로도 위 100초를 넘긴다.
 - 프로바이더 메서드는 샘플링 모드를 **명시**해야 한다(`TEMPERATURE_DETERMINISTIC` / `TEMPERATURE_CREATIVE`). 기본값을 두지 않은 건 그 결정을 강제하려는 의도다.
-- **지연 원칙 (2026-09-11)**: Spark에서 응답 시간은 거의 `출력 토큰 수 ÷ decode 속도(32b 약 13 tok/s)`로 정해진다. 그래서 (1) 모델에게 우리가 이미 가진 걸 다시 쓰게 하지 않는다 — `extract_facts`는 근거 발췌의 `chunk_ids`만 내고, 원문은 서버가 프롬프트에 넣었던 발췌에서 채운다(모델이 바꿔 쓴 인용이 저장될 수 없다). (2) 읽지 않는 필드를 출력시키지 않는다(`judge_sufficiency`의 `reason` 제거). (3) 화면에 쓰지 않는 호출은 응답 뒤로 미룬다(활동 기간 추론은 `interview_confirm`의 BackgroundTasks).
+- **지연 원칙 (2026-09-11)**: Spark에서 응답 시간은 거의 `출력 토큰 수 ÷ decode 속도`로 정해진다(2026-09-11 Spark 실측: `qwen2.5:32b` 6.8 tok/s → 현 운영 `qwen3.5:35b-a3b` 약 41 tok/s). 그래서 (1) 모델에게 우리가 이미 가진 걸 다시 쓰게 하지 않는다 — `extract_facts`는 근거 발췌의 `chunk_ids`만 내고, 원문은 서버가 프롬프트에 넣었던 발췌에서 채운다(모델이 바꿔 쓴 인용이 저장될 수 없다). (2) 읽지 않는 필드를 출력시키지 않는다(`judge_sufficiency`의 `reason` 제거). (3) 화면에 쓰지 않는 호출은 응답 뒤로 미룬다(활동 기간 추론은 `interview_confirm`의 BackgroundTasks).
 - 계측: 호출마다 `app.services.llm.local_ollama` 로거가 `llm <메서드> model=… wall=… prefill=…tok out=…tok (… tok/s)` 한 줄을 INFO로 남긴다(Ollama 스트림 마지막 줄의 `eval_count`/`eval_duration`). `app.*` 로거만 INFO로 연다 — 루트를 올리면 httpx가 고용24 `authKey`가 든 URL을 찍는다.
-- `LOCAL_LLM_DISABLE_THINKING=true`면 요청에 `"think": false`를 싣는다. 기본이 thinking인 모델(Qwen3 이후 계열 등)로 바꿀 때 켠다. 기본값은 꺼짐.
+- `LOCAL_LLM_DISABLE_THINKING=true`면 요청에 `"think": false`를 싣는다. 기본이 thinking인 모델(Qwen3 이후 계열 등)로 바꿀 때 켠다. 기본값은 꺼짐. **운영은 `qwen3.5:35b-a3b`라 켜져 있어야 한다.**
+- **운영 모델 (2026-09-11~)**: `qwen3.5:35b-a3b`(MoE, 24GB). 웹사이트 흐름 6단계 벤치에서 `qwen2.5:32b` 대비 합계 91.9초 → 17~20초, 정직성 경고 0건, 3회 반복 시 판단 호출 결과 동일. 롤백은 `qwen2.5:32b`(+`LOCAL_LLM_DISABLE_THINKING=false`). 근거: devlog PersonA/09.
 - 임베딩(`bge-m3`)도 `keep_alive: -1`로 상주시키고, 문서 생성의 일관성 검사는 카테고리당 임베딩 호출 1회로 묶는다(`evaluate_sentences_consistency`).
 - 모델 후보 비교: `backend/scripts/compare_llm_models.py` (devlog PersonA/09).
+- **입력창 자동 채우기 제거 (2026-09-12)**: 질문마다 AI가 답변 초안을 써서 입력창을 채우던 `draft_answer`(프로바이더 메서드·프롬프트·`InterviewAskRead` 필드)를 사용자 요청으로 삭제했다. 질문당 LLM 호출이 하나 줄고, 프론트가 초안만 받으려고 `/answer` 뒤에 `/ask`를 한 번 더 부르던 왕복도 없어졌다. 입력창은 항상 빈 칸으로 시작한다. 취업정보 검색의 첫 질문 초안(`/job-search/draft-query-from-gap`)은 그대로 남아 있다.
 
 ### 10-3. 로컬 모델 선택
 
@@ -520,8 +522,8 @@ EXAONE 3.5 7.8B-Instruct와 Qwen2.5 14B-Instruct를 4비트 양자화(GGUF Q4_K_
 | 변수명 | 설명 |
 |---|---|
 | `LOCAL_LLM_BASE_URL` | Cloudflare Tunnel로 노출된 Ollama 엔드포인트 |
-| `LOCAL_LLM_MODEL_NAME` | 예: `qwen2.5:32b` |
-| `LOCAL_LLM_DISABLE_THINKING` | 선택. `true`면 요청에 `"think": false`를 싣는다 — 기본이 thinking인 모델로 바꿀 때만. 기본 `false` |
+| `LOCAL_LLM_MODEL_NAME` | 운영: `qwen3.5:35b-a3b` (롤백: `qwen2.5:32b`) |
+| `LOCAL_LLM_DISABLE_THINKING` | `true`면 요청에 `"think": false`를 싣는다 — 기본이 thinking인 모델용. 기본 `false`, **운영은 `true`** |
 | `LLM_ACCESS_CLIENT_ID` | Cloudflare Access 서비스 토큰의 Client ID. 비워두면 인증 헤더를 붙이지 않는다(로컬 Ollama용) |
 | `LLM_ACCESS_CLIENT_SECRET` | 같은 토큰의 Client Secret. 발급 시 한 번만 보이고, 채팅·커밋에 남기지 않는다 |
 | `DATABASE_URL` | Supabase 연결 문자열 |
@@ -788,7 +790,7 @@ React Query로 서버 상태를 관리한다. 예: `['session', sessionId]`, `['
 - [ ] PC 전원 케이블 연결 확인, 절전 설정 재확인
 - [ ] Ollama, cloudflared 둘 다 서비스로 등록되어 재부팅해도 자동으로 켜지는지 실제로 한 번 재부팅해서 테스트
 - [ ] 터널을 일부러 잠깐 꺼서 웹앱이 **폴백 없이도 깨지지 않고 끝나는지** 확인 — AI 경로는 `503 llm_unavailable` + "AI 서버가 수리 중이예요."여야 하고(500이나 무한 로딩이면 버그), 로그인·피드 같은 비-AI 경로는 그대로 동작해야 한다. 이건 A 혼자 판단하지 말고 B와 함께 확인한다
-- [ ] 롤백 경로 확인: 4090을 내렸으므로 되돌아갈 기계가 없다. `ollama list`에 `qwen2.5:32b`가 있고, 롤백이 Render 환경변수 `LOCAL_LLM_MODEL_NAME` 한 줄 교체임을 팀이 알고 있다
+- [ ] 롤백 경로 확인: 4090을 내렸으므로 되돌아갈 기계가 없다. 운영은 `qwen3.5:35b-a3b`이고 `ollama list`에 롤백 모델 `qwen2.5:32b`가 있으며, 롤백이 Render 환경변수 두 줄(`LOCAL_LLM_MODEL_NAME=qwen2.5:32b`, `LOCAL_LLM_DISABLE_THINKING=false`) 교체임을 팀이 알고 있다
 - [ ] 데모 당일 PC 근처에 있을 수 없는 시간대가 있다면 미리 팀에 공유해둔다
 
 이 체크리스트를 통과하면, A는 서버 운영 경험이 없어도 이 프로젝트가 요구하는 서버 운영을 충분히 해낸 것이다.

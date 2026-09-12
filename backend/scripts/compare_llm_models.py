@@ -142,12 +142,6 @@ async def _run_cases(provider: LocalOllamaProvider) -> list[CaseResult]:
         lambda v: (f"should_ask={v.should_ask} / {v.question_text}", []),
     )
 
-    await run(
-        "draft_answer",
-        lambda: provider.draft_answer(_context(FACTS[:2]), "그 과정에서 어려웠던 점과 어떻게 극복했는지 알려주세요."),
-        lambda v: (v, [] if v.strip() else ["빈 결과"]),
-    )
-
     def render_document(v):
         lines, flags = [], []
         for p in v.paragraphs:

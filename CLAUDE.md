@@ -66,7 +66,10 @@ npm run lint
 # from the same host, so a 127.0.0.1 bind is fine. OLLAMA_HOST=0.0.0.0 is a
 # troubleshooting step, not a setup step.
 
-ollama pull qwen2.5:32b    # inference (LOCAL_LLM_MODEL_NAME)
+ollama pull qwen3.5:35b-a3b  # inference (LOCAL_LLM_MODEL_NAME) — MoE, ~6x faster decode than
+                             # the old qwen2.5:32b on the Spark. It thinks by default, so the
+                             # backend MUST run with LOCAL_LLM_DISABLE_THINKING=true.
+ollama pull qwen2.5:32b      # rollback model (previous production, set DISABLE_THINKING=false)
 ollama pull bge-m3         # embeddings — REQUIRED, and not configurable:
                            # the name is hardcoded in services/embedding/local_ollama_embedding.py
                            # and its 1024-dim output is the VECTOR(1024) column type.
@@ -95,7 +98,7 @@ journalctl -u cloudflared -n 50 --no-pager     # "active" alone is not evidence 
 
 `confirmed_facts.source_type` must be one of: `user_confirmed`, `user_edited`, `record_cited`. Never insert with a synthetic or AI-generated source type.
 
-`user_attributes` values must never reach `generate_document` or the `draft_answer` prompt — an inferred attribute in an AI draft becomes a confirmed fact the moment the user clicks confirm. Spec: [docs/specs/profiling_and_matching.md](docs/specs/profiling_and_matching.md).
+`user_attributes` values must never reach `generate_document` or `extract_facts` — an inferred attribute that lands in a fact draft becomes a confirmed fact the moment the user confirms the category review. They go only to `followup_question` / `judge_drilldown`. Spec: [docs/specs/profiling_and_matching.md](docs/specs/profiling_and_matching.md).
 
 ## API Structure
 
@@ -120,7 +123,8 @@ JWT: Access tokens expire in 30 minutes; refresh tokens in 14 days.
 ```
 DATABASE_URL              # Supabase PostgreSQL connection string
 LOCAL_LLM_BASE_URL        # Cloudflare Tunnel URL to Ollama
-LOCAL_LLM_MODEL_NAME      # e.g., qwen2.5:32b (the embedding model is NOT an env var)
+LOCAL_LLM_MODEL_NAME      # production: qwen3.5:35b-a3b (the embedding model is NOT an env var)
+LOCAL_LLM_DISABLE_THINKING  # true in production (sends "think": false); false for qwen2.5 / local dev
 LLM_ACCESS_CLIENT_ID      # Cloudflare Access service token; empty = send no auth headers
 LLM_ACCESS_CLIENT_SECRET  # never paste this into a chat log or a commit
 JWT_SECRET                # 256-bit hex string
@@ -128,7 +132,7 @@ JWT_SECRET                # 256-bit hex string
 
 ## ⚠️ Local Dev Environment Is Intentionally Isolated From Production
 
-`backend/.env` on this laptop points at a **separate `annswieteom-dev` Supabase project** and a **local Ollama instance (`http://localhost:11434`, model `qwen2.5:3b-instruct`)** instead of the production Supabase project and the DGX Spark tunnel (`https://llm.annswieteom.com`, `qwen2.5:32b`). This is deliberate — full rationale and setup steps are in [docs/checklists/00_shared/04_local_dev_environment.md](docs/checklists/00_shared/04_local_dev_environment.md).
+`backend/.env` on this laptop points at a **separate `annswieteom-dev` Supabase project** and a **local Ollama instance (`http://localhost:11434`, model `qwen2.5:3b-instruct`)** instead of the production Supabase project and the DGX Spark tunnel (`https://llm.annswieteom.com`, `qwen3.5:35b-a3b`). This is deliberate — full rationale and setup steps are in [docs/checklists/00_shared/04_local_dev_environment.md](docs/checklists/00_shared/04_local_dev_environment.md).
 
 `backend/.env` is gitignored, so this never reaches `main` through git. The one thing to actively avoid: **never "sync" these local-only values into `backend/.env.example` or the defaults in `backend/app/core/config.py`** — those files are committed and shared, and changing them to match this laptop's local setup would affect production. If `.env`'s local LLM/DB values ever look wrong for a task (e.g. you need to judge real LLM output quality, not just check that a request flow works), that's expected — the small local model is deliberately weaker than production's; point `.env` at the real tunnel temporarily and switch back after.
 
