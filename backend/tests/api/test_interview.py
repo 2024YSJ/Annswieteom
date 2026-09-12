@@ -450,58 +450,32 @@ def test_ask_is_idempotent_without_calling_llm_twice(session_client):
     assert first == second
 
 
-def test_ask_returns_a_draft_answer_to_prefill_the_composer(session_client):
+def test_ask_never_prefills_the_composer(session_client):
+    """입력창 자동 채우기(draft_answer)는 2026-09-12 사용자 요청으로 제거했다.
+    응답에 그 필드가 없어야 하고, 프로바이더에 초안 생성 메서드 자체가 없어야 한다 —
+    되살아나면 질문마다 LLM 호출이 하나 다시 붙는다."""
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
 
-    session_client.fake_llm._draft_answer_queue = ["주로 저녁 시간대에 근무했어요"]
-
     ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
-    assert ask["draft_answer"] == "주로 저녁 시간대에 근무했어요"
-    assert session_client.fake_llm.draft_answer_calls == [ask["question_text"]]
-
-    again = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
-    assert again["draft_answer"] == "주로 저녁 시간대에 근무했어요"
-    assert len(session_client.fake_llm.draft_answer_calls) == 1
+    assert ask["question_text"] == BASE_QUESTIONS["part_time"][0].text
+    assert "draft_answer" not in ask
+    assert not hasattr(get_llm_provider(), "draft_answer")
 
 
-def test_the_next_questions_draft_answer_is_made_by_ask_not_by_answer(session_client):
-    """Answering already runs extraction + routing judgments; the composer
-    prefill for the *next* question is made lazily by the /ask that shows it,
-    so /answer doesn't wait on one more LLM call (Spark 32b ≈ 13 tok/s)."""
+def test_the_next_question_comes_with_the_answer_and_needs_no_prefill(session_client):
+    """/answer가 이미 다음 질문을 싣고 온다 — 프론트가 초안을 받으러 /ask를 한 번 더
+    부르던 왕복이 사라졌으므로, 그 응답의 질문에도 초안 필드가 없어야 한다."""
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)
     _advance_to_first_category(session_client, headers, session_id)
 
     _, answer_body = _answer(session_client, headers, session_id)
-    assert answer_body["question"]["draft_answer"] == ""
-    calls_after_answer = len(session_client.fake_llm.draft_answer_calls)
+    assert answer_body["question"]["question_text"] == BASE_QUESTIONS["part_time"][1].text
+    assert "draft_answer" not in answer_body["question"]
 
-    ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
-    assert ask["question_text"] == BASE_QUESTIONS["part_time"][1].text
-    assert ask["draft_answer"]
-    assert len(session_client.fake_llm.draft_answer_calls) == calls_after_answer + 1
-
-
-def test_draft_answer_prefill_does_not_bypass_the_review(session_client):
-    """Sending the AI's draft answer unedited still only produces a draft —
-    nothing is in confirmed_facts until the category review is submitted."""
-    headers = _register_and_login(session_client)
-    session_id = _create_session(session_client, headers)
-    _advance_to_first_category(session_client, headers, session_id)
-
-    session_client.fake_llm._draft_answer_queue = ["주 3회 정도 일했어요"]
-    ask = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
-
-    resp = session_client.post(
-        f"/api/v1/sessions/{session_id}/interview/answer",
-        headers=headers,
-        json={"text": ask["draft_answer"]},
-    )
-    assert resp.json()["mode"] == "question"
-    assert len(session_client.fake_llm.extract_facts_calls) == 1  # extraction still ran
-
+    # 확인 절차는 그대로 — 답변에서 뽑은 사실은 아직 초안일 뿐이다.
     ctx = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()
     assert ctx["confirmed_facts"] == []
 
@@ -553,7 +527,7 @@ def test_ask_during_review_returns_the_review_without_calling_the_llm(session_cl
 
     fake = session_client.fake_llm
     before = (
-        len(fake.draft_answer_calls), len(fake.extract_facts_calls), len(fake.drilldown_calls),
+        len(fake.extract_facts_calls), len(fake.drilldown_calls),
         len(fake.sufficiency_calls), len(fake.followup_calls),
     )
     for _ in range(2):
@@ -561,7 +535,7 @@ def test_ask_during_review_returns_the_review_without_calling_the_llm(session_cl
         assert body["mode"] == "review"
         assert len(body["review"]["groups"]) == len(BASE_QUESTIONS["part_time"])
     after = (
-        len(fake.draft_answer_calls), len(fake.extract_facts_calls), len(fake.drilldown_calls),
+        len(fake.extract_facts_calls), len(fake.drilldown_calls),
         len(fake.sufficiency_calls), len(fake.followup_calls),
     )
     assert after == before

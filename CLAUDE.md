@@ -98,7 +98,7 @@ journalctl -u cloudflared -n 50 --no-pager     # "active" alone is not evidence 
 
 `confirmed_facts.source_type` must be one of: `user_confirmed`, `user_edited`, `record_cited`. Never insert with a synthetic or AI-generated source type.
 
-`user_attributes` values must never reach `generate_document` or the `draft_answer` prompt — an inferred attribute in an AI draft becomes a confirmed fact the moment the user clicks confirm. Spec: [docs/specs/profiling_and_matching.md](docs/specs/profiling_and_matching.md).
+`user_attributes` values must never reach `generate_document` or `extract_facts` — an inferred attribute that lands in a fact draft becomes a confirmed fact the moment the user confirms the category review. They go only to `followup_question` / `judge_drilldown`. Spec: [docs/specs/profiling_and_matching.md](docs/specs/profiling_and_matching.md).
 
 ## API Structure
 

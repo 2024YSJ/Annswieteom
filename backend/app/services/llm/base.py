@@ -137,9 +137,9 @@ class InterviewContext:
     record_excerpts: list[RecordExcerpt] = field(default_factory=list)
     asked_questions: list[str] = field(default_factory=list)
     #: 이 사용자에 대해 이미 아는 속성(비민감만) — "거주: 경기 수원" 같은 줄.
-    #: followup_question / judge_drilldown 프롬프트에만 넣는다. draft_answer에
-    #: 넣으면 추정 속성이 AI 초안에 섞이고, 사용자가 무심코 확인하는 순간
-    #: confirmed_fact로 세탁된다(정직성 가드레일).
+    #: followup_question / judge_drilldown 프롬프트에만 넣는다. 사실을 뽑는
+    #: extract_facts나 문서 생성에 넣으면 추정 속성이 확인 카드에 올라가고,
+    #: 사용자가 무심코 확인하는 순간 confirmed_fact로 세탁된다(정직성 가드레일).
     profile_summary: list[str] = field(default_factory=list)
 
 
@@ -241,7 +241,6 @@ class LLMUnavailableError(Exception):
 
 @runtime_checkable
 class LLMProvider(Protocol):
-    async def draft_answer(self, context: InterviewContext, question_text: str) -> str: ...
     async def extract_facts(
         self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
     ) -> list[FactCandidate]: ...

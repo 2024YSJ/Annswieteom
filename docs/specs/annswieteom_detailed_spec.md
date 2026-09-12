@@ -511,6 +511,7 @@ class LLMProvider(Protocol):
 - **운영 모델 (2026-09-11~)**: `qwen3.5:35b-a3b`(MoE, 24GB). 웹사이트 흐름 6단계 벤치에서 `qwen2.5:32b` 대비 합계 91.9초 → 17~20초, 정직성 경고 0건, 3회 반복 시 판단 호출 결과 동일. 롤백은 `qwen2.5:32b`(+`LOCAL_LLM_DISABLE_THINKING=false`). 근거: devlog PersonA/09.
 - 임베딩(`bge-m3`)도 `keep_alive: -1`로 상주시키고, 문서 생성의 일관성 검사는 카테고리당 임베딩 호출 1회로 묶는다(`evaluate_sentences_consistency`).
 - 모델 후보 비교: `backend/scripts/compare_llm_models.py` (devlog PersonA/09).
+- **입력창 자동 채우기 제거 (2026-09-12)**: 질문마다 AI가 답변 초안을 써서 입력창을 채우던 `draft_answer`(프로바이더 메서드·프롬프트·`InterviewAskRead` 필드)를 사용자 요청으로 삭제했다. 질문당 LLM 호출이 하나 줄고, 프론트가 초안만 받으려고 `/answer` 뒤에 `/ask`를 한 번 더 부르던 왕복도 없어졌다. 입력창은 항상 빈 칸으로 시작한다. 취업정보 검색의 첫 질문 초안(`/job-search/draft-query-from-gap`)은 그대로 남아 있다.
 
 ### 10-3. 로컬 모델 선택
 

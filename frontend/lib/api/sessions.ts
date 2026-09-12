@@ -154,7 +154,6 @@ export interface InterviewAskRead {
   mode: "question" | "review";
   question_text: string | null;
   question_source: "base" | "followup" | "split_check" | null;
-  draft_answer: string;
   review: CategoryReviewRead | null;
 }
 
