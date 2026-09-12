@@ -130,18 +130,15 @@ class InterviewAskRead(BaseModel):
     `mode="review"`: 카테고리 질문이 끝나 확인을 기다리는 중이다(새로고침 복원 경로).
     `review`에 확인할 내용이 실린다.
 
-    draft_answer는 사용자가 입력창에 타이핑을 시작하기 전에 미리 채워볼 수 있는 답변
-    초안이다 — 이걸 그대로 보내든, 고쳐서 보내든, 지우고 새로 쓰든 최종 판단은 여전히
-    사용자 몫이고, 카테고리 끝 확인(/interview/review) 절차는 그대로 거친다(정직성
-    가드레일은 "무엇을 답했는지"가 아니라 "그 답에서 뽑은 사실을 확인했는지"에서
-    지켜지므로 이 필드는 그 절차를 건너뛰지 않는다).
+    2026-09-12까지는 `draft_answer`(AI가 미리 써둔 답변으로 입력창을 채우는 값)가
+    함께 왔다. 사용자 요청으로 기능을 제거했고, 덕분에 질문마다 돌던 LLM 호출도 하나
+    줄었다 — 입력창은 항상 빈 칸으로 시작한다.
     """
 
     category_id: uuid.UUID
     mode: Literal["question", "review"] = "question"
     question_text: str | None = None
     question_source: Literal["base", "followup", "split_check"] | None = None
-    draft_answer: str = ""
     review: CategoryReviewRead | None = None
 
 

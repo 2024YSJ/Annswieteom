@@ -54,8 +54,8 @@ class UserAttribute(Base):
     **정직성 가드레일과의 관계:** 이 테이블은 추천(어떤 공개 공고를 위로 올릴지)과
     대화(무엇을 다시 묻지 않을지)에만 쓴다. 생성 문서(STAR)는 여전히
     confirmed_facts만 인용한다 — 여기 값은 document_generator로 절대 흐르지 않는다.
-    추정 값이 AI 초안에 섞여 사용자가 무심코 확인하면 confirmed_fact로 세탁되므로
-    draft_answer 프롬프트에도 넣지 않는다.
+    추정 값이 사실 초안에 섞여 사용자가 무심코 확인하면 confirmed_fact로 세탁되므로
+    extract_facts 프롬프트에도 넣지 않는다.
 
     값은 행 단위 이력으로 남는다. 추정 값이 바뀌면 옛 행에 `invalidated_at`을
     찍고 새 행을 넣는다(Mem0가 그래프판에서 삭제 대신 무효화를 쓰는 것과 같은

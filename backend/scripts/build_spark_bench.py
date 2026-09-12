@@ -92,19 +92,6 @@ cases = [
         ),
     },
     {
-        "name": "draft_answer",
-        "step": f"다음 질문「{q_hard.text}」 입력창 초안",
-        "kind": "draft",
-        "temperature": TEMPERATURE_CREATIVE,
-        "prompt": _render(
-            "interview_draft_answer.jinja",
-            **common,
-            confirmed_facts_so_far=FACTS[:2],
-            record_excerpts=[EXCERPT],
-            question_text=q_hard.text,
-        ),
-    },
-    {
         "name": "judge_sufficiency",
         "step": "고정 질문이 끝난 뒤 이야기가 충분한지",
         "kind": "sufficiency",

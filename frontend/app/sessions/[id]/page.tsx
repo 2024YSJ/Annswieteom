@@ -33,7 +33,6 @@ export default function SessionChatPage() {
   const { data: ctx, isLoading, error: loadError } = useSessionContext(sessionId, kind !== "job_search");
   const bottomRef = useRef<HTMLDivElement>(null);
   const [composerEvent, setComposerEvent] = useState<ComposerEvent | null>(null);
-  const [composerPrefill, setComposerPrefill] = useState<string | null>(null);
   const [interviewSubmitting, setInterviewSubmitting] = useState(false);
 
   useEffect(() => {
@@ -149,7 +148,6 @@ export default function SessionChatPage() {
               categories={ctx.categories}
               currentCategoryId={ctx.current_category?.id ?? null}
               composerEvent={composerEvent?.forStep === "interview" ? composerEvent : null}
-              onPrefillChange={setComposerPrefill}
               onSubmittingChange={setInterviewSubmitting}
             />
           )}
@@ -176,7 +174,6 @@ export default function SessionChatPage() {
               key={activeStep}
               activeStep={activeStep}
               onSend={setComposerEvent}
-              prefillText={activeStep === "interview" ? composerPrefill : null}
               disabled={activeStep === "interview" && interviewSubmitting}
             />
           </div>

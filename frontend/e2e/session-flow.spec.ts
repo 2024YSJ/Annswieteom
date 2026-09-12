@@ -108,7 +108,6 @@ test.describe("unified session chat flow", () => {
           mode: "question",
           question_text: "이 아르바이트를 얼마나 자주, 어느 정도 기간 동안 하셨나요?",
           question_source: "base",
-          draft_answer: "주로 저녁 시간대에, 주 3~4회 정도 근무했던 것 같아요.",
           review: null,
         }),
       }),
@@ -166,10 +165,10 @@ test.describe("unified session chat flow", () => {
     // expected here.
     await expect(composerInput).toBeVisible();
 
-    // The composer arrives pre-filled with the AI's draft answer (editable,
-    // not just a placeholder) and a tag marking it as a suggestion.
-    await expect(composerInput).toHaveValue("주로 저녁 시간대에, 주 3~4회 정도 근무했던 것 같아요.");
-    await expect(page.getByText("AI가 미리 써봤어요", { exact: false })).toBeVisible();
+    // The composer starts empty — the AI draft-answer prefill was removed on
+    // 2026-09-12 (user request), so nothing types for the user.
+    await expect(composerInput).toHaveValue("");
+    await expect(page.getByText("AI가 미리 써봤어요", { exact: false })).toHaveCount(0);
 
     // Sidebar reflects progress without a URL change.
     await expect(page.getByText("공백기 채우기", { exact: true })).toBeVisible();

@@ -95,11 +95,6 @@ def judge(case, obj):
         if ask and not q:
             flags.append("should_ask=true인데 질문이 없음")
         return f"should_ask={ask}\n{q}", flags
-    if kind == "draft":
-        text = obj["draft_answer"]
-        if not str(text).strip():
-            flags.append("빈 초안")
-        return str(text), flags
     if kind == "sufficiency":
         return f"sufficient={bool(obj['sufficient'])}", flags
     if kind == "document":
