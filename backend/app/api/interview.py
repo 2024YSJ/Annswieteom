@@ -514,6 +514,13 @@ def _ask_read(category: ActivityCategory, pending: dict) -> InterviewAskRead:
     )
 
 
+def _candidate_reads(candidate_payload: list[dict]) -> list[FactCandidateRead]:
+    return [
+        FactCandidateRead(index=i, content=c["content"], fact_type=c["fact_type"], based_on=BasedOnRead(**c["based_on"]))
+        for i, c in enumerate(candidate_payload)
+    ]
+
+
 def _review_pending(category: ActivityCategory) -> dict:
     return {"kind": "category_review", "category_id": str(category.id)}
 
@@ -700,6 +707,19 @@ async def interview_ask(
         # as-is instead of calling the LLM again (covers refresh/duplicate calls).
         if pending.get("candidate_facts") is None:
             return _ask_read(category, pending)
+        # 후보는 이미 뽑혔지만(예: "여러 활동 있나요?" 답변) 아직 /interview/confirm으로
+        # 확정되지 않은 상태 — 여기서 처리 안 하면 아래 activity_split_checked 분기로
+        # 떨어져 pending_turn을 새 분리질문으로 덮어쓰고 후보를 버린다(2026-09-12 버그:
+        # 같은 문구가 새로고침마다 반복되고 상태가 진행되지 않음). question_text/source도
+        # 함께 돌려줘야 프론트가 질문 말풍선을 그려 그 아래 후보 카드가 보인다 — 프론트의
+        # 렌더 조건이 questionText 존재를 전제로 하기 때문(InterviewChatThread.tsx).
+        return InterviewAskRead(
+            mode="candidates",
+            category_id=category.id,
+            question_text=pending["question_text"],
+            question_source=pending["question_source"],
+            candidates=_candidate_reads(pending["candidate_facts"]),
+        )
 
     # 질문을 먼저 정하고, 그 질문 문구로 기록물을 검색한다. 순서가 반대였을 때는
     # (2026-09-09 이전) 검색어가 없어 카테고리에 붙은 청크를 작성순으로 자르는 게
@@ -770,10 +790,7 @@ async def interview_answer(
         await db.commit()
         return InterviewAnswerRead(
             mode="candidates",
-            candidates=[
-                FactCandidateRead(index=i, content=c["content"], fact_type=c["fact_type"], based_on=BasedOnRead(**c["based_on"]))
-                for i, c in enumerate(candidate_payload)
-            ]
+            candidates=_candidate_reads(candidate_payload)
         )
 
     # 공백뿐인 답은 받지 않는다. 예전엔 빈 후보를 확인하고 같은 질문을 다시 받는 식이었지만,
