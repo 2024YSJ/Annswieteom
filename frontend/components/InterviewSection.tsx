@@ -105,6 +105,9 @@ export function InterviewSection({
   // redundant network round-trip on every render, not a correctness fix.
   const fetchedForRef = useRef<string | null>(null);
   const answeredNonceRef = useRef<number | null>(null);
+  // "candidates"가 빈 배열로 도착한 걸 이미 자동 제출했는지 — 배열 참조로 비교해서
+  // 같은 도착에 두 번 쏘지 않는다(아래 자동 진행 effect 참고).
+  const autoAdvancedCandidatesRef = useRef<CandidateDraft[] | null>(null);
 
   function applyAsk(ask: InterviewAskRead) {
     if (ask.mode === "review" && ask.review) {
@@ -177,6 +180,24 @@ export function InterviewSection({
     void submitAnswer(composerEvent.value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composerEvent?.nonce]);
+
+  function retryAnswer() {
+    if (!pendingAnswerText) return;
+    setError(null);
+    setIsSubmitting(true);
+    void submitAnswer(pendingAnswerText);
+  }
+
+  // "여러 활동 있나요?"에 후보가 0건으로 왔으면("하나뿐이에요" 등) 사용자가 굳이
+  // "다음"을 눌러야 할 이유가 없다 — 서버가 이미 후보 없음을 알려준 상태이므로
+  // 빈 확인을 자동으로 제출한다(2026-09-12 검증에서 발견된 불필요한 클릭).
+  useEffect(() => {
+    if (candidates !== null && candidates.length === 0 && autoAdvancedCandidatesRef.current !== candidates) {
+      autoAdvancedCandidatesRef.current = candidates;
+      void submitSplitCheck();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidates]);
 
   function updateCandidate(index: number, patch: Partial<Omit<CandidateDraft, "candidate">>) {
     setCandidates((prev) => (prev ? prev.map((c, i) => (i === index ? { ...c, ...patch } : c)) : prev));
@@ -303,7 +324,19 @@ export function InterviewSection({
         isWaitingForAnswer={isSubmitting && pendingAnswerText !== null}
       />
 
-      {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
+      {error && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <p style={{ color: "var(--danger)", margin: 0 }}>{error}</p>
+          {/* 실패한 답변은 pendingAnswerText에 그대로 남아 있다(성공 시에만 지워짐) —
+              그 값으로 같은 답을 다시 보낸다. 사용자가 처음부터 다시 타이핑하지 않아도
+              된다(JobSearchChatPage의 "다시 시도"와 같은 패턴, 2026-09-12 검증 발견). */}
+          {pendingAnswerText && (
+            <button type="button" onClick={retryAnswer} disabled={isSubmitting} style={{ fontSize: 12 }}>
+              다시 시도
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

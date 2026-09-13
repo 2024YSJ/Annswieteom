@@ -13,6 +13,14 @@
 
 - [ ] Ollama가 떠 있고 `ollama list`에 **`qwen3.5:35b-a3b`(운영)·`bge-m3`·`qwen2.5:32b`(롤백)가 모두** 보인다 (`bge-m3`가 빠지면 임베딩이 조용히 전멸한다 — 08번 2절)
 - [ ] Render 환경변수에 `LOCAL_LLM_MODEL_NAME=qwen3.5:35b-a3b`와 **`LOCAL_LLM_DISABLE_THINKING=true`가 둘 다** 있다 — 둘째가 빠지면 모델이 숨은 추론부터 해서 속도 이득이 사라진다(PersonA devlog 09)
+- [ ] Spark의 Ollama 서비스에 **`OLLAMA_FLASH_ATTENTION=0`**이 설정돼 있다(아래 "CUDA illegal memory access" 항목 참고 — MoE 모델 교체로 새로 생긴 크래시의 확인된 해결책, PersonA devlog 10). systemd면:
+      ```bash
+      sudo systemctl edit ollama
+      # [Service]
+      # Environment="OLLAMA_FLASH_ATTENTION=0"
+      sudo systemctl daemon-reload && sudo systemctl restart ollama
+      ```
+      적용 후 `systemctl show ollama -p Environment`에 찍히는지 확인(재시작하면 모델을 다시 올리므로 첫 요청은 몇 초 더 걸린다)
 - [ ] Spark 안에서 `curl -s http://localhost:11434/`에 "Ollama is running"이 온다
 - [ ] cloudflared가 `sudo cloudflared service install` + `sudo systemctl enable --now cloudflared`로 자동 실행 등록돼 있다
 - [ ] **Spark가 아닌 다른 기기**(휴대폰 등)에서 터널 주소로 접속했을 때 응답이 온다 — Cloudflare Access를 켰으므로 토큰 없이는 **403이 정답**이다(1033/530이면 터널이 죽은 것)
@@ -48,6 +56,12 @@
 - [ ] **터널 주소가 옛 터널을 가리킨다(에러 1033)**: DNS는 **터널 ID**를 가리켜야 한다(계정 ID·커넥터 ID와 헷갈리기 쉽다). `cloudflared tunnel route dns --overwrite-dns annswieteom-llm-spark llm.annswieteom.com`로 다시 지정
 - [ ] **Cloudflare Tunnel 주소가 백엔드에서 안 열림**: Ollama가 `127.0.0.1`에만 바인딩된 경우다. systemd면 `sudo systemctl edit ollama`에 `Environment="OLLAMA_HOST=0.0.0.0:11434"`를 넣고 `daemon-reload` + 재시작, snap이면 `sudo snap set ollama host="0.0.0.0:11434"` 후 재시작
 - [ ] **응답이 오지만 너무 느려 타임아웃 난다**: `nvidia-smi`로 GPU가 실제로 쓰이는지 확인(CPU 폴백이 가장 조용한 실패다). GPU가 정상인데도 느리면 Render에 `LOCAL_LLM_DISABLE_THINKING=true`가 빠지지 않았는지 먼저 본다(백엔드 로그의 `llm … out=…tok`이 비정상적으로 크면 숨은 추론이 켜진 것). 그래도 느리면 `qwen2.5:32b`는 약 6배 느리므로 롤백해도 빨라지지 않는다 — 원인을 찾는다
+- [ ] **간헐적 `503 llm_unavailable`, Render 로그에 `CUDA error: an illegal memory access was encountered` 또는 `llama-server process no longer running`**: Spark의 Ollama 러너가 재적재 직후("cold") 1024토큰 넘는 첫 요청을 받으면 죽는 알려진 문제다([ollama/ollama#17434](https://github.com/ollama/ollama/issues/17434), 같은 하드웨어에서 재현·해결 확인됨). `think`나 JSON 스키마는 원인이 아니다 — 위 "처음 설정할 때"의 `OLLAMA_FLASH_ATTENTION=0`이 적용돼 있는지 먼저 확인한다. 확인 명령:
+      ```bash
+      sudo journalctl -u ollama --since "1 hour ago" | grep -i "illegal memory access"
+      systemctl show ollama -p Environment   # OLLAMA_FLASH_ATTENTION=0이 없으면 이게 원인
+      ```
+      없었다면 위 명령으로 설정하고 재시작 후 재현 여부를 지켜본다. 이미 설정돼 있는데도 재발하면 PersonA devlog 10을 보고 (b) `qwen2.5:32b` 롤백을 검토한다. 앱 쪽은 이 크래시가 나도 1회 자동 재시도하므로(`_generate`, PersonB devlog 37) 사용자에게 안 보일 수도 있다 — 로그로만 확인되는 경우도 정상이다
 - [ ] **확인할 때 캐시되는 도구를 쓰지 않는다**: 응답을 캐싱하는 fetch 도구 때문에 죽은 터널이 살아 있는 것처럼 보여 한 세션을 날린 적이 있다. 항상 fresh `curl`
 
 ## 기억할 것

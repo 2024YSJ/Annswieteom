@@ -3,14 +3,21 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
+import { queryKeys } from "@/lib/query-keys";
 
 export function AuthHeader() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { user, isLoading, logout } = useAuth();
 
   async function handleLogout() {
     await logout();
+    // queryKeys.sessions()는 사용자별이 아니라 전역 키다 — 지우지 않으면 로그아웃
+    // 후에도 이전 사용자의 세션 목록이 캐시에 남아, 랜딩이 "OO님, 이어서
+    // 해볼까요?"와 남의 "이어서 하기" 카드를 계속 보여준다(2026-09-12 검증 발견).
+    queryClient.removeQueries({ queryKey: queryKeys.sessions() });
     // logout() only clears auth state — without this, staying on whatever
     // page you were on (e.g. a session's chat screen) left a signed-out
     // visitor stranded on a stale authenticated view instead of returning

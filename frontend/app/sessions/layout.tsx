@@ -199,7 +199,7 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
   const pathname = usePathname();
   const router = useRouter();
   const { accessToken } = useAuth();
-  const { data: sessions } = useSessionsList();
+  const { data: sessions, isLoading: sessionsLoading, isError: sessionsErrored } = useSessionsList();
   const queryClient = useQueryClient();
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -264,6 +264,8 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
             onNew={() => handleNewSession("gap_fill")}
             isCreating={isCreating}
             sessions={gapFillSessions}
+            isLoading={sessionsLoading}
+            isError={sessionsErrored}
             activeId={params.id}
             accessToken={accessToken}
           />
@@ -273,6 +275,8 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
             onNew={() => handleNewSession("job_search")}
             isCreating={isCreating}
             sessions={jobSearchSessions}
+            isLoading={sessionsLoading}
+            isError={sessionsErrored}
             activeId={params.id}
             accessToken={accessToken}
           />
@@ -303,6 +307,8 @@ function SessionGroup({
   onNew,
   isCreating,
   sessions,
+  isLoading,
+  isError,
   activeId,
   accessToken,
 }: {
@@ -311,6 +317,11 @@ function SessionGroup({
   onNew: () => void;
   isCreating: boolean;
   sessions: SessionRead[];
+  /** Render 콜드스타트가 최대 약 80초 걸린다 — 그동안 로딩과 "세션이 없습니다."가
+   * 똑같이 보이면 세션이 삭제된 것처럼 오해하기 쉽다(2026-09-12 검증 발견).
+   * 로딩·오류·진짜 빈 상태를 따로 보여준다. */
+  isLoading: boolean;
+  isError: boolean;
   activeId: string | undefined;
   accessToken: string | null;
 }) {
@@ -349,7 +360,11 @@ function SessionGroup({
           {isCreating ? "..." : "+"}
         </button>
       </div>
-      {sessions.length === 0 ? (
+      {isLoading ? (
+        <p style={{ fontSize: 13, color: "var(--muted-text)" }}>불러오는 중...</p>
+      ) : isError ? (
+        <p style={{ fontSize: 13, color: "var(--danger)" }}>세션 목록을 불러오지 못했어요.</p>
+      ) : sessions.length === 0 ? (
         <p style={{ fontSize: 13, color: "var(--muted-text)" }}>세션이 없습니다.</p>
       ) : (
         <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
