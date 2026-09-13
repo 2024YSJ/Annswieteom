@@ -110,6 +110,35 @@ async def test_job_fair_without_a_region_code_gets_no_link(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_job_fairs_sends_the_keyword_when_params_have_one(monkeypatch):
+    """2026-09-13 실측 확인: keyword가 eventNm 부분일치로 반영된다."""
+    captured = {}
+
+    async def fake_get(self, url, params=None, **kwargs):
+        captured.update(params or {})
+        return httpx.Response(200, text=_JOB_FAIR_XML, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    await jic.search_job_fairs(JobInfoQueryParams(regions=["경기"], keywords=["간호"]))
+    assert captured["keyword"] == "간호"
+
+
+@pytest.mark.asyncio
+async def test_search_job_fairs_sends_no_keyword_when_params_is_none(monkeypatch):
+    """worknet_source.py(피드 수집)는 params 없이 limit만 넘긴다 — 공유 캐시가
+    한 사용자의 조건으로 좁혀지면 안 된다."""
+    captured = {}
+
+    async def fake_get(self, url, params=None, **kwargs):
+        captured.update(params or {})
+        return httpx.Response(200, text=_JOB_FAIR_XML, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    await jic.search_job_fairs(limit=50)
+    assert "keyword" not in captured
+
+
+@pytest.mark.asyncio
 async def test_search_public_recruitment_parses_real_shaped_response(monkeypatch):
     _mock_get(monkeypatch, _PUBLIC_RECRUITMENT_XML)
     results = await jic.search_public_recruitment()
@@ -150,6 +179,33 @@ async def test_search_promising_smes_parses_real_shaped_response(monkeypatch):
     # 주소로 보내느니 안 눌리는 카드로 둔다. 사업자번호는 중복 제거용으로만 쓴다.
     assert results[0].detail_url is None
     assert results[0].source_key == "3038515748"
+
+
+@pytest.mark.asyncio
+async def test_search_promising_smes_sends_the_region_when_params_have_one(monkeypatch):
+    """2026-09-13 실측 확인: region=<광역 2자리>000(5자리)이 반영된다."""
+    captured = {}
+
+    async def fake_get(self, url, params=None, **kwargs):
+        captured.update(params or {})
+        return httpx.Response(200, text=_PROMISING_SME_XML, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    await jic.search_promising_smes(JobInfoQueryParams(regions=["경기"], keywords=[]))
+    assert captured["region"] == "41000"
+
+
+@pytest.mark.asyncio
+async def test_search_promising_smes_sends_no_region_when_params_is_none(monkeypatch):
+    captured = {}
+
+    async def fake_get(self, url, params=None, **kwargs):
+        captured.update(params or {})
+        return httpx.Response(200, text=_PROMISING_SME_XML, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    await jic.search_promising_smes(limit=50)
+    assert "region" not in captured
 
 
 @pytest.mark.asyncio

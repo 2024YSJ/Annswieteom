@@ -24,6 +24,11 @@ _TRAINING_WINDOW_DAYS = 90
 # 부분일치 대신 LLM이 실제로 관련 있는 항목을 골라내는 방식으로 교체), 로컬
 # LLM 호출 하나에 무리 없이 들어갈 만큼만 가져온다.
 _FETCH_LIMIT = 20
+#: 서버 측 필터가 없는 카테고리(아래 _FILTERABLE_CATEGORIES 주석 참고)는 후보
+#: 풀이 좁으면 select_relevant_job_info_results가 고를 게 없다 — 필터 대신
+#: 후보를 조금 더 넓게 받는다. 이 목록 전체가 로컬 LLM 프롬프트에 그대로
+#: 들어가므로 무제한으로 늘리지 않는다(지연시간 증가).
+_UNFILTERED_FETCH_LIMIT = 30
 _TRAINING_PER_ENDPOINT_LIMIT = 10
 
 # 권역 질문("경기 북부")은 광역으로 조회한 뒤 주소로 걸러내므로, 기본 10건만
@@ -43,12 +48,21 @@ _MAX_TRAINING_COMBOS = 3
 # 것이라, 정밀도를 조금 내주고 재현율을 되찾는 편이 낫다.
 _MIN_RESULTS_BEFORE_WIDENING = 5
 
-# 조회 조건을 실을 수 있다고 확인된 카테고리. 훈련과정(hr/* 엔드포인트)은
-# srchTraArea1/srchTraArea2/srchTraProcessNm이 실제로 반영되는 걸 확인했지만,
-# 나머지 5개(wk/* 엔드포인트)의 파라미터 이름은 아직 확인하지 못했다 —
-# 확인 없이 추측해 보내면 유효하지 않은 값에 0건이 돌아와 "정보가 없다"로
-# 잘못 보이므로, 검증된 것만 넣는다(devlog 20의 남은 작업).
-_FILTERABLE_CATEGORIES = frozenset({"training_course"})
+# 조회 조건을 실을 수 있다고 확인된 카테고리.
+# - training_course(hr/* 4개 엔드포인트): srchTraArea1/srchTraArea2/srchTraProcessNm
+#   반영 확인(devlog 20).
+# - job_fair(callOpenApiSvcInfo210L11.do): keyword가 eventNm(행사명) 부분일치로
+#   반영되는 것을 실측 확인(2026-09-13). 지역 계열 파라미터는 후보 9개를 시도했지만
+#   못 찾음.
+# - promising_sme(callOpenApiSvcInfo216L01.do): region=<광역 2자리>000(5자리, 예:
+#   경기 "41000")이 반영되는 것을 실측 확인(2026-09-13). 직무/키워드 계열은
+#   후보 9개를 시도했지만 못 찾음.
+# 나머지 2개(public_recruitment, public_recruitment_company)는 지역 후보 9개·직무
+# 후보 8~9개를 전부 시도했지만(2026-09-13) 반영되는 파라미터를 찾지 못했다.
+# job_seeker_program은 그날 응답 자체가 0건이라 검증이 원천적으로 불가능했다 —
+# 재실측이 필요하다. 이 3개는 필터를 못 걸고 대신 후보 풀만 넓힌다
+# (_UNFILTERED_FETCH_LIMIT).
+_FILTERABLE_CATEGORIES = frozenset({"training_course", "job_fair", "promising_sme"})
 
 
 class WorknetApiError(Exception):
@@ -132,10 +146,19 @@ async def _get(url: str, params: dict[str, str], category: str) -> ET.Element:
     return root
 
 
-async def search_job_fairs(limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+async def search_job_fairs(params: JobInfoQueryParams | None = None, limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+    request_params = {
+        "authKey": settings.worknet_job_posting_api_key, "returnType": "XML", "callTp": "L",
+        "startPage": "1", "display": str(limit),
+    }
+    if params and params.keywords:
+        # API는 값 하나만 받는다(training_course와 같은 제약) — 첫 키워드만
+        # 싣는다. 여러 키워드를 다 걸어야 하면 training처럼 조합별 호출로
+        # 확장한다(지금은 최소 변경).
+        request_params["keyword"] = params.keywords[0]
     root = await _get(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L11.do",
-        {"authKey": settings.worknet_job_posting_api_key, "returnType": "XML", "callTp": "L", "startPage": "1", "display": str(limit)},
+        request_params,
         "job_fair",
     )
     results = []
@@ -162,7 +185,7 @@ async def search_job_fairs(limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
     return results
 
 
-async def search_public_recruitment(limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+async def search_public_recruitment(limit: int = _UNFILTERED_FETCH_LIMIT) -> list[JobInfoResult]:
     root = await _get(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L21.do",
         {"authKey": settings.worknet_job_posting_api_key, "returnType": "XML", "callTp": "L", "startPage": "1", "display": str(limit)},
@@ -190,7 +213,7 @@ async def search_public_recruitment(limit: int = _FETCH_LIMIT) -> list[JobInfoRe
     return results
 
 
-async def search_public_recruitment_companies(limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+async def search_public_recruitment_companies(limit: int = _UNFILTERED_FETCH_LIMIT) -> list[JobInfoResult]:
     root = await _get(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L31.do",
         {"authKey": settings.worknet_job_posting_api_key, "returnType": "XML", "callTp": "L", "startPage": "1", "display": str(limit)},
@@ -216,7 +239,7 @@ async def search_public_recruitment_companies(limit: int = _FETCH_LIMIT) -> list
     return results
 
 
-async def search_job_seeker_programs(limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+async def search_job_seeker_programs(limit: int = _UNFILTERED_FETCH_LIMIT) -> list[JobInfoResult]:
     root = await _get(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo217L01.do",
         {"authKey": settings.worknet_job_seeker_program_api_key, "returnType": "XML", "callTp": "L", "startPage": "1", "display": str(limit)},
@@ -235,10 +258,20 @@ async def search_job_seeker_programs(limit: int = _FETCH_LIMIT) -> list[JobInfoR
     return results
 
 
-async def search_promising_smes(limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+async def search_promising_smes(params: JobInfoQueryParams | None = None, limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+    request_params = {
+        "authKey": settings.worknet_promising_sme_api_key, "returnType": "XML", "callTp": "L",
+        "startPage": "1", "display": str(limit),
+    }
+    if params and params.regions:
+        # 이 엔드포인트는 지역 조건 하나만 받는다(job_fair의 keyword와 같은
+        # 최소 변경 원칙) — 5자리(광역 2자리 + "000") 형식이 실측 확인됐다.
+        filters = resolve_region_filters(params.regions, limit=1)
+        if filters:
+            request_params["region"] = f"{filters[0].area1}000"
     root = await _get(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo216L01.do",
-        {"authKey": settings.worknet_promising_sme_api_key, "returnType": "XML", "callTp": "L", "startPage": "1", "display": str(limit)},
+        request_params,
         "promising_sme",
     )
     results = []

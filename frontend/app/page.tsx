@@ -82,14 +82,14 @@ export default function Home() {
       {hasSessions ? (
         <section className="hero hero-compact">
           <h1>{user?.nickname}님, 이어서 해볼까요?</h1>
-          <p className="hero-sub">공백기라 불린 시간을, 근거 있는 커리어 문서로.</p>
+          <p className="hero-sub">공백기의 불분명한 기억을, 구체적인 커리어 문서로.</p>
         </section>
       ) : (
         <section className="hero">
           <span className="hero-eyebrow">공백기 정리 · 취업 정보</span>
           <h1>우리는 쉬지 않았습니다</h1>
           <p className="hero-sub">
-            공백기라 불린 시간을, <b>근거 있는 커리어 문서</b>로.
+            공백기의 불분명한 기억을, <b>구체적인 커리어 문서</b>로.
           </p>
         </section>
       )}
@@ -105,7 +105,7 @@ export default function Home() {
                 ✍️
               </span>
               <span className="flow-title">공백기 채우기</span>
-              <span className="flow-desc">그동안 한 일을 대화로 짚어보고, 이력서에 그대로 쓸 수 있는 STAR 문장으로 정리해요.</span>
+              <span className="flow-desc">흐릿한 기억을 대화로 짚어가며, 이력서에 그대로 쓸 수 있는 구체적인 STAR 문장으로 정리해요.</span>
               <span className="flow-go">
                 {pendingKind === "gap_fill" ? "시작하는 중..." : hasSessions ? "새로 시작하기" : "시작하기"}{" "}
                 <span aria-hidden>→</span>

@@ -113,6 +113,13 @@ export function InterviewSection({
     if (ask.mode === "review" && ask.review) {
       setQuestion(null);
       setReview(toReviewDraft(ask.review));
+    } else if (ask.mode === "candidates") {
+      // 질문 말풍선을 남겨둬야 그 아래 후보 카드가 보인다 — InterviewChatThread의
+      // 렌더 조건이 questionText 존재를 전제로 한다(submitAnswer의 candidates
+      // 분기도 같은 이유로 question을 그대로 둔다).
+      setQuestion(ask);
+      setReview(null);
+      setCandidates(toCandidateDrafts(ask.candidates));
     } else {
       setReview(null);
       setQuestion(ask);

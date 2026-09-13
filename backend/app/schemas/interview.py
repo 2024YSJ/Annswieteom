@@ -130,16 +130,22 @@ class InterviewAskRead(BaseModel):
     `mode="review"`: 카테고리 질문이 끝나 확인을 기다리는 중이다(새로고침 복원 경로).
     `review`에 확인할 내용이 실린다.
 
+    `mode="candidates"`: "여러 활동 있나요?" 답변에서 후보가 이미 뽑혔지만 아직
+    `/interview/confirm`으로 확정되지 않은 중이다(새로고침 복원 경로). `candidates`에
+    복원할 후보가 실린다 — 이 상태를 처리 안 하면 같은 분리질문이 새로고침마다
+    반복되고 후보가 버려지는 버그가 된다(2026-09-12 확인).
+
     2026-09-12까지는 `draft_answer`(AI가 미리 써둔 답변으로 입력창을 채우는 값)가
     함께 왔다. 사용자 요청으로 기능을 제거했고, 덕분에 질문마다 돌던 LLM 호출도 하나
     줄었다 — 입력창은 항상 빈 칸으로 시작한다.
     """
 
     category_id: uuid.UUID
-    mode: Literal["question", "review"] = "question"
+    mode: Literal["question", "review", "candidates"] = "question"
     question_text: str | None = None
     question_source: Literal["base", "followup", "split_check"] | None = None
     review: CategoryReviewRead | None = None
+    candidates: list[FactCandidateRead] = []
 
 
 class InterviewAnswerRequest(BaseModel):

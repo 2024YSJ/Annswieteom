@@ -112,6 +112,110 @@ def test_query_spanning_multiple_categories_returns_all_of_them(session_client):
     assert set(fake_client.search_calls) == {"training_course", "promising_sme"}
 
 
+def _add_desired_job_and_region(client, user_email, desired_job="프로그래머", region_code="41", region_label="경기"):
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.models.user import User
+    from app.models.user_attribute import UserAttribute
+
+    async def _run():
+        async with client.session_local() as db:
+            user = (await db.execute(select(User).where(User.email == user_email))).scalar_one()
+            db.add_all(
+                [
+                    UserAttribute(
+                        user_id=user.id, key="desired_job", value={"label": desired_job},
+                        value_norm=desired_job, status="confirmed", source_kind="profile_form",
+                    ),
+                    UserAttribute(
+                        user_id=user.id, key="desired_region", value={"label": region_label, "code": region_code},
+                        value_norm=region_code, status="confirmed", source_kind="profile_form",
+                    ),
+                ]
+            )
+            await db.commit()
+
+    asyncio.run(_run())
+
+
+def test_query_with_no_conditions_falls_back_to_stored_profile(session_client):
+    """"괜찮은 데 있나요?"처럼 이번 메시지에 지역·직무가 없어도, 로그인
+    사용자가 저장해 둔 희망직무/희망지역으로 조회 조건을 채운다 — 조건 0개로
+    전국 첫 N건이 그대로 나가던 것이 2026-09-13 리포트의 근본 원인이었다."""
+    email = "alice@example.com"
+    token = _register_and_login(session_client, email=email)
+    session_id = _create_job_search_session(session_client, token)
+    _add_desired_job_and_region(session_client, email)
+    fake_client = _override_job_info_client(results_by_category={"promising_sme": []})
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="promising_sme")],
+        # 기본값(빈 JobInfoQueryParams)을 명시적으로 둬서 "이번 메시지엔 조건이
+        # 없다"는 상황을 재현한다.
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "괜찮은 데 있나요?"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    assert len(fake_client.search_params) == 1
+    params = fake_client.search_params[0]
+    assert params is not None
+    assert params.regions == ["경기"]
+    assert params.keywords == ["프로그래머"]
+
+
+def test_query_with_conditions_in_the_message_ignores_stored_profile(session_client):
+    """이번 메시지에 이미 조건이 있으면 저장된 프로필로 덮어쓰지 않는다."""
+    email = "alice@example.com"
+    token = _register_and_login(session_client, email=email)
+    session_id = _create_job_search_session(session_client, token)
+    _add_desired_job_and_region(session_client, email, desired_job="회계사", region_code="11", region_label="서울")
+    from app.services.llm.base import JobInfoQueryParams
+
+    fake_client = _override_job_info_client(results_by_category={"promising_sme": []})
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="promising_sme")],
+        job_info_query_params=JobInfoQueryParams(regions=["경기"], keywords=["프로그래머"]),
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "경기 프로그래머 채용 있어?"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    params = fake_client.search_params[0]
+    assert params.regions == ["경기"]
+    assert params.keywords == ["프로그래머"]
+
+
+def test_query_with_no_conditions_and_guest_user_does_not_use_any_profile(session_client):
+    """게스트는 저장된 속성이 없으므로 원래도 영향이 없지만, is_guest 분기
+    자체가 깨지지 않았는지 회귀로 확인한다."""
+    token = session_client.post("/api/v1/auth/guest").json()["access_token"]
+    session_id = _create_job_search_session(session_client, token)
+    fake_client = _override_job_info_client(results_by_category={"promising_sme": []})
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="promising_sme")],
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "괜찮은 데 있나요?"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    params = fake_client.search_params[0]
+    assert params is None or (not params.regions and not params.keywords)
+
+
 def test_query_drops_only_the_category_that_fails(session_client):
     # 고용24 오류(예: 승인 대기 중인 카테고리)는 해당 카테고리만 결과에서
     # 빠지고 나머지는 그대로 보여야 한다 — 질문 전체가 실패로 보이면 안 된다.

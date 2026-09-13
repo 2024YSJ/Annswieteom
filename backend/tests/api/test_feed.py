@@ -8,6 +8,7 @@ from app.models.feed_item import FeedItem
 from app.models.feed_refresh_state import FeedRefreshState
 from app.models.interview_answer import InterviewAnswer
 from app.models.user import User
+from app.models.user_attribute import UserAttribute
 
 
 def _register_and_login(client, email="feed@example.com", password="password123", nickname="Feed"):
@@ -306,6 +307,78 @@ def _add_answer(client, user_email="feed@example.com", answer="반도체 공정 
             await db.commit()
 
     asyncio.run(_run())
+
+
+def _add_desired_job_and_region(client, user_email="feed@example.com", desired_job="프로그래머", region_code="41", region_label="경기"):
+    """희망직무·희망지역 user_attributes를 직접 심는다 — /me/attributes API를
+    거치지 않는 이유는 이 테스트가 매칭 결과만 확인하면 되기 때문이다."""
+
+    async def _run():
+        async with client.session_local() as db:
+            from sqlalchemy import select
+
+            user = (await db.execute(select(User).where(User.email == user_email))).scalar_one()
+            db.add_all(
+                [
+                    UserAttribute(
+                        user_id=user.id,
+                        key="desired_job",
+                        value={"label": desired_job},
+                        value_norm=desired_job,
+                        status="confirmed",
+                        source_kind="profile_form",
+                    ),
+                    UserAttribute(
+                        user_id=user.id,
+                        key="desired_region",
+                        value={"label": region_label, "code": region_code},
+                        value_norm=region_code,
+                        status="confirmed",
+                        source_kind="profile_form",
+                    ),
+                ]
+            )
+            await db.commit()
+
+    asyncio.run(_run())
+
+
+def test_recommended_jobs_ranks_occupation_and_region_matches_first(feed_client):
+    """희망직무=프로그래머, 희망지역=경기로 설정하면 그 둘과 무관한 공고보다
+    관련 공고가 위로 와야 한다 — 2026-09-13 리포트(지역만 맞고 직무는 무관한
+    공고가 나옴)의 회귀 검증."""
+    token = _register_and_login(feed_client)
+    _add_desired_job_and_region(feed_client)
+    _seed(
+        feed_client,
+        [
+            _item("경기 프로그래머 채용", category="public_recruitment"),
+            _item("부산 조리사 채용", category="public_recruitment"),
+        ],
+        [_fresh_state()],
+    )
+    # 두 번째 항목엔 관련성 텍스트가 없으니 meta_lines/subtitle을 직접 채운다.
+    asyncio.run(
+        _set_job_text(
+            feed_client,
+            {"경기 프로그래머 채용": ["지역: 경기도 수원시"], "부산 조리사 채용": ["지역: 부산 해운대구"]},
+        )
+    )
+
+    body = feed_client.get("/api/v1/feed/jobs/recommended", headers=_auth(token)).json()
+    assert body["personalized"] is True
+    assert body["fallback_reason"] is None
+    assert body["items"][0]["title"] == "경기 프로그래머 채용"
+
+
+async def _set_job_text(client, meta_lines_by_title: dict[str, list[str]]):
+    async with client.session_local() as db:
+        from sqlalchemy import select
+
+        for title, meta_lines in meta_lines_by_title.items():
+            item = (await db.execute(select(FeedItem).where(FeedItem.title == title))).scalar_one()
+            item.meta_lines = meta_lines
+        await db.commit()
 
 
 def test_recommended_without_any_answers_reports_no_profile(feed_client):

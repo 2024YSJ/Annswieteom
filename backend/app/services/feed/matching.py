@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
 from typing import Literal
@@ -78,6 +79,9 @@ class MatchProfile:
     #: 희망 근무지역 코드들. 정책 자격조건과는 무관해(정책은 "거주지" 기준) 티어
     #: 매칭에는 안 쓰고, 맞춤 직업훈련의 지역 우선 정렬에만 쓴다.
     desired_region_codes: frozenset[str] = frozenset()
+    #: 희망 직무 자유 텍스트(예: "프로그래머"). 정책 티어 매칭에는 안 쓰고, 맞춤
+    #: 공고의 직무 관련성 정렬에만 쓴다 — 온통청년 정책엔 직무 자격조건 자체가 없다.
+    desired_job: str | None = None
 
     @property
     def region_codes(self) -> tuple[str, ...]:
@@ -436,6 +440,108 @@ async def rank_tiered(
     )
 
 
+_TOKEN_SPLIT = re.compile(r"[,\s/·|()\-]+")
+
+
+def _job_text(item: FeedItem) -> str:
+    return " ".join([item.title, item.subtitle or "", *(item.meta_lines or [])])
+
+
+def _tokens(text: str) -> set[str]:
+    return {t for t in _TOKEN_SPLIT.split(text) if len(t) >= 2}
+
+
+def occupation_score(desired_job: str | None, item: FeedItem) -> int:
+    """desired_job과 공고 텍스트의 겹침 정도. 0=무관, 1=토큰 일부 겹침,
+    2=통짜 문자열 포함(가장 강한 신호).
+
+    구인공고(job_fair/공채속보/공채기업정보/강소기업)는 고용24 API가 직무
+    필터를 지원하지 않아(2026-09-13 실측) 서버에 요청할 수 없다 — 이미 캐시된
+    제목/부제/메타 텍스트에 대해 여기서 로컬로 채점한다. 훈련과정의
+    srchTraProcessNm 부분일치와 같은 수준의 단순함을 유지한다 — NLP 유사도
+    매칭은 하지 않는다.
+    """
+    if not desired_job:
+        return 0
+    haystack = _job_text(item)
+    squashed_job = re.sub(r"\s+", "", desired_job)
+    if squashed_job and squashed_job in re.sub(r"\s+", "", haystack):
+        return 2
+    return 1 if _tokens(desired_job) & _tokens(haystack) else 0
+
+
+def job_region_hit(item: FeedItem, profile: MatchProfile) -> str | None:
+    """구인공고 텍스트에 프로필의 지역 라벨이 포함되는가.
+
+    job_fair/공채속보/공채기업정보/강소기업 항목은 eligibility에 지역 코드가
+    안 채워져 있어(worknet_source.py가 training_course만 채운다) region_hit의
+    코드 비교를 못 쓴다 — 텍스트 부분일치로 대신한다.
+    """
+    haystack = _job_text(item)
+    for code in (profile.residence_code, *sorted(profile.desired_region_codes)):
+        if code and (label := region_label_for(code)) and label in haystack:
+            return f"{label} 관련"
+    return None
+
+
+async def rank_jobs_by_profile(
+    db: AsyncSession,
+    *,
+    feed_kind: str,
+    categories: tuple[str, ...],
+    profile: MatchProfile,
+    profile_vector: list[float] | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> RankedFeed:
+    """맞춤 공고 — 희망직무 겹침 우선, 그다음 지역 겹침, 그다음 프로필 벡터
+    (문답·희망사항 텍스트) 유사도, 마지막 최신·id.
+
+    구조화된 desired_job/희망지역이 하나도 없는 사용자는 이 함수를 타지 않는다
+    (api/feed.py가 분기) — 벡터 전용 경로를 그대로 타야 회귀가 없다.
+    """
+    distances, vector_failed = await _vector_distances(db, feed_kind, profile_vector)
+
+    items = list(
+        (
+            await db.execute(
+                select(FeedItem).where(
+                    FeedItem.is_active.is_(True),
+                    FeedItem.feed_kind == feed_kind,
+                    FeedItem.category.in_(categories),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    scored: list[tuple[tuple, FeedItem, ItemMatch]] = []
+    for item in items:
+        occ = occupation_score(profile.desired_job, item)
+        region_reason = job_region_hit(item, profile)
+        distance = distances.get(item.id)
+        key = (
+            0 if occ else 1,
+            0 if region_reason else 1,
+            distance if distance is not None else math.inf,
+            -_recency(item),
+            str(item.id),
+        )
+        labels = [l for l in (f"희망직무 {profile.desired_job} 관련" if occ else None, region_reason) if l]
+        scored.append((key, item, ItemMatch(tier="none", matched_labels=labels)))
+    scored.sort(key=lambda t: t[0])
+
+    page = scored[offset : offset + limit]
+    return RankedFeed(
+        items=[item for _, item, _ in page],
+        total=len(scored),
+        personalized=True,
+        vector_ranking_failed=vector_failed,
+        matches={item.id: match for _, item, match in page},
+    )
+
+
 def get_tiered_ranker():
     """FastAPI DI 훅 — get_feed_ranker와 같은 이유."""
     return rank_tiered
@@ -446,12 +552,21 @@ def get_region_ranker():
     return rank_by_region
 
 
+def get_jobs_ranker():
+    """FastAPI DI 훅 — 맞춤 공고용."""
+    return rank_jobs_by_profile
+
+
 __all__ = [
     "ItemMatch",
     "MatchProfile",
+    "get_jobs_ranker",
     "get_region_ranker",
     "get_tiered_ranker",
+    "job_region_hit",
+    "occupation_score",
     "rank_by_region",
+    "rank_jobs_by_profile",
     "rank_tiered",
     "region_hit",
     "score_item",
