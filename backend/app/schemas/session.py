@@ -11,7 +11,7 @@ from app.schemas.record import RecordRead
 
 class SessionCreate(BaseModel):
     kind: str = "gap_fill"
-    # kind="job_search"이고 이 값이 있으면, 새 세션이 해당 공백기 채우기
+    # kind="job_search"이고 이 값이 있으면, 새 세션이 해당 커리어 채우기
     # 세션의 확정 사실에서 선호도를 연동(seed)받을 수 있다 — 실제 연동은
     # POST /sessions/{id}/job-search/seed-from-gap가 수행한다.
     linked_gap_session_id: uuid.UUID | None = None

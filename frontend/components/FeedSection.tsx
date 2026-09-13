@@ -34,7 +34,7 @@ function fallbackNotice(feed: FeedRead): { text: string; tone: "info" | "warn" }
   switch (feed.fallback_reason) {
     case "no_profile":
       return {
-        text: "공백기 채우기로 문답을 남기면, 그 내용에 맞는 공고를 골라 여기에 올려드려요. 아래 최신 공고부터 둘러보셔도 좋아요.",
+        text: "커리어 채우기로 문답을 남기면, 그 내용에 맞는 공고를 골라 여기에 올려드려요. 아래 최신 공고부터 둘러보셔도 좋아요.",
         tone: "info",
       };
     case "preparing":
