@@ -27,7 +27,7 @@ const fontMono = IBM_Plex_Mono({
 const SITE_URL = "https://annswieteom.com";
 const SITE_NAME = "안 쉬었음";
 const SITE_DESCRIPTION =
-  "공백기 동안의 활동을 AI와의 대화로 정리해서, 사용자가 직접 확인한 사실만으로 커리어 내러티브 문서를 만들어주는 서비스.";
+  "공백기의 불분명한 경험을 AI와의 대화로 구체화하고, 본인이 직접 확인한 사실만으로 커리어 내러티브 문서를 만들어주는 서비스.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
