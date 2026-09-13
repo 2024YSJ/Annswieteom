@@ -67,7 +67,7 @@ release-hardening(devlog 37) 이후 검증 보고서에서 범위 밖으로 미�
 
 ## 관련 커밋
 
-- (PR 머지 후 채움)
+- `5c19381` — fix: tune follow-up question prompt and fix split-check refresh bug ([PR #69](https://github.com/2024YSJ/Annswieteom/pull/69))
 
 ## 남은 작업
 
