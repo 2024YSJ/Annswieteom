@@ -336,6 +336,51 @@ def test_activity_breakdown_splits_category_into_children_and_walks_into_them(se
     assert first_question["question_text"] == BASE_QUESTIONS["study"][0].text
 
 
+def test_ask_restores_pending_candidates_instead_of_regenerating_split_check(session_client):
+    """Regression test for the 2026-09-12 bug: calling /interview/ask again (e.g. a
+    page refresh) while a split-check answer's candidates are extracted but not yet
+    confirmed must not discard them and re-ask the same split-check question."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    session_client.fake_llm._activity_items_queue = [["CS336 강의 학습", "Claude Code 가이드 학습"]]
+    _advance_to_interviewing(session_client, headers, session_id, category_types=("study",))
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    split_check_question_text = resp.json()["question_text"]
+    assert resp.json()["question_source"] == "split_check"
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer",
+        headers=headers,
+        json={"text": "CS336 강의랑 Claude Code 가이드요"},
+    )
+    assert resp.json()["mode"] == "candidates"
+    candidates = resp.json()["candidates"]
+    assert [c["content"] for c in candidates] == ["CS336 강의 학습", "Claude Code 가이드 학습"]
+
+    # Simulate a page refresh / duplicate /ask call before confirming.
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mode"] == "candidates"
+    assert [c["content"] for c in body["candidates"]] == ["CS336 강의 학습", "Claude Code 가이드 학습"]
+    # question_text/source must come back too — the frontend's candidate-card
+    # render is gated on a truthy question_text (InterviewChatThread.tsx), so
+    # omitting these leaves the whole panel blank after a refresh even though
+    # the candidates themselves are correctly restored (caught live 2026-09-13).
+    assert body["question_text"] == split_check_question_text
+    assert body["question_source"] == "split_check"
+
+    # Confirming still works normally afterward — nothing was lost.
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/confirm",
+        headers=headers,
+        json={"confirmations": [{"index": c["index"], "final_text": c["content"], "was_edited": False} for c in candidates]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "INTERVIEWING"
+
+
 def test_activity_breakdown_with_a_single_item_does_not_split(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)

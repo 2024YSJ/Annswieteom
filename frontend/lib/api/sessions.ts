@@ -147,14 +147,16 @@ export interface CategoryReviewRead {
   groups: ReviewGroupRead[];
 }
 
-/** mode="question"이면 question_*가, mode="review"면 review가 채워진다
- * (카테고리 질문이 끝나 확인을 기다리는 상태 — 새로고침 복원 경로). */
+/** mode="question"이면 question_*가, mode="review"면 review가, mode="candidates"면
+ * candidates가 채워진다 — candidates는 "여러 활동 있나요?" 답이 이미 후보로 뽑혔지만
+ * 아직 확인 전인 상태를 새로고침 후에도 이어가기 위한 복원 경로다(2026-09-12 버그 수정). */
 export interface InterviewAskRead {
   category_id: string;
-  mode: "question" | "review";
+  mode: "question" | "review" | "candidates";
   question_text: string | null;
   question_source: "base" | "followup" | "split_check" | null;
   review: CategoryReviewRead | null;
+  candidates: FactCandidateRead[];
 }
 
 /** mode="candidates"는 "여러 활동 있나요?" 구조 질문 전용(즉시 확인). 일반 답변은
