@@ -9,7 +9,16 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.models.feed_item import FeedItem
-from app.services.feed.matching import MatchProfile, rank_by_region, rank_tiered, region_hit, score_item
+from app.services.feed.matching import (
+    MatchProfile,
+    job_region_hit,
+    occupation_score,
+    rank_by_region,
+    rank_jobs_by_profile,
+    rank_tiered,
+    region_hit,
+    score_item,
+)
 
 TODAY = date(2026, 9, 11)
 
@@ -230,3 +239,65 @@ async def test_rank_by_region_puts_nearby_courses_first_but_keeps_the_rest(db_se
         assert ranked.total == 5
         assert ranked.matches[ranked.items[0].id].matched_labels == ["희망지역 서울"]
         assert ranked.matches[ranked.items[3].id].matched_labels == []
+
+
+def _job(title: str, subtitle: str = "", meta_lines: list[str] | None = None, category: str = "public_recruitment") -> FeedItem:
+    return FeedItem(
+        source="worknet",
+        category=category,
+        feed_kind="job",
+        dedup_key=f"k:{title}",
+        title=title,
+        subtitle=subtitle,
+        meta_lines=meta_lines or [],
+        first_seen_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+
+
+def test_occupation_score_ranks_substring_over_token_overlap_over_none():
+    programmer_job = _job("경기 프로그래머 채용")
+    assert occupation_score("프로그래머", programmer_job) == 2
+    token_overlap_job = _job("경기 IT 프로그래머 모집 공고")
+    assert occupation_score("백엔드 프로그래머", token_overlap_job) == 1
+    unrelated_job = _job("부산 조리사 채용")
+    assert occupation_score("프로그래머", unrelated_job) == 0
+    assert occupation_score(None, programmer_job) == 0
+
+
+def test_job_region_hit_matches_text_not_eligibility_code():
+    # 구인공고는 eligibility에 지역 코드가 없다 — region_hit(코드 비교)이 아니라
+    # 텍스트 부분일치로 지역을 본다.
+    gyeonggi_job = _job("채용공고", meta_lines=["지역: 경기도 수원시"])
+    seoul_job = _job("채용공고", meta_lines=["지역: 서울 강남구"])
+    profile = MatchProfile(desired_region_codes=frozenset({"41"}))
+    assert job_region_hit(gyeonggi_job, profile) == "경기 관련"
+    assert job_region_hit(seoul_job, profile) is None
+    assert job_region_hit(gyeonggi_job, MatchProfile()) is None
+
+
+@pytest.mark.asyncio
+async def test_rank_jobs_by_profile_puts_occupation_and_region_matches_first(db_session):
+    async with db_session() as db:
+        db.add_all(
+            [
+                _job("부산 조리사 채용", meta_lines=["지역: 부산 해운대구"], category="public_recruitment"),
+                _job("경기 프로그래머 채용", meta_lines=["지역: 경기도 수원시"], category="public_recruitment"),
+                _job("서울 회계사 채용", meta_lines=["지역: 서울 강남구"], category="promising_sme"),
+            ]
+        )
+        await db.commit()
+
+        profile = MatchProfile(desired_region_codes=frozenset({"41"}), desired_job="프로그래머")
+        ranked = await rank_jobs_by_profile(
+            db,
+            feed_kind="job",
+            categories=("public_recruitment", "promising_sme"),
+            profile=profile,
+            limit=10,
+        )
+
+        assert ranked.total == 3
+        assert ranked.items[0].title == "경기 프로그래머 채용"
+        assert ranked.matches[ranked.items[0].id].matched_labels == ["희망직무 프로그래머 관련", "경기 관련"]
+        # 직무·지역 둘 다 안 맞는 항목도 빠지지 않고 뒤로 밀린다.
+        assert {i.title for i in ranked.items[1:]} == {"부산 조리사 채용", "서울 회계사 채용"}
