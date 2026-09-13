@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.feed_item import FeedItem
 from app.models.feed_item_embedding import FeedItemEmbedding
+from app.models.feed_item_occupation_embedding import FeedItemOccupationEmbedding
 from app.models.feed_refresh_state import FeedRefreshState
 from app.services.embedding import LocalOllamaEmbedding
 from app.services.feed.dedup import build_embed_text, compute_dedup_key
@@ -275,6 +276,70 @@ async def _embed_pending(db: AsyncSession) -> None:
             logger.info("feed: embeddings for this batch were written by another worker; skipping")
 
 
+async def _embed_occupation_pending(db: AsyncSession) -> None:
+    """직무 관련성 전용 벡터(제목만) — _embed_pending과 같은 패턴, 다른 테이블.
+
+    feed_kind로 거르지 않는다: 맞춤 공고/훈련/정책 세 화면이 이 한 테이블을
+    같이 쓴다. embed_text(title+subtitle+meta_lines) 대신 title만 넣는 이유는
+    지역·회사명·날짜 같은 메타 텍스트가 직무 신호를 희석하기 때문이다
+    (services/feed/matching.py의 occupation_score 참고). 실패 관용·backfill
+    성격도 _embed_pending과 동일하다.
+    """
+    try:
+        rows = (
+            await db.execute(
+                select(FeedItem, FeedItemOccupationEmbedding)
+                .outerjoin(
+                    FeedItemOccupationEmbedding,
+                    FeedItemOccupationEmbedding.feed_item_id == FeedItem.id,
+                )
+                .where(FeedItem.is_active.is_(True))
+            )
+        ).all()
+    except Exception:
+        await db.rollback()
+        logger.info("feed: occupation embedding table unavailable, skipping the stage")
+        return
+    pending = [(item, emb) for item, emb in rows if emb is None or emb.embedding is None]
+    if not pending:
+        return
+
+    provider = LocalOllamaEmbedding()
+    for start in range(0, len(pending), EMBED_BATCH):
+        batch = pending[start : start + EMBED_BATCH]
+        try:
+            vectors = await provider.embed([item.title for item, _ in batch])
+        except Exception:
+            logger.warning(
+                "feed: occupation embedding unavailable, leaving %d item(s) unvectorised",
+                len(pending) - start,
+                exc_info=True,
+            )
+            await db.rollback()
+            return
+        for (item, emb), vector in zip(batch, vectors):
+            if emb is None:
+                db.add(
+                    FeedItemOccupationEmbedding(
+                        feed_item_id=item.id, embedding=vector, embedding_model=provider.model_name
+                    )
+                )
+            else:
+                emb.embedding = vector
+                emb.embedding_model = provider.model_name
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            logger.info("feed: occupation embeddings for this batch were written by another worker; skipping")
+
+
+#: 임베딩 스테이지들 — 둘 다 같은 락을 공유한다(새 락을 안 두는 이유: 같은 DB
+#: 쓰기 경합이고, 로컬 Ollama가 어차피 요청을 직렬 처리해 줄 세워도 잃는 게
+#: 없다). refresh_feed()의 스테이지 루프에서 이 튜플로 락 대상을 가른다.
+_VECTOR_STAGES = (_embed_pending, _embed_occupation_pending)
+
+
 async def _prune(db: AsyncSession) -> None:
     cutoff = _now() - PRUNE_AFTER
     rows = (
@@ -308,9 +373,9 @@ async def refresh_feed(sources: list[FeedSource] | None = None, source_keys: lis
                 await _refresh_one(db, source, key)
         # 각 단계는 독립적으로 실패할 수 있어야 한다 — 임베딩이 안 됐다고
         # 오래된 항목 정리까지 건너뛸 이유는 없다.
-        for stage in (_embed_pending, _prune):
+        for stage in (_embed_pending, _embed_occupation_pending, _prune):
             try:
-                if stage is _embed_pending:
+                if stage in _VECTOR_STAGES:
                     async with _EMBED_LOCK:
                         await stage(db)
                 else:

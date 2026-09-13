@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.models.feed_item import FeedItem
+from app.models.feed_item_occupation_embedding import FeedItemOccupationEmbedding
 from app.models.feed_refresh_state import FeedRefreshState
 from app.services.feed import ingest
 from app.services.feed.dedup import build_embed_text, compute_dedup_key
@@ -172,6 +173,81 @@ async def test_embedding_failure_still_leaves_the_items(db_factory):
         state = (await db.execute(select(FeedRefreshState))).scalar_one()
     assert state.last_succeeded_at is not None
     assert state.item_count == 2
+
+
+class FakeEmbeddingProvider:
+    def __init__(self):
+        self.calls: list[list[str]] = []
+        self.model_name = "fake-bge-m3"
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(texts)
+        return [[0.1, 0.2] for _ in texts]
+
+
+@pytest.fixture
+def db_factory_with_occupation_table(monkeypatch):
+    """feed_items / feed_refresh_states / feed_item_occupation_embeddings —
+    _embed_occupation_pending의 성공 경로(실제로 title을 임베딩하는지)를
+    확인하려면 db_factory와 달리 벡터 테이블이 있어야 한다."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    import asyncio
+
+    async def _create():
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=[FeedItem.__table__, FeedRefreshState.__table__, FeedItemOccupationEmbedding.__table__],
+            )
+
+    asyncio.run(_create())
+    monkeypatch.setattr(ingest, "AsyncSessionLocal", maker)
+    yield maker
+    asyncio.run(engine.dispose())
+
+
+@pytest.mark.asyncio
+async def test_embed_occupation_pending_embeds_the_title_only(db_factory_with_occupation_table, monkeypatch):
+    fake = FakeEmbeddingProvider()
+    monkeypatch.setattr(ingest, "LocalOllamaEmbedding", lambda: fake)
+    source = FakeSource(
+        results={"job_fair": [_data("경기 프로그래머 채용", subtitle="지역: 경기도 수원시", meta=["기간: 상시"])]}
+    )
+
+    await ingest.refresh_feed(sources=[source])
+
+    # embed_text(제목+부제+메타)가 아니라 title만 넘어가야 한다 — 지역·기간
+    # 텍스트가 직무 신호를 희석하지 않게.
+    assert fake.calls == [["경기 프로그래머 채용"]]
+    async with db_factory_with_occupation_table() as db:
+        row = (await db.execute(select(FeedItemOccupationEmbedding))).scalar_one()
+    assert row.embedding == [0.1, 0.2]
+
+
+@pytest.mark.asyncio
+async def test_embed_occupation_pending_skips_items_that_already_have_a_vector(
+    db_factory_with_occupation_table, monkeypatch
+):
+    fake = FakeEmbeddingProvider()
+    monkeypatch.setattr(ingest, "LocalOllamaEmbedding", lambda: fake)
+    source = FakeSource(results={"job_fair": [_data("공고 A")]})
+
+    await ingest.refresh_feed(sources=[source])
+    assert len(fake.calls) == 1
+    await ingest.refresh_feed(sources=[source])  # 같은 항목, 이미 벡터 있음
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_occupation_embedding_failure_still_leaves_the_items(db_factory):
+    """db_factory에는 occupation 벡터 테이블 자체가 없다 — _embed_occupation_pending도
+    _embed_pending처럼 조용히 건너뛰고 항목은 그대로 남아야 한다."""
+    await ingest.refresh_feed(sources=[FakeSource(results={"job_fair": [_data("공고 A")]})])
+    assert await _count_items(db_factory) == 1
 
 
 @pytest.mark.asyncio

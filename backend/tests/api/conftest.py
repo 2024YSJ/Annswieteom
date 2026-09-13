@@ -32,6 +32,7 @@ from app.models.user_preference import UserPreference
 from app.services.embedding import get_embedding_provider
 from app.services.profile.attributes import get_profile_extractor
 from app.services.feed.ingest import get_feed_refresher
+from app.services.feed.occupation_adapter import get_occupation_embedder
 from app.services.feed.profile_adapter import get_profile_embedder
 from app.services.llm.base import (
     LLMUnavailableError,
@@ -308,6 +309,14 @@ class FakeProfileEmbedder:
         self.calls.append(user_id)
 
 
+class FakeOccupationEmbedder:
+    def __init__(self):
+        self.calls: list = []
+
+    async def __call__(self, user_id):
+        self.calls.append(user_id)
+
+
 class FakeProfileExtractor:
     """속성 추출 워커 대역. 진짜 워커는 자기 DB 세션(AsyncSessionLocal)을 열어
     get_db 오버라이드를 우회하므로, 테스트에서는 호출만 기록한다."""
@@ -361,17 +370,20 @@ def feed_client():
 
     fake_refresher = FakeFeedRefresher()
     fake_embedder = FakeProfileEmbedder()
+    fake_occupation_embedder = FakeOccupationEmbedder()
     fake_extractor = FakeProfileExtractor()
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_feed_refresher] = lambda: fake_refresher
     app.dependency_overrides[get_profile_embedder] = lambda: fake_embedder
+    app.dependency_overrides[get_occupation_embedder] = lambda: fake_occupation_embedder
     app.dependency_overrides[get_profile_extractor] = lambda: fake_extractor
     try:
         with TestClient(app) as test_client:
             test_client.session_local = test_session_local
             test_client.fake_refresher = fake_refresher
             test_client.fake_embedder = fake_embedder
+            test_client.fake_occupation_embedder = fake_occupation_embedder
             test_client.fake_extractor = fake_extractor
             yield test_client
     finally:
