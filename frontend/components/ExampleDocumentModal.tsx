@@ -59,7 +59,7 @@ export function ExampleDocumentModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="modal-body">
-          <p className="modal-lead">모든 문장에 근거가 붙습니다.</p>
+          <p className="modal-lead">흐릿했던 경험도, 근거가 붙은 문장이 됩니다.</p>
 
           <article className="doc-preview">
             <div className="doc-bar">
