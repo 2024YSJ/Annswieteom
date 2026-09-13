@@ -381,6 +381,75 @@ async def _set_job_text(client, meta_lines_by_title: dict[str, list[str]]):
         await db.commit()
 
 
+def test_recommended_jobs_schedules_the_occupation_embedder(feed_client):
+    """희망직무가 있으면 백그라운드로 직무 벡터 갱신을 예약해야 한다 — SQLite엔
+    user_occupation_embeddings가 없어 occupation_needs_refresh가 항상 True를
+    주지만(테이블 부재 폴백, occupation_adapter 문서화됨), 그래도 매번
+    예약하는 게 안전한 동작이다."""
+    token = _register_and_login(feed_client)
+    _add_desired_job_and_region(feed_client)
+    _seed(feed_client, [_item("공고 A", category="public_recruitment")], [_fresh_state()])
+
+    feed_client.get("/api/v1/feed/jobs/recommended", headers=_auth(token))
+
+    assert len(feed_client.fake_occupation_embedder.calls) == 1
+
+
+def test_recommended_jobs_does_not_schedule_the_occupation_embedder_without_a_desired_job(feed_client):
+    token = _register_and_login(feed_client)
+    _seed(feed_client, [_item("공고 A", category="public_recruitment")], [_fresh_state()])
+
+    feed_client.get("/api/v1/feed/jobs/recommended", headers=_auth(token))
+
+    assert feed_client.fake_occupation_embedder.calls == []
+
+
+def test_recommended_trainings_schedules_the_occupation_embedder(feed_client):
+    token = _register_and_login(feed_client)
+    _add_desired_job_and_region(feed_client)
+    _seed(feed_client, [_item("과정 A", feed_kind="policy", category="training_course")], [_fresh_state("worknet:training_course")])
+
+    feed_client.get("/api/v1/feed/trainings/recommended", headers=_auth(token))
+
+    assert len(feed_client.fake_occupation_embedder.calls) == 1
+
+
+def test_recommended_policies_schedules_the_occupation_embedder(feed_client):
+    token = _register_and_login(feed_client)
+
+    async def _run():
+        async with feed_client.session_local() as db:
+            from sqlalchemy import select
+
+            user = (await db.execute(select(User).where(User.email == "feed@example.com"))).scalar_one()
+            db.add_all(
+                [
+                    UserAttribute(
+                        user_id=user.id, key="desired_job", value={"label": "프로그래머"},
+                        value_norm="프로그래머", status="confirmed", source_kind="profile_form",
+                    ),
+                    # 정책 게이트(profile.is_empty)는 desired_region_codes를 안 보므로
+                    # 나이처럼 실제 정책 자격조건 필드가 하나는 있어야 개인화 분기를 탄다.
+                    UserAttribute(
+                        user_id=user.id, key="birth_year", value={"label": "2000년생", "year": 2000},
+                        value_norm="2000", status="confirmed", source_kind="profile_form",
+                    ),
+                ]
+            )
+            await db.commit()
+
+    asyncio.run(_run())
+    _seed(
+        feed_client,
+        [_item("정책 A", feed_kind="policy", category="youth_policy")],
+        [_fresh_state("youthcenter:youth_policy")],
+    )
+
+    feed_client.get("/api/v1/feed/policies/recommended", headers=_auth(token))
+
+    assert len(feed_client.fake_occupation_embedder.calls) == 1
+
+
 def test_recommended_without_any_answers_reports_no_profile(feed_client):
     """신규 사용자에게 고장 안내를 띄우면 안 된다 — 정보가 없는 것과
     서버가 죽은 것은 다른 상태다."""
