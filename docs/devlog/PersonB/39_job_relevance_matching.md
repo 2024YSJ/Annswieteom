@@ -89,7 +89,7 @@
 
 ## 관련 커밋
 
-- (PR 머지 후 채움)
+- `00379ee` — fix: match job recommendations to desired occupation, not just region ([PR #71](https://github.com/2024YSJ/Annswieteom/pull/71))
 
 ## 남은 작업
 
