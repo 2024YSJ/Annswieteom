@@ -27,7 +27,7 @@ from app.services.feed.profile_adapter import (
     load_profile_vector,
     profile_needs_refresh,
 )
-from app.services.feed.matching import ItemMatch, get_region_ranker, get_tiered_ranker
+from app.services.feed.matching import ItemMatch, get_jobs_ranker, get_region_ranker, get_tiered_ranker
 from app.services.feed.ranking import get_feed_ranker
 from app.services.feed.sources import FEED_CATEGORY_LABELS, FEED_SOURCE_LABELS, all_sources
 from app.services.profile.attributes import load_match_profile
@@ -211,8 +211,11 @@ async def list_recommended_job_feed(
     refresher=Depends(get_feed_refresher),
     ranker=Depends(get_feed_ranker),
     profile_embedder=Depends(get_profile_embedder),
+    jobs_ranker=Depends(get_jobs_ranker),
 ) -> FeedRead:
-    """맞춤 공고 — 문답 기록으로 만든 프로필 벡터와의 코사인 거리순.
+    """맞춤 공고 — 희망직무/희망지역이 구조화돼 있으면 그걸로 우선 정렬하고
+    (matching.rank_jobs_by_profile), 없으면 문답 기록으로 만든 프로필 벡터와의
+    코사인 거리순(기존 동작, 회귀 없음).
 
     게스트도 막지 않는다. api/profile.py는 게스트에게 403을 주지만 그건
     "세션을 넘어 쌓인 아카이브"가 게스트에겐 성립하지 않아서이고, 랭킹은
@@ -228,6 +231,7 @@ async def list_recommended_job_feed(
     # greenlet 컨텍스트가 없어 MissingGreenlet으로 터진다. 테스트에서 먼저
     # 잡혔지만 프로덕션에서도 벡터 차원 불일치 등으로 같은 경로를 탈 수 있다.
     user_id = current_user.id
+    match_profile = await load_match_profile(db, user_id)
 
     # 문답이든 직접 쓴 희망사항이든, 개인화에 쓸 재료가 하나라도 있으면 켠다.
     # 예전엔 문답 개수만 셌는데, 그러면 "맞춤 정보"만 적어둔 사용자가 영영
@@ -238,6 +242,32 @@ async def list_recommended_job_feed(
 
     if has_input and await profile_needs_refresh(db, user_id):
         background_tasks.add_task(profile_embedder, user_id)
+
+    # 희망직무/희망지역처럼 구조화된 정보가 있으면 벡터 유사도(문답·희망사항
+    # 통짜 텍스트라 직무 신호가 옅게 묻힌다) 대신 직무·지역 겹침을 우선하는
+    # 랭커를 쓴다 — 지역만 맞고 직무는 무관한 공고가 나오던 문제(2026-09-13
+    # 리포트)의 근본 수정. 구조화 정보가 없는 사용자는 아래 기존 경로 그대로.
+    if match_profile.desired_job or match_profile.region_codes:
+        is_warming = await _schedule_refresh_if_needed(db, background_tasks, refresher)
+        ranked = await jobs_ranker(
+            db,
+            feed_kind="job",
+            categories=JOB_SECTION_CATEGORIES,
+            profile=match_profile,
+            profile_vector=vector,
+            limit=limit,
+            offset=offset,
+        )
+        return FeedRead(
+            items=[_to_read(i, ranked.matches.get(i.id)) for i in ranked.items],
+            total=ranked.total,
+            limit=limit,
+            offset=offset,
+            personalized=True,
+            fallback_reason=None,
+            is_warming=is_warming,
+            refreshed_at=await last_refreshed_at(db),
+        )
 
     fallback_reason = None
     if not has_input:

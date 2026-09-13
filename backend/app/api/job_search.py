@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.session import Session as SessionModel
+from app.models.user import User
 from app.schemas.job_search import (
     JobInfoCategoryResultRead,
     JobInfoDraftQueryRead,
@@ -21,11 +22,11 @@ from app.schemas.job_search import (
     JobInfoResultRead,
 )
 from app.services.job_pipeline.job_info_client import CATEGORY_LABELS, JobInfoClient, WorknetApiError, get_job_info_client
-from app.services.job_pipeline.regions import KNOWN_REGION_NAMES
-from app.services.llm.base import JobInfoCandidate, LLMProvider, LLMUnavailableError
+from app.services.job_pipeline.regions import KNOWN_REGION_NAMES, region_label_for
+from app.services.llm.base import JobInfoCandidate, JobInfoQueryParams, LLMProvider, LLMUnavailableError
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
 from app.services.llm import get_llm_provider
-from app.services.profile.attributes import get_profile_extractor
+from app.services.profile.attributes import get_profile_extractor, load_match_profile
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +65,27 @@ def _require_job_search(session: SessionModel) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="not_a_job_search_session")
 
 
+async def _profile_derived_query_params(db: AsyncSession, user_id) -> JobInfoQueryParams | None:
+    """구조화된 희망직무/희망지역이 있으면 그것을 조회 조건으로 쓴다.
+
+    "괜찮은 데 있나요"처럼 이번 메시지에 조건이 없어도, 프로필에 남은 희망사항
+    으로 조회를 좁힌다 — 안 그러면 조건 0개로 전국 첫 N건이 그대로 나가
+    지역·직무 둘 다 무관한 결과가 섞인다(2026-09-13 리포트).
+    """
+    profile = await load_match_profile(db, user_id)
+    regions = [label for code in profile.desired_region_codes if (label := region_label_for(code))]
+    keywords = [profile.desired_job] if profile.desired_job else []
+    if not regions and not keywords:
+        return None
+    return JobInfoQueryParams(regions=regions, keywords=keywords)
+
+
 @router.post("/{session_id}/job-search/query", response_model=JobInfoQueryRead)
 async def query_job_info(
     payload: JobInfoQueryRequest,
     background_tasks: BackgroundTasks,
     session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
     llm: LLMProvider = Depends(get_llm_provider),
     job_client: JobInfoClient = Depends(get_job_info_client),
     extractor=Depends(get_profile_extractor),
@@ -110,6 +127,17 @@ async def query_job_info(
         # 조건 추출이 실패하면 조건 없이라도 조회한다 — 예전 동작으로
         # 퇴화할 뿐이고, 질문 전체를 실패시키는 것보다 낫다.
         query_params = None
+
+    # 이번 메시지에 조건이 없으면(추출 실패 포함) 로그인 사용자(게스트 제외)의
+    # 저장된 희망직무/희망지역으로 대체한다 — 조건 0개로 전국 첫 N건이 그대로
+    # 나가 지역·직무 둘 다 무관한 결과가 섞이던 것이 이 버그의 근본 원인이었다
+    # (2026-09-13 리포트). 게스트는 저장된 속성이 없으므로 원래도 영향이 없다.
+    if not query_params or (not query_params.regions and not query_params.keywords):
+        user = await db.get(User, session.user_id)
+        if user is not None and not user.is_guest:
+            profile_params = await _profile_derived_query_params(db, session.user_id)
+            if profile_params is not None:
+                query_params = profile_params
 
     # 고용24 조회는 병렬로 던진다 — 순수 HTTP라 실제로 동시에 처리되고
     # 카테고리당 0.2~1.2초로 끝난다.

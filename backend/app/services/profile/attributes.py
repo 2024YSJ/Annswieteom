@@ -317,6 +317,7 @@ async def load_match_profile(db: AsyncSession, user_id: uuid.UUID) -> MatchProfi
             desired.update({"11", "41", "28"})
     return MatchProfile(
         desired_region_codes=frozenset(desired),
+        desired_job=one("desired_job", "label"),
         birth_year=one("birth_year", "year"),
         residence_code=one("residence_region", "code"),
         education_code=one("education_level", "code"),
