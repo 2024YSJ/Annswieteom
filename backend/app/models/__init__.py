@@ -2,6 +2,7 @@ from app.models.activity_category import ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.feed_item import FeedItem
 from app.models.feed_item_embedding import FeedItemEmbedding
+from app.models.feed_item_occupation_embedding import FeedItemOccupationEmbedding
 from app.models.feed_refresh_state import FeedRefreshState
 from app.models.gap_period import GapPeriod
 from app.models.generated_document import GeneratedDocument
@@ -15,6 +16,7 @@ from app.models.session import Session
 from app.models.user import User
 from app.models.user_attribute import UserAttribute
 from app.models.user_consent import UserConsent
+from app.models.user_occupation_embedding import UserOccupationEmbedding
 from app.models.user_preference import UserPreference
 from app.models.user_profile_embedding import UserProfileEmbedding
 
@@ -33,7 +35,9 @@ __all__ = [
     "InterviewAnswer",
     "FeedItem",
     "FeedItemEmbedding",
+    "FeedItemOccupationEmbedding",
     "FeedRefreshState",
+    "UserOccupationEmbedding",
     "UserProfileEmbedding",
     "UserPreference",
 ]

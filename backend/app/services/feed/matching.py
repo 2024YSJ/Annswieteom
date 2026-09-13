@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feed_item import FeedItem
 from app.models.feed_item_embedding import FeedItemEmbedding
+from app.models.feed_item_occupation_embedding import FeedItemOccupationEmbedding
 from app.services.feed import youthcenter_codes as yc
 from app.services.feed.ranking import RankedFeed
 from app.services.job_pipeline.regions import region_label_for
@@ -280,9 +281,17 @@ def _recency(item: FeedItem) -> float:
 
 
 async def _vector_distances(
-    db: AsyncSession, feed_kind: str, profile_vector: list[float] | None
+    db: AsyncSession,
+    feed_kind: str,
+    profile_vector: list[float] | None,
+    *,
+    embedding_cls: type = FeedItemEmbedding,
 ) -> tuple[dict, bool]:
     """(항목 id → 코사인 거리, 벡터 질의가 실패했는가).
+
+    embedding_cls로 FeedItemEmbedding(문답·희망사항 통짜 프로필 벡터) 또는
+    FeedItemOccupationEmbedding(희망직무 전용 벡터)을 고른다 — 두 테이블이
+    같은 모양(feed_item_id PK/FK + embedding)이라 조인 질의를 그대로 재사용한다.
 
     **항목을 읽기 전에** 불러야 한다. 실패하면 rollback하는데, rollback은 세션에
     올라온 ORM 객체를 전부 expire시켜 이후 속성 접근이 lazy load(IO)가 되고 요청
@@ -294,12 +303,12 @@ async def _vector_distances(
     try:
         rows = (
             await db.execute(
-                select(FeedItemEmbedding.feed_item_id, FeedItemEmbedding.embedding.cosine_distance(profile_vector))
-                .join(FeedItem, FeedItem.id == FeedItemEmbedding.feed_item_id)
+                select(embedding_cls.feed_item_id, embedding_cls.embedding.cosine_distance(profile_vector))
+                .join(FeedItem, FeedItem.id == embedding_cls.feed_item_id)
                 .where(
                     FeedItem.is_active.is_(True),
                     FeedItem.feed_kind == feed_kind,
-                    FeedItemEmbedding.embedding.is_not(None),
+                    embedding_cls.embedding.is_not(None),
                 )
             )
         ).all()
@@ -344,17 +353,27 @@ async def rank_by_region(
     categories: tuple[str, ...],
     profile: MatchProfile,
     profile_vector: list[float] | None = None,
+    occupation_vector: list[float] | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> RankedFeed:
-    """맞춤 직업훈련 — 거주지·희망지역에서 열리는 과정 먼저, 그 안에서 프로필
-    벡터 유사도순, 그다음 최신·id.
+    """맞춤 직업훈련 — 거주지·희망지역에서 열리는 과정 먼저(통학 문제라 지역이
+    직무보다 우선, 2026-09-11 결정 유지), 그 안에서 희망직무 벡터 유사도,
+    그다음 프로필 벡터 유사도, 그다음 최신·id.
 
     지역이 안 맞는 과정도 **빼지 않고 뒤로 보낸다.** 정책과 달리 훈련은 신청
     자격이 지역에 묶이지 않는다(원격 과정, 통학 가능 거리). 정렬 키가 완전히
     결정적이라 limit/offset 페이지가 겹치거나 빠지지 않는다.
+
+    occupation_vector가 없거나(직무 미설정) 항목 쪽 벡터가 아직 없으면 그
+    항목은 occ_distance가 math.inf가 돼 이전과 동일하게 동점 처리된다 —
+    순수 추가 차원이라 회귀 위험이 없다.
     """
     distances, vector_failed = await _vector_distances(db, feed_kind, profile_vector)
+    occ_distances, occ_vector_failed = await _vector_distances(
+        db, feed_kind, occupation_vector, embedding_cls=FeedItemOccupationEmbedding
+    )
+    vector_failed = vector_failed or occ_vector_failed
     items = list(
         (
             await db.execute(
@@ -370,8 +389,15 @@ async def rank_by_region(
     scored: list[tuple[tuple, FeedItem, ItemMatch]] = []
     for item in items:
         hit = region_hit((item.eligibility or {}).get("area_code"), profile)
+        occ_distance = occ_distances.get(item.id)
         distance = distances.get(item.id)
-        key = (0 if hit else 1, distance if distance is not None else math.inf, -_recency(item), str(item.id))
+        key = (
+            0 if hit else 1,
+            occ_distance if occ_distance is not None else math.inf,
+            distance if distance is not None else math.inf,
+            -_recency(item),
+            str(item.id),
+        )
         # 티어 배지("조건 N개 모두 일치")는 정책 전용이라 none으로 두고, 가까운
         # 이유만 matched_labels로 싣는다 — 카드에 "✓ 수원 거주지역"으로 보인다.
         scored.append((key, item, ItemMatch(tier="none", matched_labels=[hit] if hit else [])))
@@ -393,20 +419,30 @@ async def rank_tiered(
     feed_kind: str,
     profile: MatchProfile,
     profile_vector: list[float] | None = None,
+    occupation_vector: list[float] | None = None,
     category: str | None = None,
     include_excluded: bool = False,
     limit: int = 20,
     offset: int = 0,
     today: date | None = None,
 ) -> RankedFeed:
-    """티어 순 → 명시 일치 수 → 불일치 수 → 벡터 거리 → 최신 → id.
+    """티어 순 → 명시 일치 수 → 불일치 수 → 희망직무 벡터 거리 → 프로필 벡터
+    거리 → 최신 → id.
 
     풀 전체(활성 정책 ≤ 수천 건)를 파이썬에서 정렬한 뒤 자른다. SQL로 옮기지
     않은 이유는 필드별 판정이 JSON 안의 코드 목록을 다뤄야 해서다. 정렬 키가
     완전히 결정적이라(마지막 id) limit/offset 페이지가 겹치거나 빠지지 않는다 —
     ranking.py가 지키는 것과 같은 보장이다.
+
+    **희망직무는 티어를 절대 안 바꾼다** — score_item()이 desired_job을 아예
+    보지 않는다(온통청년 정책엔 직무 자격조건 자체가 없다). 같은 티어 안에서만
+    직무 관련성이 프로필 벡터보다 먼저 순서를 가른다 — 더 구체적인 신호라서다.
     """
     distances, vector_failed = await _vector_distances(db, feed_kind, profile_vector)
+    occ_distances, occ_vector_failed = await _vector_distances(
+        db, feed_kind, occupation_vector, embedding_cls=FeedItemOccupationEmbedding
+    )
+    vector_failed = vector_failed or occ_vector_failed
 
     stmt = select(FeedItem).where(FeedItem.is_active.is_(True), FeedItem.feed_kind == feed_kind)
     if category is not None:
@@ -418,11 +454,13 @@ async def rank_tiered(
         match = score_item(item.eligibility, profile, today)
         if match.tier == "excluded" and not include_excluded:
             continue
+        occ_distance = occ_distances.get(item.id)
         distance = distances.get(item.id)
         key = (
             _TIER_ORDER[match.tier],
             -len(match.matched_labels),
             match.mismatch_count,
+            occ_distance if occ_distance is not None else math.inf,
             distance if distance is not None else math.inf,
             -_recency(item),
             str(item.id),
@@ -484,6 +522,12 @@ def job_region_hit(item: FeedItem, profile: MatchProfile) -> str | None:
     return None
 
 
+#: 벡터 거리가 이 값 이하면 "희망직무 관련" 라벨을 붙인다. bge-m3 실측 코사인
+#: 거리 분포로 튜닝해야 하는 값이다 — SQLite에는 pgvector가 없어 자동 테스트로
+#: 검증 불가능하고, 스테이징에서 실제 벡터를 찍어보고 조정한다.
+OCCUPATION_VECTOR_LABEL_THRESHOLD = 0.35
+
+
 async def rank_jobs_by_profile(
     db: AsyncSession,
     *,
@@ -491,16 +535,30 @@ async def rank_jobs_by_profile(
     categories: tuple[str, ...],
     profile: MatchProfile,
     profile_vector: list[float] | None = None,
+    occupation_vector: list[float] | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> RankedFeed:
     """맞춤 공고 — 희망직무 겹침 우선, 그다음 지역 겹침, 그다음 프로필 벡터
     (문답·희망사항 텍스트) 유사도, 마지막 최신·id.
 
+    직무 겹침은 벡터가 있으면(사용자+항목 둘 다) 코사인 거리로, 없으면 기존
+    occupation_score(부분일치/토큰겹침) 텍스트 점수로 판단한다 — **측정된
+    벡터 신호가 항상 추측(텍스트 점수)보다 우선한다.** 그래서 정렬 키를
+    2단계로 나눈다: 벡터가 있는 항목은 거리 오름차순으로 먼저 오고, 벡터가
+    없는 항목은(백필 전·Ollama 다운·직무 미설정) 텍스트 점수 내림차순으로
+    그 뒤에 온다. 백필 지연 중인 항목이 완벽한 텍스트 일치라도 벡터 매칭
+    항목 뒤로 밀리는 대가가 있지만, 다음 refresh_feed()에서 해소되는 일시적
+    현상이고 오늘(벡터 없음)보다 나빠지지 않는다.
+
     구조화된 desired_job/희망지역이 하나도 없는 사용자는 이 함수를 타지 않는다
     (api/feed.py가 분기) — 벡터 전용 경로를 그대로 타야 회귀가 없다.
     """
     distances, vector_failed = await _vector_distances(db, feed_kind, profile_vector)
+    occ_distances, occ_vector_failed = await _vector_distances(
+        db, feed_kind, occupation_vector, embedding_cls=FeedItemOccupationEmbedding
+    )
+    vector_failed = vector_failed or occ_vector_failed
 
     items = list(
         (
@@ -518,17 +576,23 @@ async def rank_jobs_by_profile(
 
     scored: list[tuple[tuple, FeedItem, ItemMatch]] = []
     for item in items:
-        occ = occupation_score(profile.desired_job, item)
+        occ_score = occupation_score(profile.desired_job, item)
+        occ_distance = occ_distances.get(item.id)
+        has_occ_vector = occ_distance is not None
         region_reason = job_region_hit(item, profile)
         distance = distances.get(item.id)
         key = (
-            0 if occ else 1,
+            0 if has_occ_vector else 1,
+            occ_distance if has_occ_vector else -occ_score,
             0 if region_reason else 1,
             distance if distance is not None else math.inf,
             -_recency(item),
             str(item.id),
         )
-        labels = [l for l in (f"희망직무 {profile.desired_job} 관련" if occ else None, region_reason) if l]
+        occ_label = (has_occ_vector and occ_distance <= OCCUPATION_VECTOR_LABEL_THRESHOLD) or occ_score > 0
+        labels = [
+            l for l in (f"희망직무 {profile.desired_job} 관련" if occ_label else None, region_reason) if l
+        ]
         scored.append((key, item, ItemMatch(tier="none", matched_labels=labels)))
     scored.sort(key=lambda t: t[0])
 

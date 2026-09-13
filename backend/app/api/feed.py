@@ -28,6 +28,11 @@ from app.services.feed.profile_adapter import (
     profile_needs_refresh,
 )
 from app.services.feed.matching import ItemMatch, get_jobs_ranker, get_region_ranker, get_tiered_ranker
+from app.services.feed.occupation_adapter import (
+    get_occupation_embedder,
+    load_occupation_vector,
+    occupation_needs_refresh,
+)
 from app.services.feed.ranking import get_feed_ranker
 from app.services.feed.sources import FEED_CATEGORY_LABELS, FEED_SOURCE_LABELS, all_sources
 from app.services.profile.attributes import load_match_profile
@@ -212,6 +217,7 @@ async def list_recommended_job_feed(
     ranker=Depends(get_feed_ranker),
     profile_embedder=Depends(get_profile_embedder),
     jobs_ranker=Depends(get_jobs_ranker),
+    occupation_embedder=Depends(get_occupation_embedder),
 ) -> FeedRead:
     """맞춤 공고 — 희망직무/희망지역이 구조화돼 있으면 그걸로 우선 정렬하고
     (matching.rank_jobs_by_profile), 없으면 문답 기록으로 만든 프로필 벡터와의
@@ -243,6 +249,16 @@ async def list_recommended_job_feed(
     if has_input and await profile_needs_refresh(db, user_id):
         background_tasks.add_task(profile_embedder, user_id)
 
+    # 희망직무 벡터 — 텍스트 부분일치(occupation_score)의 리콜 손실(예: "백엔드
+    # 프로그래머"가 "소프트웨어 개발" 공고를 못 잡음, 2026-09-13 실측)을
+    # 코사인 유사도로 보완한다. 없어도(백필 전·Ollama 다운) 랭커가 텍스트
+    # 점수로 우아하게 저하된다.
+    if match_profile.desired_job and await occupation_needs_refresh(db, user_id, match_profile.desired_job):
+        background_tasks.add_task(occupation_embedder, user_id)
+    occupation_vector = (
+        await load_occupation_vector(db, user_id) if match_profile.desired_job else None
+    )
+
     # 희망직무/희망지역처럼 구조화된 정보가 있으면 벡터 유사도(문답·희망사항
     # 통짜 텍스트라 직무 신호가 옅게 묻힌다) 대신 직무·지역 겹침을 우선하는
     # 랭커를 쓴다 — 지역만 맞고 직무는 무관한 공고가 나오던 문제(2026-09-13
@@ -255,6 +271,7 @@ async def list_recommended_job_feed(
             categories=JOB_SECTION_CATEGORIES,
             profile=match_profile,
             profile_vector=vector,
+            occupation_vector=occupation_vector,
             limit=limit,
             offset=offset,
         )
@@ -296,6 +313,7 @@ async def list_recommended_policy_feed(
     refresher=Depends(get_feed_refresher),
     ranker=Depends(get_feed_ranker),
     tiered_ranker=Depends(get_tiered_ranker),
+    occupation_embedder=Depends(get_occupation_embedder),
 ) -> FeedRead:
     """맞춤 정책 — 걸린 조건이 모두 맞는 정책(교집합) 먼저, 일부 맞는 정책
     (합집합) 다음, 나머지는 프로필 벡터 유사도순.
@@ -320,6 +338,9 @@ async def list_recommended_policy_feed(
     is_warming = await _schedule_refresh_if_needed(db, background_tasks, refresher)
     # 벡터는 티어 안에서의 2차 정렬에만 쓴다. 없어도(아직 계산 전, SQLite) 티어는 그대로다.
     vector = await load_profile_vector(db, user_id)
+    if profile.desired_job and await occupation_needs_refresh(db, user_id, profile.desired_job):
+        background_tasks.add_task(occupation_embedder, user_id)
+    occupation_vector = await load_occupation_vector(db, user_id) if profile.desired_job else None
     # 온통청년만 — 고용24 훈련·프로그램은 자격조건 정보가 없어 매칭이 안 되고
     # "조건 없음"으로 뒤에 섞일 뿐이다(2026-09-11 결정).
     ranked = await tiered_ranker(
@@ -328,6 +349,7 @@ async def list_recommended_policy_feed(
         category="youth_policy",
         profile=profile,
         profile_vector=vector,
+        occupation_vector=occupation_vector,
         include_excluded=include_excluded,
         limit=limit,
         offset=offset,
@@ -354,9 +376,11 @@ async def list_recommended_training_feed(
     refresher=Depends(get_feed_refresher),
     ranker=Depends(get_feed_ranker),
     region_ranker=Depends(get_region_ranker),
+    occupation_embedder=Depends(get_occupation_embedder),
 ) -> FeedRead:
-    """맞춤 직업훈련 — 거주지·희망지역에서 열리는 과정 먼저, 그 안에서 프로필 벡터
-    유사도순(2026-09-11 결정: 훈련은 통학해야 하니 지역이 먼저).
+    """맞춤 직업훈련 — 거주지·희망지역에서 열리는 과정 먼저, 그 안에서 희망직무
+    벡터 유사도, 그다음 프로필 벡터 유사도순(2026-09-11 결정: 훈련은 통학해야
+    하니 지역이 먼저).
 
     개인화 재료가 하나도 없으면(지역 속성도 벡터도 없음) 일반 목록 + `no_attributes`.
     """
@@ -372,12 +396,16 @@ async def list_recommended_training_feed(
         )
 
     is_warming = await _schedule_refresh_if_needed(db, background_tasks, refresher)
+    if profile.desired_job and await occupation_needs_refresh(db, user_id, profile.desired_job):
+        background_tasks.add_task(occupation_embedder, user_id)
+    occupation_vector = await load_occupation_vector(db, user_id) if profile.desired_job else None
     ranked = await region_ranker(
         db,
         feed_kind="policy",
         categories=TRAINING_SECTION_CATEGORIES,
         profile=profile,
         profile_vector=vector,
+        occupation_vector=occupation_vector,
         limit=limit,
         offset=offset,
     )
