@@ -183,6 +183,17 @@ class JobInfoCategoryQuery:
 
 
 @dataclass
+class FactConflict:
+    """detect_fact_conflicts 한 건 — 같은 카테고리 안의 두 초안 사실이 논리적으로
+    동시에 참일 수 없다고 LLM이 판단했다는 뜻(예: 같은 활동에 대해 서로 다른
+    요일/시간대 근무 스케줄). 판단이 애매하면(스케줄 변경일 수도, 모순일 수도)
+    포함하는 쪽으로 프롬프트를 짰다 — 사용자가 리뷰 카드에서 직접 확인하게
+    하는 게 조용히 넘기는 것보다 낫다."""
+    indices: tuple[int, int]
+    reason: str
+
+
+@dataclass
 class JobInfoCandidate:
     """select_relevant_job_info_results에 넘기는 조회된 항목 하나 — 실제
     JobInfoResult 필드 중 LLM이 관련성을 판단하는 데 필요한 것만."""
@@ -263,7 +274,11 @@ class LLMProvider(Protocol):
     async def extract_activity_period(
         self, category_label: str, facts: list[ConfirmedFact], gap_start: date, gap_end: date
     ) -> PeriodSuggestion | None: ...
-    async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]: ...
+    #: 같은 카테고리 안의 초안 사실들끼리 논리적 모순이 있는지 판단한다
+    #: (카테고리 리뷰 카드에서 확정 전에 경고를 보여주기 위함 — devlog 41).
+    #: facts는 0-based로 넘기고 반환되는 FactConflict.indices도 0-based다.
+    async def detect_fact_conflicts(self, facts: list[str]) -> list[FactConflict]: ...
+    async def classify_job_info_query(self, query: str) -> tuple[list[JobInfoCategoryQuery], str | None]: ...
     async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams: ...
     async def select_relevant_job_info_results(
         self, query: str, category_label: str, candidates: list[JobInfoCandidate]

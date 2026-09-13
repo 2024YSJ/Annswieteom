@@ -109,12 +109,14 @@ class FakeLLMProvider:
         drilldown_decisions: list[DrilldownDecision] | None = None,
         activity_items: list[list[str]] | None = None,
         job_info_categories: list["JobInfoCategoryQuery"] | None = None,
+        job_info_unsupported_note: str | None = None,
         job_info_relevant_indices: list[int] | None = None,
         job_info_query_params=None,
         draft_job_info_query: str | None = None,
         activity_period=None,
         probe_question: str | None = None,
         profile_attributes: list[list] | None = None,
+        fact_conflicts: list | None = None,
     ):
         self._profile_attributes_queue = list(profile_attributes) if profile_attributes else None
         self.profile_attribute_calls: list[tuple[str, list[str], bool]] = []
@@ -127,6 +129,9 @@ class FakeLLMProvider:
         self._drilldown_queue = list(drilldown_decisions) if drilldown_decisions else None
         self._activity_items_queue = list(activity_items) if activity_items else None
         self._job_info_categories = job_info_categories
+        self._job_info_unsupported_note = job_info_unsupported_note
+        self._fact_conflicts = fact_conflicts
+        self.fact_conflicts_calls: list[list[str]] = []
         self._job_info_relevant_indices = job_info_relevant_indices
         self._job_info_query_params = job_info_query_params
         self._draft_job_info_query = draft_job_info_query
@@ -227,9 +232,12 @@ class FakeLLMProvider:
 
     async def classify_job_info_query(self, query):
         self.job_info_query_calls.append(query)
-        if self._job_info_categories is not None:
-            return self._job_info_categories
-        return []
+        categories = self._job_info_categories if self._job_info_categories is not None else []
+        return categories, self._job_info_unsupported_note
+
+    async def detect_fact_conflicts(self, facts):
+        self.fact_conflicts_calls.append(facts)
+        return self._fact_conflicts or []
 
     async def extract_job_info_query_params(self, query, known_regions):
         from app.services.llm.base import JobInfoQueryParams

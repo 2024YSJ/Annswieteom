@@ -112,6 +112,55 @@ def test_query_spanning_multiple_categories_returns_all_of_them(session_client):
     assert set(fake_client.search_calls) == {"training_course", "promising_sme"}
 
 
+def test_query_with_unsupported_part_returns_note_alongside_matched_categories(session_client):
+    """"경기 카페 알바랑 관련 직업훈련 같이 알려줘"(2026-09-13 리포트 Case G) —
+    알바/파트타임 채용정보는 이 앱이 다루는 6개 카테고리 어디에도 없으므로
+    분류기가 unsupported_note로 알려주면, 매칭된 카테고리(직업훈련)와 함께
+    그 안내가 응답에 실려야 한다."""
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client(
+        results_by_category={"training_course": [JobInfoResult(title="카페 바리스타 과정", subtitle="국민내일배움카드", meta_lines=[])]}
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="training_course")],
+        job_info_unsupported_note="아르바이트·파트타임 채용정보",
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "경기 카페 알바랑 관련 직업훈련 같이 알려줘"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["unsupported_note"] == "아르바이트·파트타임 채용정보"
+    assert {c["category"] for c in body["categories"]} == {"training_course"}
+
+
+def test_query_entirely_unsupported_returns_note_instead_of_clarification(session_client):
+    """분류기가 카테고리를 하나도 못 골랐지만 unsupported_note는 있으면(예: "카페
+    알바만 알려줘"), 일반적인 재질문 문구 대신 그 이유를 그대로 보여준다."""
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client()
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLMProvider(
+        job_info_categories=[],
+        job_info_unsupported_note="아르바이트·파트타임 채용정보",
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query", json={"query": "카페 알바 있어?"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["categories"] == []
+    assert body["clarification_question"] is None
+    assert body["unsupported_note"] == "아르바이트·파트타임 채용정보"
+
+
 def _add_desired_job_and_region(client, user_email, desired_job="프로그래머", region_code="41", region_label="경기"):
     import asyncio
 

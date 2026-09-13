@@ -47,7 +47,13 @@ function toReviewDraft(review: CategoryReviewRead): CategoryReviewDraft {
 // of the question the row belongs to (interview.py).
 function manualRow(index: number, factType: string): CandidateDraft {
   return {
-    candidate: { index, content: "", fact_type: factType, based_on: { type: "generic_pattern", excerpts: [] } },
+    candidate: {
+      index,
+      content: "",
+      fact_type: factType,
+      based_on: { type: "generic_pattern", excerpts: [] },
+      conflict_with: [],
+    },
     finalText: "",
     wasEdited: true,
     include: true,

@@ -32,6 +32,11 @@ class JobInfoQueryRead(BaseModel):
     #: 예전에는 그냥 버려서 사용자에게 "AI가 아무 말도 안 하는" 빈 응답으로
     #: 보였다 — 무엇이 빠졌는지 알려주려면 응답에 실려야 한다(devlog 20).
     skipped_category_labels: list[str] = []
+    #: 질문의 일부가 6개 카테고리 중 어디에도 해당하지 않을 때(예: 아르바이트/
+    #: 파트타임 채용정보 — 이 앱이 다루는 고용24 엔드포인트 중엔 없다) 그게
+    #: 뭔지 설명하는 문구. skipped_category_labels("골랐지만 조회 실패")와 달리
+    #: 애초에 다루지 않는 개념이라는 뜻이다(devlog 41).
+    unsupported_note: str | None = None
 
 
 class JobInfoDraftQueryRead(BaseModel):

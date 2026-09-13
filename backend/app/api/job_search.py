@@ -108,11 +108,15 @@ async def query_job_info(
     background_tasks.add_task(extractor, session.user_id, "job_search", payload.query)
 
     try:
-        category_queries = await llm.classify_job_info_query(payload.query)
+        category_queries, unsupported_note = await llm.classify_job_info_query(payload.query)
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
     if not category_queries:
+        # unsupported_note가 있으면(예: "카페 알바 알려줘") 일반적인 재질문 문구보다
+        # "이건 우리가 다루는 정보가 아니다"를 그대로 보여주는 게 사용자에게 더 정확하다.
+        if unsupported_note:
+            return JobInfoQueryRead(categories=[], unsupported_note=unsupported_note)
         return JobInfoQueryRead(categories=[], clarification_question=_CLARIFICATION_QUESTION)
 
     selected_categories = [cq.category for cq in category_queries][:_MAX_CATEGORIES_PER_QUERY]
@@ -206,7 +210,12 @@ async def query_job_info(
             )
         )
 
-    return JobInfoQueryRead(categories=categories, clarification_question=None, skipped_category_labels=skipped)
+    return JobInfoQueryRead(
+        categories=categories,
+        clarification_question=None,
+        skipped_category_labels=skipped,
+        unsupported_note=unsupported_note,
+    )
 
 
 @router.post("/{session_id}/job-search/draft-query-from-gap", response_model=JobInfoDraftQueryRead)
@@ -215,7 +224,7 @@ async def draft_query_from_gap(
     db: AsyncSession = Depends(get_db),
     llm: LLMProvider = Depends(get_llm_provider),
 ) -> JobInfoDraftQueryRead:
-    """공백기 채우기 세션에서 "취업 정보 검색으로 이관"한 직후, 그 세션의
+    """커리어 채우기 세션에서 "취업 정보 검색으로 이관"한 직후, 그 세션의
     confirmed_facts를 요약해 컴포저에 미리 채워둘 첫 질문 초안을 만든다.
     suggestion만 반환하고 아무것도 저장하지 않는다 — 사용자가 그대로 보내거나
     고쳐 쓰거나 지우고 새로 써야 실제로 대화가 시작된다(다른 모든 AI 초안과

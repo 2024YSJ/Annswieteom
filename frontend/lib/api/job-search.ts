@@ -21,6 +21,10 @@ export interface JobInfoQueryRead {
   clarification_question: string | null;
   /** 조회/판단이 실패하거나 시간을 초과해 이번 응답에서 빠진 카테고리 라벨. */
   skipped_category_labels: string[];
+  /** 질문의 일부가 6개 카테고리 중 어디에도 해당하지 않을 때(예: 아르바이트/
+   * 파트타임 채용정보) 그게 뭔지 설명하는 문구. skipped_category_labels와 달리
+   * 애초에 다루지 않는 개념이라는 뜻이다. */
+  unsupported_note: string | null;
 }
 
 /** 백엔드의 전체 시간 예산(_QUERY_BUDGET_SECONDS = 90초)보다 길어야 한다 —

@@ -24,6 +24,7 @@ from app.schemas.interview import (
     CategorySelect,
     CategorySuggestionRead,
     ConfirmedFactRead,
+    ConflictRefRead,
     FactCandidateRead,
     GapPeriodSet,
     InterviewAnswerRead,
@@ -541,6 +542,7 @@ def _review_read(category: ActivityCategory) -> CategoryReviewRead:
                         content=draft["content"],
                         fact_type=turn["fact_type_hint"],
                         based_on=BasedOnRead(**draft["based_on"]),
+                        conflict_with=[ConflictRefRead(**c) for c in draft.get("conflict_with", [])],
                     )
                     for i, draft in enumerate(turn["drafts"])
                 ],
@@ -548,6 +550,49 @@ def _review_read(category: ActivityCategory) -> CategoryReviewRead:
             for turn in _draft_turns(category)
         ],
     )
+
+
+async def _annotate_fact_conflicts(category: ActivityCategory, llm: LLMProvider) -> None:
+    """카테고리가 리뷰로 넘어가기 직전 딱 한 번 호출해, 이 카테고리의 모든 turn에
+    걸친 draft 사실들 사이의 논리적 모순을 찾아 draft_turns에 박아 넣는다.
+
+    반드시 리뷰 진입 시점에만 불러야 한다 — `_review_read`는 새로고침/복원 경로에서도
+    호출되는데(idempotent restore, LLM 호출 없음이 그 경로의 설계 전제), 여기서 계산한
+    결과를 draft에 저장해두면 `_review_read`는 그 값만 읽고 LLM을 다시 부르지 않는다.
+    """
+    turns = _draft_turns(category)
+    flat: list[tuple[int, int]] = []
+    contents: list[str] = []
+    for turn_pos, turn in enumerate(turns):
+        for draft_pos, draft in enumerate(turn["drafts"]):
+            flat.append((turn_pos, draft_pos))
+            contents.append(draft["content"])
+
+    if len(contents) < 2:
+        return
+
+    try:
+        conflicts = await llm.detect_fact_conflicts(contents)
+    except LLMUnavailableError:
+        # 이 검사가 실패한다고 리뷰 자체를 막지 않는다 — 경고 없이 그대로 진행한다
+        # (extract_job_info_query_params 실패 시 조건 없이 조회하는 것과 같은 원칙).
+        return
+
+    for conflict in conflicts:
+        a, b = conflict.indices
+        turn_a, draft_a = flat[a]
+        turn_b, draft_b = flat[b]
+        turns[turn_a]["drafts"][draft_a].setdefault("conflict_with", []).append(
+            {"turn_id": turns[turn_b]["turn_id"], "index": draft_b}
+        )
+        turns[turn_b]["drafts"][draft_b].setdefault("conflict_with", []).append(
+            {"turn_id": turns[turn_a]["turn_id"], "index": draft_a}
+        )
+
+    if conflicts:
+        # JSON 컬럼은 제자리 변경(append)을 추적하지 않는다 — 새 리스트로
+        # 재할당해야 저장된다(_append_turn 주석과 같은 이유).
+        category.draft_turns = turns
 
 
 def _append_turn(
@@ -738,6 +783,7 @@ async def interview_ask(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
     if decision == "review":
+        await _annotate_fact_conflicts(category, llm)
         session.pending_turn = _review_pending(category)
         await db.commit()
         return InterviewAskRead(mode="review", category_id=category.id, review=_review_read(category))
@@ -878,6 +924,7 @@ async def interview_answer(
         decision, next_pending = "review", None
 
     if decision == "review":
+        await _annotate_fact_conflicts(category, llm)
         session.pending_turn = _review_pending(category)
         await db.commit()
         return InterviewAnswerRead(mode="review", review=_review_read(category))
