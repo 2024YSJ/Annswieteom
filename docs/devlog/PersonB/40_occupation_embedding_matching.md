@@ -66,7 +66,7 @@ monkeypatch로 스텁해 정렬 로직만 검증했다 — 실제 bge-m3 벡터�
 
 ## 관련 커밋
 
-- (PR 머지 후 채움)
+- `b7021e7` — feat: add embedding-based occupation similarity matching for jobs/training/policy ([PR #73](https://github.com/2024YSJ/Annswieteom/pull/73))
 
 ## 남은 작업
 
