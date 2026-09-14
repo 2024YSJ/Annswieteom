@@ -5,14 +5,14 @@ Phase 1~5 로드맵과 마찬가지로 원래 마일스톤 체크리스트에는
 ## 목표
 
 1. **일자리 찾기**: 대화형으로 희망 급여/근무지/학력·경력/업무 스타일을 받아 구인 API를 조회하고, 결과를 그대로 나열하지 않고 LLM으로 적합도(fit)를 판단해 보여준다.
-2. **연동**: 공백기 채우기 결과(확정된 사실)를 일자리 찾기 입력의 시드로 재사용한다.
-3. **확인 단계 CRUD**: 카테고리/후보 목록처럼, AI가 제안하고 사용자가 확인하는 지점은 두 플로우 모두에서 추가/삭제/수정이 가능해야 한다 — 조사 결과 기존 공백기 채우기 플로우(카테고리 선택 후보, 활동 세부 분할 후보, 사실 확인 후보)는 이미 이 요구를 충족하고 있었으므로, 신규 작업은 일자리 찾기 쪽 확인 단계(선호도 확인)에만 필요했다.
+2. **연동**: 커리어 채우기 결과(확정된 사실)를 일자리 찾기 입력의 시드로 재사용한다.
+3. **확인 단계 CRUD**: 카테고리/후보 목록처럼, AI가 제안하고 사용자가 확인하는 지점은 두 플로우 모두에서 추가/삭제/수정이 가능해야 한다 — 조사 결과 기존 커리어 채우기 플로우(카테고리 선택 후보, 활동 세부 분할 후보, 사실 확인 후보)는 이미 이 요구를 충족하고 있었으므로, 신규 작업은 일자리 찾기 쪽 확인 단계(선호도 확인)에만 필요했다.
 
 ## 아키텍처 — 같은 `Session`, 다른 `kind`
 
-완전히 새 테이블/상태머신을 만드는 대신 기존 `sessions` 테이블에 `kind`(`"gap_fill"` | `"job_search"`)와 `linked_gap_session_id`(연동 출처, 자기참조 FK, `SET NULL`)를 추가하고, `status` CHECK 제약에 job-search 전용 3개 상태(`JOB_PREFERENCES_INPUT`/`JOB_SEARCHING`/`JOB_RESULTS_REVIEW`)를 얹었다. 두 플로우는 `status` 컬럼만 공유할 뿐 전이 규칙은 완전히 분리돼 있다 — `interview_orchestrator.py`(공백기 채우기 전용)를 건드리지 않고 `app/api/job_search.py` 안에 자체 `_require_status` 헬퍼를 뒀다.
+완전히 새 테이블/상태머신을 만드는 대신 기존 `sessions` 테이블에 `kind`(`"gap_fill"` | `"job_search"`)와 `linked_gap_session_id`(연동 출처, 자기참조 FK, `SET NULL`)를 추가하고, `status` CHECK 제약에 job-search 전용 3개 상태(`JOB_PREFERENCES_INPUT`/`JOB_SEARCHING`/`JOB_RESULTS_REVIEW`)를 얹었다. 두 플로우는 `status` 컬럼만 공유할 뿐 전이 규칙은 완전히 분리돼 있다 — `interview_orchestrator.py`(커리어 채우기 전용)를 건드리지 않고 `app/api/job_search.py` 안에 자체 `_require_status` 헬퍼를 뒀다.
 
-프론트도 마찬가지로 `app/sessions/[id]/page.tsx`가 세션의 `kind`(사이드바가 이미 불러온 `useSessionsList()` 캐시에서 조회)에 따라 완전히 다른 컴포넌트 트리(`JobSearchChatPage` vs 기존 공백기 채우기 트리)로 분기한다.
+프론트도 마찬가지로 `app/sessions/[id]/page.tsx`가 세션의 `kind`(사이드바가 이미 불러온 `useSessionsList()` 캐시에서 조회)에 따라 완전히 다른 컴포넌트 트리(`JobSearchChatPage` vs 기존 커리어 채우기 트리)로 분기한다.
 
 ## 백엔드
 
@@ -31,7 +31,7 @@ Phase 1~5 로드맵과 마찬가지로 원래 마일스톤 체크리스트에는
 
 ## 프론트
 
-- **첫 화면 분기** (`app/page.tsx`): 세션 0개인 사용자는 "공백기 채우기"/"일자리 찾기" 선택 화면을 본다(기존의 "세션 없으면 자동 생성" 동작을 제거) — 세션이 있으면 기존처럼 최근 세션으로 자동 이동.
+- **첫 화면 분기** (`app/page.tsx`): 세션 0개인 사용자는 "커리어 채우기"/"일자리 찾기" 선택 화면을 본다(기존의 "세션 없으면 자동 생성" 동작을 제거) — 세션이 있으면 기존처럼 최근 세션으로 자동 이동.
 - **사이드바** (`app/sessions/layout.tsx`): kind별 두 섹션으로 그룹핑, 각각 별도 "+ 새로 시작" 버튼과 status 라벨 세트(`GAP_FILL_STATUS_LABELS`/`JOB_SEARCH_STATUS_LABELS`).
 - **`JobSearchPreferencesSection`**: 기존 `PeriodSection`(스칼라 폼 프리필→확정) + `CategorySection`(로컬 배열 인라인 편집+삭제+추가) 패턴을 그대로 재사용 — 급여/근무지/학력/경력은 폼 필드, `work_style_tags`는 태그 칩. 연동된 세션이면 마운트 시 자동으로 `seed-from-gap` 호출.
 - **`JobSearchResultsSection`**: `ResultSection`의 `generateFiredRef` 패턴과 동일하게 `JOB_SEARCHING` 진입 시 검색을 한 번 자동 트리거, "다시 찾기" 버튼으로 재검색.

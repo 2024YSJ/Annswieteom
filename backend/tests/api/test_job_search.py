@@ -112,6 +112,55 @@ def test_query_spanning_multiple_categories_returns_all_of_them(session_client):
     assert set(fake_client.search_calls) == {"training_course", "promising_sme"}
 
 
+def test_query_with_unsupported_part_returns_note_alongside_matched_categories(session_client):
+    """"경기 카페 알바랑 관련 직업훈련 같이 알려줘"(2026-09-13 리포트 Case G) —
+    알바/파트타임 채용정보는 이 앱이 다루는 6개 카테고리 어디에도 없으므로
+    분류기가 unsupported_note로 알려주면, 매칭된 카테고리(직업훈련)와 함께
+    그 안내가 응답에 실려야 한다."""
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client(
+        results_by_category={"training_course": [JobInfoResult(title="카페 바리스타 과정", subtitle="국민내일배움카드", meta_lines=[])]}
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="training_course")],
+        job_info_unsupported_note="아르바이트·파트타임 채용정보",
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "경기 카페 알바랑 관련 직업훈련 같이 알려줘"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["unsupported_note"] == "아르바이트·파트타임 채용정보"
+    assert {c["category"] for c in body["categories"]} == {"training_course"}
+
+
+def test_query_entirely_unsupported_returns_note_instead_of_clarification(session_client):
+    """분류기가 카테고리를 하나도 못 골랐지만 unsupported_note는 있으면(예: "카페
+    알바만 알려줘"), 일반적인 재질문 문구 대신 그 이유를 그대로 보여준다."""
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client()
+    app.dependency_overrides[get_llm_provider] = lambda: FakeLLMProvider(
+        job_info_categories=[],
+        job_info_unsupported_note="아르바이트·파트타임 채용정보",
+    )
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query", json={"query": "카페 알바 있어?"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["categories"] == []
+    assert body["clarification_question"] is None
+    assert body["unsupported_note"] == "아르바이트·파트타임 채용정보"
+
+
 def _add_desired_job_and_region(client, user_email, desired_job="프로그래머", region_code="41", region_label="경기"):
     import asyncio
 
@@ -167,6 +216,47 @@ def test_query_with_no_conditions_falls_back_to_stored_profile(session_client):
     assert params is not None
     assert params.regions == ["경기"]
     assert params.keywords == ["프로그래머"]
+
+
+def test_classify_query_receives_profile_hint_from_stored_attributes(session_client):
+    """2026-09-14 리포트 — "내 맞춤 정보에 따라 취업 정보를 찾아줘"처럼 질문
+    자체엔 주제어가 없는 자기참조적 질문도 분류기가 빈 카테고리로 포기하지 않게
+    하려면, 저장된 희망직무/희망지역이 classify_job_info_query에 넘어가야 한다."""
+    email = "alice@example.com"
+    token = _register_and_login(session_client, email=email)
+    session_id = _create_job_search_session(session_client, token)
+    _add_desired_job_and_region(session_client, email)
+    _override_job_info_client(results_by_category={"promising_sme": []})
+    fake_llm = FakeLLMProvider(job_info_categories=[JobInfoCategoryQuery(category="promising_sme")])
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "내 맞춤 정보에 따라 취업 정보를 찾아줘"},
+        headers=_auth(token),
+    )
+
+    assert len(fake_llm.job_info_profile_hint_calls) == 1
+    hint = fake_llm.job_info_profile_hint_calls[0]
+    assert "희망직무: 프로그래머" in hint
+    assert "희망지역: 경기" in hint
+
+
+def test_classify_query_gets_empty_profile_hint_for_guest(session_client):
+    """게스트는 저장된 속성이 없다 — 빈 리스트를 넘겨야지 조회 자체가 막히면 안 된다."""
+    _override_job_info_client()
+    fake_llm = FakeLLMProvider(job_info_categories=[])
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post("/api/v1/auth/guest")
+    token = resp.json()["access_token"]
+    session_id = _create_job_search_session(session_client, token)
+
+    session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query", json={"query": "음..."}, headers=_auth(token)
+    )
+
+    assert fake_llm.job_info_profile_hint_calls == [[]]
 
 
 def test_query_with_conditions_in_the_message_ignores_stored_profile(session_client):
@@ -535,6 +625,37 @@ def test_draft_query_rejects_a_linked_session_owned_by_another_user(session_clie
     # linked_gap_session_id 자체가 다른 사용자 소유라 세션 생성 시점에 이미
     # 거부된다(app/api/sessions.py) — draft-query까지 갈 필요도 없다.
     assert resp.status_code == 404
+
+
+def test_draft_query_from_gap_reflects_profile_and_passes_summary(session_client):
+    """2026-09-14 개선 — 이관 순간 바로 프로필 반영을 시도하고(백그라운드 대기
+    없이), 초안 생성 프롬프트에도 희망직무/희망지역 요약이 함께 넘어가야 한다."""
+    email = "alice@example.com"
+    token = _register_and_login(session_client, email=email)
+    gap_session = session_client.post("/api/v1/sessions", headers=_auth(token)).json()
+    job_session = session_client.post(
+        "/api/v1/sessions",
+        json={"kind": "job_search", "linked_gap_session_id": gap_session["id"]},
+        headers=_auth(token),
+    ).json()
+    _add_desired_job_and_region(session_client, email)
+
+    fake_llm = FakeLLMProvider(draft_job_info_query="초안 문장")
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{job_session['id']}/job-search/draft-query-from-gap", headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    # 이관 자체가 프로필 반영 워커를 그 자리에서(백그라운드 예약이 아니라) 불렀는지.
+    assert len(session_client.fake_extractor.calls) == 1
+    assert session_client.fake_extractor.calls[0][1] == "job_search"
+    # 초안 생성 프롬프트에 미리 저장돼 있던 희망직무/희망지역 요약이 실렸는지.
+    assert len(fake_llm.draft_job_info_query_profile_calls) == 1
+    profile_summary = fake_llm.draft_job_info_query_profile_calls[0]
+    assert any("프로그래머" in line for line in profile_summary)
+    assert any("경기" in line for line in profile_summary)
 
 
 def test_draft_query_returns_llms_suggestion_without_persisting_anything(session_client):

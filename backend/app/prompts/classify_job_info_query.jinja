@@ -14,17 +14,43 @@
 
 **가장 관련 있는 카테고리부터 순서대로** 담아라. 뒤쪽은 처리 시간 때문에 잘릴 수 있으니, 질문의 핵심에 해당하는 것을 반드시 앞에 두어라.
 
+질문의 일부가 이 6개 카테고리 중 어디에도 해당하지 않으면(예: 아르바이트/파트타임
+채용정보 — 이 앱은 이런 데이터를 다루지 않는다) 그 부분을 억지로 categories에
+끼워 맞추지 말고, 그게 뭔지 짧은 한국어 명사구로 "unsupported_note"에 담아라. 질문
+전체가 6개 카테고리로 완전히 커버되면 "unsupported_note"는 null이다.
+
+질문이 "내 맞춤 정보/프로필에 따라 찾아줘"처럼 구체적인 주제어 없이 자기참조적이면
+(질문 자체엔 훈련/공채/강소기업 같은 단어가 없는 경우), 빈 배열로 포기하지 말고
+아래 [참고용 사용자 프로필]을 근거로 그 사람에게 의미 있을 카테고리를 폭넓게
+골라라 — 프로필에 희망직무가 있으면 관련 공채·강소기업·훈련과정을, 정보가 아예
+없으면 그때는 진짜로 빈 배열이 맞다.
+
 [예시]
 사용자 질문: 이직 준비하는데 도움될 거 있어?
-출력: { "categories": ["training_course", "job_seeker_program", "promising_sme"] }
+출력: { "categories": ["training_course", "job_seeker_program", "promising_sme"], "unsupported_note": null }
 
 사용자 질문: 서울 쪽 IT 관련 훈련과정 있어?
-출력: { "categories": ["training_course"] }
+출력: { "categories": ["training_course"], "unsupported_note": null }
+
+사용자 질문: 경기 카페 알바랑 관련 직업훈련 같이 알려줘
+출력: { "categories": ["training_course"], "unsupported_note": "아르바이트·파트타임 채용정보" }
+
+사용자 질문: 내 맞춤 정보에 따라 취업 정보를 찾아줘
+[참고용 사용자 프로필]
+- 희망직무: 백엔드 개발자
+- 희망지역: 경기
+출력: { "categories": ["public_recruitment", "promising_sme", "training_course"], "unsupported_note": null }
 
 [USER]
+{% if profile_hint %}
+[참고용 사용자 프로필 — 질문에 구체적인 주제어가 없을 때만 참고해라]
+{% for line in profile_hint %}
+- {{ line }}
+{% endfor %}
+{% endif %}
 사용자 질문:
 {{ query }}
 
 [출력 형식]
 반드시 아래 JSON 형식만 출력해라. 설명이나 다른 텍스트는 절대 추가하지 마라.
-{ "categories": ["job_fair" 또는 "public_recruitment" 또는 "public_recruitment_company" 또는 "training_course" 또는 "job_seeker_program" 또는 "promising_sme", ...] }
+{ "categories": ["job_fair" 또는 "public_recruitment" 또는 "public_recruitment_company" 또는 "training_course" 또는 "job_seeker_program" 또는 "promising_sme", ...], "unsupported_note": "커버 안 되는 부분 설명" 또는 null }

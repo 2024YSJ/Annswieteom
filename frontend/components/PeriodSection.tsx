@@ -7,7 +7,7 @@ import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
 import { ChatBubble } from "@/components/ChatBubble";
 
-const QUESTION_TEXT = "공백기가 언제부터 언제까지였나요? 달력에서 시작일과 종료일을 골라주세요.";
+const QUESTION_TEXT = "이 커리어 활동은 언제부터 언제까지였나요? 달력에서 시작일과 종료일을 골라주세요.";
 
 export function PeriodSection({
   sessionId,
@@ -51,7 +51,7 @@ export function PeriodSection({
     return (
       <>
         <ChatBubble side="left">{QUESTION_TEXT}</ChatBubble>
-        <ChatBubble side="right">공백기: {gapPeriod?.start_date} ~ {gapPeriod?.end_date}</ChatBubble>
+        <ChatBubble side="right">기간: {gapPeriod?.start_date} ~ {gapPeriod?.end_date}</ChatBubble>
       </>
     );
   }

@@ -48,10 +48,10 @@ class Session(Base):
     # 사용자가 사이드바에서 붙인 이름. None이면 프론트가 생성일자로 대체 표시한다
     # (frontend/app/sessions/layout.tsx).
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    # "gap_fill"(공백기 채우기, 기본값) | "job_search"(일자리 찾기) — 어느
+    # "gap_fill"(커리어 채우기, 기본값) | "job_search"(일자리 찾기) — 어느
     # 오케스트레이터/status enum을 쓸지 프론트가 이 값으로 분기한다.
     kind: Mapped[str] = mapped_column(String(20), nullable=False, default="gap_fill")
-    # kind="job_search" 세션이 공백기 채우기 결과에서 연동돼 만들어졌을 때만
+    # kind="job_search" 세션이 커리어 채우기 결과에서 연동돼 만들어졌을 때만
     # 채워짐 — seed-from-gap 엔드포인트가 이 값을 보고 어느 세션의
     # confirmed_facts를 읽을지 결정한다. 원본 세션이 삭제돼도 이 세션 자체는
     # 남아야 하므로 SET NULL(CASCADE 아님).

@@ -82,14 +82,14 @@ export default function Home() {
       {hasSessions ? (
         <section className="hero hero-compact">
           <h1>{user?.nickname}님, 이어서 해볼까요?</h1>
-          <p className="hero-sub">공백기의 불분명한 기억을, 구체적인 커리어 문서로.</p>
+          <p className="hero-sub">지난 경험의 불분명한 기억을, 구체적인 커리어 문서로.</p>
         </section>
       ) : (
         <section className="hero">
-          <span className="hero-eyebrow">공백기 정리 · 취업 정보</span>
+          <span className="hero-eyebrow">커리어 채우기 · 취업 정보</span>
           <h1>우리는 쉬지 않았습니다</h1>
           <p className="hero-sub">
-            공백기의 불분명한 기억을, <b>구체적인 커리어 문서</b>로.
+            지난 경험의 불분명한 기억을, <b>구체적인 커리어 문서</b>로.
           </p>
         </section>
       )}
@@ -104,7 +104,7 @@ export default function Home() {
               <span className="flow-icon" aria-hidden>
                 ✍️
               </span>
-              <span className="flow-title">공백기 채우기</span>
+              <span className="flow-title">커리어 채우기</span>
               <span className="flow-desc">흐릿한 기억을 대화로 짚어가며, 이력서에 그대로 쓸 수 있는 구체적인 STAR 문장으로 정리해요.</span>
               <span className="flow-go">
                 {pendingKind === "gap_fill" ? "시작하는 중..." : hasSessions ? "새로 시작하기" : "시작하기"}{" "}
@@ -266,8 +266,20 @@ export default function Home() {
   );
 }
 
+const RESUME_COLLAPSE_KEY = "feed-section-collapsed:resume";
+
 /** 최근 세션으로 돌아가는 한 번의 클릭. 예전 자동 리다이렉트를 대체한다. */
 function ResumeSection({ sessions }: { sessions: SessionRead[] }) {
+  // FeedSection의 접기 상태와 같은 방식(브라우저 로컬 저장, 조용히 실패) — 이
+  // 컴포넌트는 FeedSection을 안 쓰므로 별도로 둔다.
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(RESUME_COLLAPSE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+
   // 백엔드가 created_at 내림차순으로 주므로 앞에서 3개가 곧 최근 3개다.
   const recent = sessions.slice(0, 3);
   return (
@@ -277,21 +289,42 @@ function ResumeSection({ sessions }: { sessions: SessionRead[] }) {
           <h2>
             <span aria-hidden>↩️</span> 이어서 하기
           </h2>
-          {sessions.length > recent.length && (
-            <span className="section-aside">전체 {sessions.length}개 · 대화 화면 사이드바에서 볼 수 있어요</span>
-          )}
+          <div className="section-head-actions">
+            {sessions.length > recent.length && (
+              <span className="section-aside">전체 {sessions.length}개 · 대화 화면 사이드바에서 볼 수 있어요</span>
+            )}
+            <button
+              type="button"
+              className="section-collapse-toggle"
+              aria-expanded={!collapsed}
+              onClick={() => {
+                const next = !collapsed;
+                setCollapsed(next);
+                try {
+                  if (next) localStorage.setItem(RESUME_COLLAPSE_KEY, "1");
+                  else localStorage.removeItem(RESUME_COLLAPSE_KEY);
+                } catch {
+                  // 저장 실패는 무시 — 이번 방문 동안만 상태가 안 남는다.
+                }
+              }}
+            >
+              {collapsed ? "펼치기 ▾" : "접기 ▴"}
+            </button>
+          </div>
         </div>
-        <div className="resume-grid">
-          {recent.map((session) => (
-            <Link key={session.id} className="resume-card" href={`/sessions/${session.id}`}>
-              <span className="resume-kind">{session.kind === "job_search" ? "🔎 취업 정보 검색" : "✍️ 공백기 채우기"}</span>
-              <span className="resume-title">
-                {session.title ?? new Date(session.created_at).toLocaleDateString("ko-KR")}
-              </span>
-              <span className="resume-status">{sessionStatusLabel(session)}</span>
-            </Link>
-          ))}
-        </div>
+        {!collapsed && (
+          <div className="resume-grid">
+            {recent.map((session) => (
+              <Link key={session.id} className="resume-card" href={`/sessions/${session.id}`}>
+                <span className="resume-kind">{session.kind === "job_search" ? "🔎 취업 정보 검색" : "✍️ 커리어 채우기"}</span>
+                <span className="resume-title">
+                  {session.title ?? new Date(session.created_at).toLocaleDateString("ko-KR")}
+                </span>
+                <span className="resume-status">{sessionStatusLabel(session)}</span>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

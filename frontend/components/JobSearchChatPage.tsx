@@ -13,6 +13,9 @@ interface Turn {
   categories: JobInfoCategoryResultRead[];
   clarificationQuestion: string | null;
   skippedCategoryLabels: string[];
+  /** 질문 일부가 이 앱이 다루는 6개 카테고리 중 어디에도 해당하지 않을 때
+   * (예: 아르바이트/파트타임 채용정보) 그걸 설명하는 문구. */
+  unsupportedNote: string | null;
 }
 
 /** kind="job_search" 세션 전용 — 취업 정보 종합 검색(devlog 16). 이전
@@ -27,7 +30,7 @@ interface Turn {
  * 새로고침하면 사라진다(기존 인터뷰 컴포넌트들의 로컬 확인 이력과 같은
  * 트레이드오프).
  *
- * 사이드바 "..." 메뉴의 "취업 정보 검색으로 이관"으로 공백기 채우기 세션에서
+ * 사이드바 "..." 메뉴의 "취업 정보 검색으로 이관"으로 커리어 채우기 세션에서
  * 만들어진 경우(linkedGapSessionId 있음) 그 세션의 확정된 사실을 요약한 첫
  * 질문 초안을 컴포저에 미리 채워준다(devlog 17). */
 export function JobSearchChatPage({
@@ -87,6 +90,7 @@ export function JobSearchChatPage({
           categories: result.categories,
           clarificationQuestion: result.clarification_question,
           skippedCategoryLabels: result.skipped_category_labels ?? [],
+          unsupportedNote: result.unsupported_note,
         },
       ]);
     } catch (err) {
@@ -143,8 +147,10 @@ export function JobSearchChatPage({
 
                   {/* 카테고리가 하나도 안 남으면 예전엔 사용자 말풍선만 남고
                       AI 쪽에는 아무것도 안 그려졌다 — 한 턴에 최소 한 개의
-                      응답 말풍선은 반드시 나와야 한다(devlog 20). */}
-                  {turn.categories.length === 0 && turn.skippedCategoryLabels.length === 0 && (
+                      응답 말풍선은 반드시 나와야 한다(devlog 20). unsupportedNote가
+                      있으면 그게 이미 이유를 설명하는 응답이라 이 일반 문구는
+                      생략한다. */}
+                  {turn.categories.length === 0 && turn.skippedCategoryLabels.length === 0 && !turn.unsupportedNote && (
                     <ChatBubble side="left">
                       조건에 맞는 정보를 찾지 못했어요. 지역이나 직무를 조금 더 구체적으로 적어서 다시 물어봐 주세요.
                     </ChatBubble>
@@ -154,6 +160,13 @@ export function JobSearchChatPage({
                     <ChatBubble side="left">
                       {turn.skippedCategoryLabels.join(", ")} 정보는 이번에 가져오지 못했어요. 다시 물어보시면 재시도합니다.
                     </ChatBubble>
+                  )}
+
+                  {/* skippedCategoryLabels("골랐지만 조회 실패")와 달리, 이 앱이
+                      애초에 다루지 않는 개념이라는 뜻 — 두 메시지를 구분해서
+                      보여준다(devlog 41, Case G). */}
+                  {turn.unsupportedNote && (
+                    <ChatBubble side="left">{turn.unsupportedNote} 정보는 아직 지원하지 않아요.</ChatBubble>
                   )}
                 </>
               )}

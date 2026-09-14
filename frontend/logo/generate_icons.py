@@ -74,7 +74,7 @@ x = 520
 f_title, f_lead, f_sub = font(104, 900), font(42, 700), font(28, 500)
 title = "안 쉬었음"
 lead = "우리는 쉬지 않았습니다."
-sub = "공백기를 근거 있는 STAR 내러티브로 정리해드려요."
+sub = "커리어 경험을 근거 있는 STAR 내러티브로 정리해드려요."
 
 
 def ink(text, f):

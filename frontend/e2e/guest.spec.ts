@@ -13,17 +13,17 @@ test.describe("guest sessions", () => {
     // 세션 생성은 리다이렉트 effect에 맡기던 구조에서 세션이 두 개 생기는
     // 경쟁이 있었기 때문에(2026-09-05), 두 요청을 한 클릭 안에서 순서대로
     // 보내도록 바꾼 것이다.
-    await expect(page.getByRole("button", { name: "공백기 채우기" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "커리어 채우기" })).toBeVisible();
     const [createResponse] = await Promise.all([
       page.waitForResponse(
         (res) => res.url().endsWith("/api/v1/sessions") && res.request().method() === "POST",
       ),
-      page.getByRole("button", { name: "공백기 채우기" }).click(),
+      page.getByRole("button", { name: "커리어 채우기" }).click(),
     ]);
     expect(createResponse.status()).toBe(201);
 
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
-    await expect(page.getByText("공백기 채우기", { exact: true })).toBeVisible();
+    await expect(page.getByText("커리어 채우기", { exact: true })).toBeVisible();
 
     // "/" no longer auto-redirects into the newest session — the main page is
     // a real home now (feed + 이어서 하기), so a returning visitor gets a card
@@ -33,15 +33,15 @@ test.describe("guest sessions", () => {
     await expect(page).toHaveURL(/\/$/);
     // 홈은 인증 확인(refresh + /auth/me) 뒤에야 세션 목록을 부르므로, 이 카드는
     // 왕복 두 번 뒤에 나타난다 — 기본 5초로는 부하가 걸린 실행에서 부족하다.
-    const resumeCard = page.getByRole("link", { name: /공백기 채우기/ });
+    const resumeCard = page.getByRole("link", { name: /커리어 채우기/ });
     await expect(resumeCard).toBeVisible({ timeout: 15000 });
     await resumeCard.click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
-    // The sidebar's own "+" button (accessible name "공백기 채우기 새로 만들기")
+    // The sidebar's own "+" button (accessible name "커리어 채우기 새로 만들기")
     // is the only remaining path to attempt a second session, and that's what
     // should hit the guest limit.
-    await page.getByRole("button", { name: "공백기 채우기 새로 만들기", exact: true }).click();
+    await page.getByRole("button", { name: "커리어 채우기 새로 만들기", exact: true }).click();
     await expect(
       page.getByText("비회원은 세션을 1개까지만 만들 수 있어요. 회원가입하면 계속 이어서 쓸 수 있습니다."),
     ).toBeVisible();
@@ -53,8 +53,8 @@ test.describe("guest sessions", () => {
     const email = uniqueEmail();
 
     await page.goto("/");
-    await expect(page.getByRole("button", { name: "공백기 채우기" })).toBeVisible();
-    await page.getByRole("button", { name: "공백기 채우기" }).click();
+    await expect(page.getByRole("button", { name: "커리어 채우기" })).toBeVisible();
+    await page.getByRole("button", { name: "커리어 채우기" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
     const sessionUrl = page.url();
 

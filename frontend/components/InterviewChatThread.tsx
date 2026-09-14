@@ -311,6 +311,14 @@ function CandidateRow({
       <div style={{ marginBottom: 8, display: "flex", gap: 8, alignItems: "center" }}>
         <BasedOnBadge basedOn={draft.candidate.based_on} />
       </div>
+      {draft.candidate.conflict_with.length > 0 && (
+        // 확정을 막지 않는 경고일 뿐이다 — 판단은 사용자에게 맡긴다("고쳐 쓰기"/
+        // "제외하기"로 직접 정리하거나, 실제로 모순이 아니면(예: 시기가 바뀐
+        // 스케줄) 그대로 둘 수 있다).
+        <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--warning-text, #b45309)" }}>
+          ⚠️ 이전에 확인한 내용과 서로 다를 수 있어요 — 맞는지 확인해주세요.
+        </p>
+      )}
       {isEditing ? (
         <textarea
           rows={3}

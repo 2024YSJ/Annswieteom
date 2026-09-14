@@ -179,7 +179,7 @@ export default function ArchivePage() {
         </ul>
       ) : (
         !loadError && (
-          <p className="feed-callout">아직 기록된 문답이 없어요. 공백기 채우기를 진행하면 여기에 쌓입니다.</p>
+          <p className="feed-callout">아직 기록된 문답이 없어요. 커리어 채우기를 진행하면 여기에 쌓입니다.</p>
         )
       )}
     </main>

@@ -59,7 +59,7 @@ export function PreferenceEditor({ accessToken }: { accessToken: string }) {
       <div>
         <h2 style={{ margin: 0, fontSize: 16 }}>맞춤 정보</h2>
         <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted-text)" }}>
-          어떤 일을 찾고 있는지 적어두시면 맞춤 공고를 그 내용에 맞춰 골라드려요. 공백기 정리를 아직 안
+          어떤 일을 찾고 있는지 적어두시면 맞춤 공고를 그 내용에 맞춰 골라드려요. 커리어 채우기를 아직 안
           하셨어도 괜찮아요.
         </p>
       </div>
