@@ -504,11 +504,15 @@ class JobInfoClient:
     실제 사용자 질문과 관련 있는 항목만 고르는 건 LLM의
     select_relevant_job_info_results가 한다(app/api/job_search.py)."""
 
-    async def search(self, category: str, params: JobInfoQueryParams | None = None) -> list[JobInfoResult]:
+    async def search(
+        self, category: str, params: JobInfoQueryParams | None = None, limit: int | None = None
+    ) -> list[JobInfoResult]:
+        """limit은 job_search.py의 "결과가 모자라면 더 넓게 다시 조회한다" 재시도
+        전용(devlog 44) — 평소 호출은 안 넘겨 각 검색 함수의 기본값을 그대로 쓴다."""
         func = CATEGORY_SEARCH_FUNCTIONS[category]
         if category in _FILTERABLE_CATEGORIES:
-            return await func(params)
-        return await func()
+            return await func(params, limit) if limit else await func(params)
+        return await func(limit) if limit else await func()
 
 
 def get_job_info_client() -> JobInfoClient:

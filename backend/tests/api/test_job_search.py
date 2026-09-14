@@ -27,17 +27,30 @@ def _create_job_search_session(client, token):
 
 
 class FakeJobInfoClient:
-    def __init__(self, results_by_category: dict[str, list[JobInfoResult]] | None = None, failing_categories: set[str] | None = None):
+    def __init__(
+        self,
+        results_by_category: dict[str, list[JobInfoResult]] | None = None,
+        failing_categories: set[str] | None = None,
+        sequenced_results_by_category: dict[str, list[list[JobInfoResult]]] | None = None,
+    ):
         self._results_by_category = results_by_category or {}
         self._failing_categories = failing_categories or set()
+        # widen-재시도 테스트 전용 — 카테고리마다 호출 순서대로 다른 결과를 준다
+        # (예: 1차는 빈 목록, 2차(넓혀서 재조회)는 결과 1건).
+        self._sequenced_results = {k: list(v) for k, v in (sequenced_results_by_category or {}).items()}
         self.search_calls: list[str] = []
         self.search_params: list = []
+        self.search_limits: list = []
 
-    async def search(self, category: str, params=None) -> list[JobInfoResult]:
+    async def search(self, category: str, params=None, limit=None) -> list[JobInfoResult]:
         self.search_calls.append(category)
         self.search_params.append(params)
+        self.search_limits.append(limit)
         if category in self._failing_categories:
             raise WorknetApiError(category, "테스트용 오류")
+        queue = self._sequenced_results.get(category)
+        if queue:
+            return queue.pop(0)
         return self._results_by_category.get(category, [])
 
 
@@ -211,7 +224,9 @@ def test_query_with_no_conditions_falls_back_to_stored_profile(session_client):
     )
 
     assert resp.status_code == 200
-    assert len(fake_client.search_params) == 1
+    # 0건이라 devlog 44의 widen 재시도가 한 번 더 붙는다(지역 없이 재조회) —
+    # 이 테스트가 검증하려는 건 "1차 조회에 프로필 기반 조건이 실렸는가"이므로
+    # 첫 호출만 확인한다.
     params = fake_client.search_params[0]
     assert params is not None
     assert params.regions == ["경기"]
@@ -420,12 +435,15 @@ def test_query_caps_the_number_of_categories(session_client):
     # 상한이 없으면 질문 한 번이 LLM 호출 7회가 된다.
     token = _register_and_login(session_client)
     session_id = _create_job_search_session(session_client, token)
-    one_result = [JobInfoResult(title="아무거나", subtitle="서울", meta_lines=[])]
+    # 3건씩(= _MIN_RELEVANT_BEFORE_WIDENING과 같음, widen 재시도 문턱 미만이
+    # 아님) 줘서 이 테스트가 검증하려는 카테고리 상한과 무관한 widen 재조회가
+    # 끼어들지 않게 한다(devlog 44).
+    three_results = [JobInfoResult(title=f"아무거나 {i}", subtitle="서울", meta_lines=[]) for i in range(3)]
     all_six = ["job_fair", "public_recruitment", "public_recruitment_company", "training_course", "job_seeker_program", "promising_sme"]
-    fake_client = _override_job_info_client(results_by_category={c: one_result for c in all_six})
+    fake_client = _override_job_info_client(results_by_category={c: three_results for c in all_six})
     fake_llm = FakeLLMProvider(
         job_info_categories=[JobInfoCategoryQuery(category=c) for c in all_six],
-        job_info_relevant_indices=[0],
+        # 기본값(None)은 "받은 건 다 관련 있다"라 3건 그대로 통과한다.
     )
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
 
@@ -582,7 +600,7 @@ def test_query_still_searches_when_param_extraction_fails(session_client):
     )
 
     class BrokenParamsLLM(FakeLLMProvider):
-        async def extract_job_info_query_params(self, query, known_regions):
+        async def extract_job_info_query_params(self, query, known_regions, history):
             raise LLMUnavailableError()
 
     app.dependency_overrides[get_llm_provider] = lambda: BrokenParamsLLM(
@@ -597,6 +615,135 @@ def test_query_still_searches_when_param_extraction_fails(session_client):
     assert resp.status_code == 200
     assert [c["category"] for c in resp.json()["categories"]] == ["job_fair"]
     assert fake_client.search_params == [None]
+
+
+def test_history_is_capped_and_passed_to_classify_and_extract(session_client):
+    """devlog 44 — 프론트가 실어 보낸 이전 발화가 두 LLM 호출(분류/조건 추출)
+    모두에 전달돼야 "그럼 서울도 같이 봐줘" 같은 후속 질문을 이해할 수 있다.
+    프론트가 턴 전체를 다 보내도 최근 N개만 쓴다."""
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client()
+    fake_llm = FakeLLMProvider(job_info_categories=[JobInfoCategoryQuery(category="promising_sme")])
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    long_history = [f"{i}번째 발화" for i in range(10)]
+    session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "그럼 서울도 같이 봐줘", "history": long_history},
+        headers=_auth(token),
+    )
+
+    assert fake_llm.job_info_history_calls == [long_history[-5:]]
+    assert fake_llm.extract_query_params_history_calls == [long_history[-5:]]
+
+
+def test_widen_retries_promising_sme_without_region_when_results_are_scarce(session_client):
+    """2026-09-14 리포트 — "경기 프로그래머 강소기업"이 지역 필터 탓에 0건이었는데
+    지역 없이는 바로 1건이 나왔다. 관련성 판정 결과가 모자라면 지역을 떼고 한 번
+    더 조회해야 하고, 그렇게 찾은 결과는 broadened=True로 표시돼야 한다."""
+    from app.services.llm.base import JobInfoQueryParams
+
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    widened_result = JobInfoResult(title="(주)넷츠", subtitle="소프트웨어 개발", meta_lines=[])
+    fake_client = _override_job_info_client(
+        sequenced_results_by_category={"promising_sme": [[], [widened_result]]}
+    )
+    fake_llm = FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="promising_sme")],
+        job_info_query_params=JobInfoQueryParams(regions=["경기"], keywords=["프로그래머"]),
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "경기 프로그래머 강소기업 찾아줘"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["categories"]) == 1
+    category = body["categories"][0]
+    assert category["broadened"] is True
+    assert [r["title"] for r in category["results"]] == ["(주)넷츠"]
+    # 1차는 지역 있음, 2차(widen)는 지역을 뗀 채로 재조회했는지 확인.
+    assert fake_client.search_params[0].regions == ["경기"]
+    assert fake_client.search_params[1].regions == []
+
+
+def test_widen_does_not_trigger_when_first_attempt_has_enough_results(session_client):
+    """결과가 이미 충분하면(threshold 이상) 쓸데없이 두 번 조회하면 안 된다."""
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    three_results = [JobInfoResult(title=f"기업 {i}", subtitle="", meta_lines=[]) for i in range(3)]
+    fake_client = _override_job_info_client(results_by_category={"promising_sme": three_results})
+    fake_llm = FakeLLMProvider(job_info_categories=[JobInfoCategoryQuery(category="promising_sme")])
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "강소기업 찾아줘"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    assert len(fake_client.search_calls) == 1
+    assert resp.json()["categories"][0]["broadened"] is False
+
+
+def test_unsupported_note_naming_the_extracted_region_is_dropped(session_client):
+    """2026-09-14 리포트 — "내 프로필 말고 인천에서 디자이너 뽑는 데 있어?"가
+    categories=["public_recruitment"]를 정확히 고르고도 "인천 지역 채용정보...
+    아직 지원 안 함"이라는 모순된 unsupported_note를 만들어냈다. 카테고리가
+    선택됐는데 그 안내가 방금 추출한 지역명을 그대로 언급하면 버려야 한다."""
+    from app.services.llm.base import JobInfoQueryParams
+
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client(results_by_category={"public_recruitment": []})
+    fake_llm = FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="public_recruitment")],
+        job_info_unsupported_note="인천 지역 채용정보 (희망지역: 경기, 서울) 정보는 아직 지원하지 않아요",
+        job_info_query_params=JobInfoQueryParams(regions=["인천"], keywords=["디자이너"]),
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "내 프로필 말고 인천에서 디자이너 뽑는 데 있어?"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["unsupported_note"] is None
+
+
+def test_unsupported_note_unrelated_to_regions_still_passes_through(session_client):
+    """방어선이 지나치게 공격적이면 진짜 미지원 안내(예: 아르바이트)까지
+    지워버릴 수 있다 — 추출된 지역명과 무관한 unsupported_note는 그대로 통과해야
+    한다(회귀 방지, devlog 41과의 상호작용 확인)."""
+    from app.services.llm.base import JobInfoQueryParams
+
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client(results_by_category={"training_course": []})
+    fake_llm = FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="training_course")],
+        job_info_unsupported_note="아르바이트·파트타임 채용정보",
+        job_info_query_params=JobInfoQueryParams(regions=["대구"], keywords=[]),
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "대구 카페 알바랑 관련 훈련과정 같이 알려줘"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["unsupported_note"] == "아르바이트·파트타임 채용정보"
 
 
 def test_draft_query_requires_a_linked_session(session_client):

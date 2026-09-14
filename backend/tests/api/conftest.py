@@ -145,6 +145,8 @@ class FakeLLMProvider:
         self.activity_period_calls: list[str] = []
         self.job_info_query_calls: list[str] = []
         self.job_info_profile_hint_calls: list[list[str]] = []
+        self.job_info_history_calls: list[list[str]] = []
+        self.extract_query_params_history_calls: list[list[str]] = []
         self.draft_job_info_query_profile_calls: list[list[str]] = []
         self.select_relevant_calls: list[tuple] = []
         self.extract_query_params_calls: list[tuple] = []
@@ -232,9 +234,10 @@ class FakeLLMProvider:
             return PeriodSuggestion(start_date=date(2025, 1, 1), end_date=date(2025, 6, 30))
         return self._period_suggestion
 
-    async def classify_job_info_query(self, query, profile_hint):
+    async def classify_job_info_query(self, query, profile_hint, history):
         self.job_info_query_calls.append(query)
         self.job_info_profile_hint_calls.append(profile_hint)
+        self.job_info_history_calls.append(history)
         categories = self._job_info_categories if self._job_info_categories is not None else []
         return categories, self._job_info_unsupported_note
 
@@ -242,10 +245,11 @@ class FakeLLMProvider:
         self.fact_conflicts_calls.append(facts)
         return self._fact_conflicts or []
 
-    async def extract_job_info_query_params(self, query, known_regions):
+    async def extract_job_info_query_params(self, query, known_regions, history):
         from app.services.llm.base import JobInfoQueryParams
 
         self.extract_query_params_calls.append((query, known_regions))
+        self.extract_query_params_history_calls.append(history)
         if self._job_info_query_params is not None:
             return self._job_info_query_params
         # 기본값은 "조건 없음" — 카테고리 라우팅/집계만 보는 테스트가 이걸

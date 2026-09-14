@@ -59,6 +59,43 @@ _MAX_CATEGORIES_PER_QUERY = 3
 # _MAX_CATEGORIES_PER_QUERY=3과 함께 읽어야 하는 값이다 — 예산은 3회분이다.
 _QUERY_BUDGET_SECONDS = 600.0
 
+# 관련성 판정 후 남은 결과가 이보다 적으면 조건을 한 번 풀어 다시 조회한다
+# (devlog 44). job_info_client.py의 _MIN_RESULTS_BEFORE_WIDENING(원본 건수 기준,
+# training_course 내부 전용)과는 다른 값이다 — 여기는 "관련성 판정까지 끝난 뒤"
+# 기준이라 더 낮게 잡는다. 실측: "경기 프로그래머 강소기업"이 지역 필터 때문에
+# 0건이었는데 지역을 빼자 바로 1건이 나왔다 — 좁은 필터가 서버 쪽에서 이미
+# 후보를 20건으로 제한한 뒤라, 그 20건 안에 관련 항목이 우연히 없으면 그걸로
+# 끝이었다.
+_MIN_RELEVANT_BEFORE_WIDENING = 3
+
+# 서버 필터가 없는 3개 카테고리(_UNFILTERED_FETCH_LIMIT 기본값)는 조건을 뗄 게
+# 없으니 대신 후보 풀 자체를 넓혀서 재시도한다 — 진짜 페이지네이션(startPage=2)은
+# 이번 범위 밖(JobInfoClient.search 인터페이스를 더 크게 건드려야 함).
+_WIDENED_UNFILTERED_LIMIT = 60
+
+# 프론트가 실어 보내는 history(이전 사용자 발화)를 이 개수만큼만 쓴다 — 무상태
+# 대화라 프론트가 전체 turns를 다 보낼 수도 있는데, 프롬프트가 한없이 길어지면
+# 안 된다(devlog 44).
+_MAX_HISTORY_TURNS = 5
+
+
+def _widen_attempt(
+    category: str, query_params: JobInfoQueryParams | None
+) -> tuple[JobInfoQueryParams | None, int | None] | None:
+    """관련성 판정 결과가 모자랄 때 무엇을 풀어 다시 조회할지 정한다(devlog 44).
+    더 넓힐 방법이 없으면(예: training_course — 이미 job_info_client.py 내부에서
+    자체적으로 단계적으로 넓힌 뒤라 여기서 더 할 게 없다) None을 돌려준다."""
+    if category == "promising_sme" and query_params and query_params.regions:
+        # 유일한 서버 필터가 region이다 — 그걸 떼고 전국으로 넓힌다.
+        return JobInfoQueryParams(regions=[], keywords=query_params.keywords), None
+    if category == "job_fair" and query_params and query_params.keywords:
+        # 유일한 서버 필터가 keyword다 — 그걸 떼고 지역만(또는 무조건) 넓힌다.
+        return JobInfoQueryParams(regions=query_params.regions, keywords=[]), None
+    if category in ("public_recruitment", "public_recruitment_company", "job_seeker_program"):
+        # 서버 필터 자체가 없다 — 조건을 풀 게 없으니 후보 풀을 넓힌다.
+        return query_params, _WIDENED_UNFILTERED_LIMIT
+    return None
+
 
 def _require_job_search(session: SessionModel) -> None:
     if session.kind != "job_search":
@@ -122,9 +159,12 @@ async def query_job_info(
     background_tasks.add_task(extractor, session.user_id, "job_search", payload.query)
 
     profile_hint = await _profile_hint_lines(db, session.user_id)
+    # 프론트가 이미 들고 있는 turns를 그대로 실어 보낸 것 — 세션에는 아무것도
+    # 저장하지 않으므로(무상태) 프롬프트가 길어지지 않게 최근 N턴만 쓴다(devlog 44).
+    history = payload.history[-_MAX_HISTORY_TURNS:]
 
     try:
-        category_queries, unsupported_note = await llm.classify_job_info_query(payload.query, profile_hint)
+        category_queries, unsupported_note = await llm.classify_job_info_query(payload.query, profile_hint, history)
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
@@ -142,11 +182,26 @@ async def query_job_info(
     # 받아왔다 — "경기 북부 백엔드"라고 물어도 후보에 강원/경남 과정이
     # 들어오니 관련성 판단이 아무리 정확해도 건질 게 없었다(devlog 20).
     try:
-        query_params = await llm.extract_job_info_query_params(payload.query, list(KNOWN_REGION_NAMES))
+        query_params = await llm.extract_job_info_query_params(payload.query, list(KNOWN_REGION_NAMES), history)
     except LLMUnavailableError:
         # 조건 추출이 실패하면 조건 없이라도 조회한다 — 예전 동작으로
         # 퇴화할 뿐이고, 질문 전체를 실패시키는 것보다 낫다.
         query_params = None
+
+    # 카테고리는 선택됐는데(=이 앱이 다루는 개념) unsupported_note가 방금 추출한
+    # 지역 이름을 그대로 언급하면 모순이다 — 지역은 검색 조건일 뿐 "다루지 않는
+    # 개념"이 될 수 없다. 실측 사례(2026-09-14): "내 프로필 말고 인천에서 디자이너
+    # 뽑는 데 있어?"가 categories=["public_recruitment"]를 정확히 고르고도
+    # "인천 지역 채용정보... 아직 지원하지 않아요"를 만들어냈다 — 프롬프트
+    # 지시(Phase 3)만으로 100% 막을 수 없으니 값싼 사후 방어선을 둔다.
+    if unsupported_note and query_params and query_params.regions:
+        if any(region in unsupported_note for region in query_params.regions):
+            logger.warning(
+                "job_search: dropped contradictory unsupported_note %r for regions %s",
+                unsupported_note,
+                query_params.regions,
+            )
+            unsupported_note = None
 
     # 이번 메시지에 조건이 없으면(추출 실패 포함) 로그인 사용자(게스트 제외)의
     # 저장된 희망직무/희망지역으로 대체한다 — 조건 0개로 전국 첫 N건이 그대로
@@ -183,23 +238,14 @@ async def query_job_info(
     categories: list[JobInfoCategoryResultRead] = []
     skipped: list[str] = []
 
-    for category, raw_results in zip(selected_categories, fetched):
-        label = CATEGORY_LABELS[category]
-        if raw_results is None:
-            skipped.append(label)
-            continue
-        if not raw_results:
-            categories.append(JobInfoCategoryResultRead(category=category, category_label=label, results=[]))
-            continue
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            skipped.append(label)
-            continue
-
+    async def _judge_relevant(category: str, label: str, raw: list, remaining: float) -> list | None:
+        """반환값이 None이면 판정 자체가 실패한 것(타임아웃/LLM 다운) — 빈
+        리스트(판정은 됐지만 관련 항목이 없음)와는 구분해야 한다."""
+        if not raw:
+            return []
         candidates = [
             JobInfoCandidate(index=i, title=r.title, subtitle=r.subtitle, meta_lines=r.meta_lines)
-            for i, r in enumerate(raw_results)
+            for i, r in enumerate(raw)
         ]
         try:
             async with asyncio.timeout(remaining):
@@ -209,20 +255,62 @@ async def query_job_info(
         # 그 바깥에서 도는 전체 예산 타이머라 여전히 맨 TimeoutError를 던진다
         # — 이걸 빼면 큐에 밀린 호출이 예산을 태울 때 라우트가 500으로 죽는다.
         except (LLMUnavailableError, TimeoutError) as exc:
+            logger.warning("job_search: %s relevance judging skipped: %s", category, exc)
+            return None
+        return [raw[i] for i in relevant_indices]
+
+    for category, raw_results in zip(selected_categories, fetched):
+        label = CATEGORY_LABELS[category]
+        if raw_results is None:
+            skipped.append(label)
+            continue
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            skipped.append(label)
+            continue
+
+        selected = await _judge_relevant(category, label, raw_results, remaining)
+        if selected is None:
             # 원본 목록은 받아왔지만 관련성 판단이 안 되면, 걸러지지 않은
             # 목록을 그대로 보여주느니 이 카테고리를 빼는 쪽이 낫다 — 그게
             # 바로 devlog 18에서 고친 문제(무관한 결과 노출)이기 때문이다.
             # 다만 예전처럼 조용히 버리지 않고 무엇이 빠졌는지 알려준다.
-            logger.warning("job_search: %s relevance judging skipped: %s", category, exc)
             skipped.append(label)
             continue
 
-        selected = [raw_results[i] for i in relevant_indices][:_MAX_RESULTS_PER_CATEGORY]
+        broadened = False
+        if len(selected) < _MIN_RELEVANT_BEFORE_WIDENING:
+            widen = _widen_attempt(category, query_params)
+            remaining = deadline - time.monotonic()
+            if widen is not None and remaining > 0:
+                widened_params, widened_limit = widen
+                try:
+                    widened_raw = await job_client.search(category, widened_params, widened_limit)
+                except WorknetApiError as exc:
+                    logger.warning("job_search: %s widen-retry fetch failed: %s", category, exc)
+                    widened_raw = []
+                if widened_raw:
+                    remaining = deadline - time.monotonic()
+                    widened_selected = (
+                        await _judge_relevant(category, label, widened_raw, remaining) if remaining > 0 else None
+                    )
+                    if widened_selected:
+                        # 제목+부제로 중복 제거 — job_info_client.py의 훈련과정
+                        # widen 병합과 같은 키(같은 항목이 1차/2차 조회에 둘 다
+                        # 걸릴 수 있다).
+                        merged = {(r.title, r.subtitle): r for r in [*selected, *widened_selected]}
+                        if len(merged) > len(selected):
+                            broadened = True
+                        selected = list(merged.values())
+
+        selected = selected[:_MAX_RESULTS_PER_CATEGORY]
         categories.append(
             JobInfoCategoryResultRead(
                 category=category,
                 category_label=label,
                 results=[JobInfoResultRead(**r.__dict__) for r in selected],
+                broadened=broadened,
             )
         )
 

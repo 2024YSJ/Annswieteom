@@ -11,6 +11,8 @@ export interface JobInfoCategoryResultRead {
   category: string;
   category_label: string;
   results: JobInfoResultRead[];
+  /** 처음 조건대로는 결과가 모자라 조건을 일부 풀고 다시 조회했을 때만 true. */
+  broadened: boolean;
 }
 
 /** `POST /job-search/query` 응답 — 한 질문이 여러 카테고리에 동시에 걸릴 수
@@ -43,11 +45,14 @@ export interface JobInfoDraftQueryRead {
 }
 
 export const jobSearchApi = {
-  query: (sessionId: string, query: string, accessToken: string) =>
+  /** history: 이전 사용자 발화만(오래된 것부터) — 무상태 대화라 세션에 아무것도
+   * 안 남으므로, "그럼 서울도 같이 봐줘" 같은 후속 질문을 이해하려면 매번 다시
+   * 실어 보내야 한다(devlog 44). */
+  query: (sessionId: string, query: string, history: string[], accessToken: string) =>
     request<JobInfoQueryRead>(`/api/v1/sessions/${sessionId}/job-search/query`, {
       method: "POST",
       headers: authHeaders(accessToken),
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, history }),
       signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
     }),
 

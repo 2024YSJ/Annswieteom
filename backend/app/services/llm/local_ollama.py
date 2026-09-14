@@ -346,9 +346,9 @@ class LocalOllamaProvider:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def classify_job_info_query(
-        self, query: str, profile_hint: list[str]
+        self, query: str, profile_hint: list[str], history: list[str]
     ) -> tuple[list[JobInfoCategoryQuery], str | None]:
-        prompt = _render("classify_job_info_query.jinja", query=query, profile_hint=profile_hint)
+        prompt = _render("classify_job_info_query.jinja", query=query, profile_hint=profile_hint, history=history)
         response_text = await self._generate(prompt, label="classify_job_info_query", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
@@ -362,8 +362,12 @@ class LocalOllamaProvider:
         except (json.JSONDecodeError, KeyError) as exc:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
-    async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams:
-        prompt = _render("extract_job_info_query_params.jinja", query=query, known_regions=known_regions)
+    async def extract_job_info_query_params(
+        self, query: str, known_regions: list[str], history: list[str]
+    ) -> JobInfoQueryParams:
+        prompt = _render(
+            "extract_job_info_query_params.jinja", query=query, known_regions=known_regions, history=history
+        )
         response_text = await self._generate(prompt, label="extract_job_info_query_params", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
