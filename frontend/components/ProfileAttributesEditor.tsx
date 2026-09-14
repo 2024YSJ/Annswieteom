@@ -185,7 +185,7 @@ export function ProfileAttributesEditor({ accessToken, isGuest }: { accessToken:
         <h2 style={{ margin: 0, fontSize: 16 }}>나에 대해 알게 된 정보</h2>
         <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted-text)" }}>
           대화 중에 말씀하신 나이·사는 곳·학력 같은 정보를 맞춤 정책과 공고를 고르는 데만 쓰려고 저장해요.
-          틀린 건 고치거나 지울 수 있고, 지운 정보는 다시 추정하지 않아요. 공백기 문서에는 쓰이지 않아요.
+          틀린 건 고치거나 지울 수 있고, 지운 정보는 다시 추정하지 않아요. 커리어 문서에는 쓰이지 않아요.
         </p>
       </div>
 

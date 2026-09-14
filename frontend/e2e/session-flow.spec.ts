@@ -60,13 +60,13 @@ test.describe("unified session chat flow", () => {
     await page.getByLabel("비밀번호").fill(password);
     await page.getByRole("button", { name: "로그인" }).click();
 
-    await page.getByRole("button", { name: "공백기 채우기" }).click();
+    await page.getByRole("button", { name: "커리어 채우기" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
 
     await page.getByLabel("시작일").fill("2024-01-01");
     await page.getByLabel("종료일").fill("2024-06-30");
     await page.getByRole("button", { name: "확인" }).click();
-    await expect(page.getByText("공백기: 2024-01-01 ~ 2024-06-30")).toBeVisible();
+    await expect(page.getByText("기간: 2024-01-01 ~ 2024-06-30")).toBeVisible();
 
     await page.getByPlaceholder("메시지를 입력하세요").fill("잘 모르겠어");
     await page.getByRole("button", { name: "보내기" }).click();
@@ -125,20 +125,20 @@ test.describe("unified session chat flow", () => {
     await page.getByRole("button", { name: "로그인" }).click();
 
     // A freshly registered user has no sessions yet, so the landing page
-    // offers the 공백기 채우기/일자리 찾기 choice instead of auto-creating —
-    // this flow exercises 공백기 채우기.
-    await expect(page.getByRole("button", { name: "공백기 채우기" })).toBeVisible();
-    await page.getByRole("button", { name: "공백기 채우기" }).click();
+    // offers the 커리어 채우기/일자리 찾기 choice instead of auto-creating —
+    // this flow exercises 커리어 채우기.
+    await expect(page.getByRole("button", { name: "커리어 채우기" })).toBeVisible();
+    await page.getByRole("button", { name: "커리어 채우기" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
 
     // --- Period section (active): calendar date inputs, not free text ---
-    await expect(page.getByText("공백기가 언제부터 언제까지였나요?", { exact: false })).toBeVisible();
+    await expect(page.getByText("이 커리어 활동은 언제부터 언제까지였나요?", { exact: false })).toBeVisible();
     await page.getByLabel("시작일").fill("2024-01-01");
     await page.getByLabel("종료일").fill("2024-06-30");
     await page.getByRole("button", { name: "확인" }).click();
 
     // --- Period completed, Category section (active) ---
-    await expect(page.getByText("공백기: 2024-01-01 ~ 2024-06-30")).toBeVisible();
+    await expect(page.getByText("기간: 2024-01-01 ~ 2024-06-30")).toBeVisible();
     const composerInput = page.getByPlaceholder("메시지를 입력하세요");
     await composerInput.fill("편의점에서 6개월 정도 아르바이트를 했어요.");
     await page.getByRole("button", { name: "보내기" }).click();
@@ -171,7 +171,7 @@ test.describe("unified session chat flow", () => {
     await expect(page.getByText("AI가 미리 써봤어요", { exact: false })).toHaveCount(0);
 
     // Sidebar reflects progress without a URL change.
-    await expect(page.getByText("공백기 채우기", { exact: true })).toBeVisible();
+    await expect(page.getByText("커리어 채우기", { exact: true })).toBeVisible();
     await expect(page.getByText("인터뷰 중")).toBeVisible();
   });
 });

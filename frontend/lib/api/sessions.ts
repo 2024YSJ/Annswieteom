@@ -125,11 +125,21 @@ export interface BasedOnRead {
   excerpts: RecordExcerptRead[];
 }
 
+/** 모순 상대 draft를 가리킨다 — 같은 카테고리 리뷰 카드 안이라도 다른 턴의
+ * draft일 수 있어 turn_id+index 조합이 필요하다. */
+export interface ConflictRefRead {
+  turn_id: string;
+  index: number;
+}
+
 export interface FactCandidateRead {
   index: number;
   content: string;
   fact_type: string;
   based_on: BasedOnRead;
+  /** 같은 카테고리 리뷰 카드 안의 다른 draft와 논리적으로 모순된다고 판단됐을 때
+   * 그 상대(들). 확정을 막지 않는 경고용 — 사용자가 직접 확인해야 한다. */
+  conflict_with: ConflictRefRead[];
 }
 
 /** 카테고리 끝 확인의 한 묶음 — 질문 하나에 대한 답과 거기서 뽑은 사실 초안들. */

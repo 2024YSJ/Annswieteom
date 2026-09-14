@@ -24,7 +24,7 @@ export default function SessionChatPage() {
   const queryClient = useQueryClient();
   // 이 세션이 어느 kind인지는 사이드바가 이미 불러온 목록(useSessionsList,
   // 같은 react-query 캐시를 공유)에서 알아낸다 — kind별로 완전히 다른
-  // 오케스트레이터(JobSearchChatPage vs 아래 공백기 채우기 트리)를 렌더링해야
+  // 오케스트레이터(JobSearchChatPage vs 아래 커리어 채우기 트리)를 렌더링해야
   // 하므로, gap-fill 전용 컨텍스트(useSessionContext)는 kind가 job_search로
   // 확정되기 전까지만 활성화한다(불필요한 요청 방지).
   const { data: sessions } = useSessionsList();

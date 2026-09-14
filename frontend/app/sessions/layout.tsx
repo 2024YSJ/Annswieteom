@@ -46,7 +46,7 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
     }
   }
 
-  // 공백기 채우기 인터뷰로 확정한 사실을 취업 정보 검색으로 넘긴다 — 새
+  // 커리어 채우기 인터뷰로 확정한 사실을 취업 정보 검색으로 넘긴다 — 새
   // job_search 세션을 만들어 연결해두면, 그 세션의 첫 진입 시 AI가 확정된
   // 사실을 요약한 질문 초안을 컴포저에 미리 채워준다(JobSearchChatPage 참고).
   async function handleMigrateToJobSearch() {
@@ -259,8 +259,8 @@ export default function SessionsLayout({ children }: LayoutProps<"/sessions">) {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <SessionGroup
-            title="공백기 채우기"
-            newLabel="공백기 채우기 새로 만들기"
+            title="커리어 채우기"
+            newLabel="커리어 채우기 새로 만들기"
             onNew={() => handleNewSession("gap_fill")}
             isCreating={isCreating}
             sessions={gapFillSessions}

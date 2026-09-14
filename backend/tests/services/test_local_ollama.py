@@ -90,7 +90,7 @@ def ollama_calls(monkeypatch):
 async def test_judgment_calls_use_deterministic_temperature(ollama_calls):
     calls, canned = ollama_calls
     canned["content"] = json.dumps({"categories": ["training_course"]})
-    await LocalOllamaProvider().classify_job_info_query("경기 북부 훈련과정 있어?")
+    await LocalOllamaProvider().classify_job_info_query("경기 북부 훈련과정 있어?", [])
 
     canned["content"] = json.dumps({"relevant_indices": [0]})
     await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES)
@@ -102,7 +102,7 @@ async def test_judgment_calls_use_deterministic_temperature(ollama_calls):
 async def test_generative_calls_use_creative_temperature(ollama_calls):
     calls, canned = ollama_calls
     canned["content"] = json.dumps({"draft_query": "카페 알바 경험 살릴 훈련과정"})
-    await LocalOllamaProvider().draft_job_info_query_from_facts([])
+    await LocalOllamaProvider().draft_job_info_query_from_facts([], [])
 
     assert calls[0]["options"]["temperature"] == 0.7
 
@@ -206,9 +206,68 @@ async def test_classify_drops_hallucinated_category_names(ollama_calls):
     _, canned = ollama_calls
     canned["content"] = json.dumps({"categories": ["training_course", "job_board", "잡페어"]})
 
-    result = await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
+    categories, unsupported_note = await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?", [])
 
-    assert [q.category for q in result] == ["training_course"]
+    assert [q.category for q in categories] == ["training_course"]
+    assert unsupported_note is None
+
+
+@pytest.mark.asyncio
+async def test_classify_returns_unsupported_note_when_present(ollama_calls):
+    _, canned = ollama_calls
+    canned["content"] = json.dumps(
+        {"categories": ["training_course"], "unsupported_note": "아르바이트·파트타임 채용정보"}
+    )
+
+    categories, unsupported_note = await LocalOllamaProvider().classify_job_info_query("카페 알바랑 직업훈련 알려줘", [])
+
+    assert [q.category for q in categories] == ["training_course"]
+    assert unsupported_note == "아르바이트·파트타임 채용정보"
+
+
+@pytest.mark.asyncio
+async def test_detect_fact_conflicts_parses_indices_and_reason(ollama_calls):
+    _, canned = ollama_calls
+    canned["content"] = json.dumps(
+        {"conflicts": [{"indices": [1, 3], "reason": "저녁 근무와 새벽 근무는 동시에 성립할 수 없다"}]}
+    )
+
+    conflicts = await LocalOllamaProvider().detect_fact_conflicts(
+        ["주 3회 근무했다.", "저녁 6시부터 10시까지 근무했다.", "4개월간 근무했다.", "주 6일, 새벽 5시부터 오전 9시까지 근무했다."]
+    )
+
+    assert len(conflicts) == 1
+    assert conflicts[0].indices == (1, 3)
+    assert conflicts[0].reason == "저녁 근무와 새벽 근무는 동시에 성립할 수 없다"
+
+
+@pytest.mark.asyncio
+async def test_detect_fact_conflicts_drops_out_of_range_indices(ollama_calls):
+    _, canned = ollama_calls
+    canned["content"] = json.dumps({"conflicts": [{"indices": [0, 5], "reason": "범위 밖"}, {"indices": [0, 0], "reason": "자기 자신"}]})
+
+    conflicts = await LocalOllamaProvider().detect_fact_conflicts(["사실 A", "사실 B"])
+
+    assert conflicts == []
+
+
+@pytest.mark.asyncio
+async def test_detect_fact_conflicts_returns_empty_for_fewer_than_two_facts(ollama_calls):
+    calls, _ = ollama_calls
+
+    conflicts = await LocalOllamaProvider().detect_fact_conflicts(["사실 하나뿐"])
+
+    assert conflicts == []
+    assert calls == []  # LLM을 아예 부르지 않는다
+
+
+@pytest.mark.asyncio
+async def test_detect_fact_conflicts_malformed_json_raises_unavailable(ollama_calls):
+    _, canned = ollama_calls
+    canned["content"] = "이건 JSON이 아니다"
+
+    with pytest.raises(LLMUnavailableError):
+        await LocalOllamaProvider().detect_fact_conflicts(["사실 A", "사실 B"])
 
 
 @pytest.mark.asyncio
@@ -219,7 +278,7 @@ async def test_access_headers_are_sent_when_the_token_is_configured(ollama_calls
     _, canned = ollama_calls
     canned["content"] = json.dumps({"categories": ["training_course"]})
 
-    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
+    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?", [])
 
     assert canned["sent_headers"][0] == {
         "CF-Access-Client-Id": "id.access",
@@ -235,7 +294,7 @@ async def test_no_access_headers_when_the_token_is_unset(ollama_calls, monkeypat
     _, canned = ollama_calls
     canned["content"] = json.dumps({"categories": ["training_course"]})
 
-    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
+    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?", [])
 
     assert canned["sent_headers"][0] == {}
 
@@ -249,7 +308,7 @@ async def test_half_configured_access_token_sends_no_headers(ollama_calls, monke
     _, canned = ollama_calls
     canned["content"] = json.dumps({"categories": ["training_course"]})
 
-    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?")
+    await LocalOllamaProvider().classify_job_info_query("훈련과정 있어?", [])
 
     assert canned["sent_headers"][0] == {}
 

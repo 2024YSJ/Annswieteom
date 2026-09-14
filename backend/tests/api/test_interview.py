@@ -8,7 +8,15 @@ from app.models.session import Session as SessionModel
 from app.services import interview_orchestrator as orchestrator
 from app.services.interview_orchestrator import MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
 from app.services.interview_question_bank import BASE_QUESTIONS
-from app.services.llm.base import LLMUnavailableError, BasedOn, DrilldownDecision, FactCandidate, RecordExcerpt, SufficiencyResult
+from app.services.llm.base import (
+    LLMUnavailableError,
+    BasedOn,
+    DrilldownDecision,
+    FactCandidate,
+    FactConflict,
+    RecordExcerpt,
+    SufficiencyResult,
+)
 from app.services.llm import get_llm_provider
 from app.services.record_pipeline.search import RecordChunkExcerpt, get_chunk_search
 
@@ -584,6 +592,53 @@ def test_ask_during_review_returns_the_review_without_calling_the_llm(session_cl
         len(fake.sufficiency_calls), len(fake.followup_calls),
     )
     assert after == before
+    # 모순 탐지도 새로고침마다 다시 부르면 안 된다 — 리뷰 진입 시점에 한 번
+    # 계산해 draft_turns에 저장해 둔 값을 그대로 읽어야 한다.
+    assert len(fake.fact_conflicts_calls) <= 1
+
+
+def test_review_flags_conflicting_drafts_from_different_turns(session_client):
+    """2026-09-13 리포트 Case D — 같은 카테고리의 서로 다른 턴에서 나온, 논리적으로
+    양립할 수 없는 두 사실(예: 상충되는 근무 스케줄)이 리뷰 카드에서 서로를
+    가리키는 경고로 표시돼야 한다. 확정을 막지는 않는다."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    # 기본 fake extract_facts는 turn마다 답변 텍스트 그대로 사실 하나씩 만든다 —
+    # 즉 플랫 인덱스는 turn 순서와 같다. 첫 두 턴이 모순이라고 미리 알려둔다.
+    session_client.fake_llm._fact_conflicts = [
+        FactConflict(indices=(0, 1), reason="저녁 근무와 새벽 근무는 동시에 성립할 수 없다")
+    ]
+
+    _, review = _answer_until_review(
+        session_client, headers, session_id,
+    )
+
+    assert len(session_client.fake_llm.fact_conflicts_calls) == 1
+    drafts = [d for g in review["groups"] for d in g["drafts"]]
+    assert drafts[0]["conflict_with"] == [{"turn_id": review["groups"][1]["turn_id"], "index": 0}]
+    assert drafts[1]["conflict_with"] == [{"turn_id": review["groups"][0]["turn_id"], "index": 0}]
+    # 관련 없는 나머지 draft들은 경고가 없어야 한다.
+    assert all(d["conflict_with"] == [] for d in drafts[2:])
+
+
+def test_review_survives_conflict_detection_failure(session_client):
+    """모순 탐지 LLM 호출이 실패해도(LLMUnavailableError) 리뷰 자체는 막히지
+    않는다 — 경고 없이 그대로 진행한다(정직성 가드레일의 핵심 경로가 아니므로)."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    async def _boom(facts):
+        raise LLMUnavailableError("fake: conflict detection down")
+
+    session_client.fake_llm.detect_fact_conflicts = _boom
+
+    _, review = _answer_until_review(session_client, headers, session_id)
+
+    drafts = [d for g in review["groups"] for d in g["drafts"]]
+    assert all(d["conflict_with"] == [] for d in drafts)
 
 
 def test_answering_while_a_review_is_pending_returns_409(session_client):

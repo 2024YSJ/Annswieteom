@@ -26,7 +26,7 @@ from app.services.job_pipeline.regions import KNOWN_REGION_NAMES, region_label_f
 from app.services.llm.base import JobInfoCandidate, JobInfoQueryParams, LLMProvider, LLMUnavailableError
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
 from app.services.llm import get_llm_provider
-from app.services.profile.attributes import get_profile_extractor, load_match_profile
+from app.services.profile.attributes import get_profile_extractor, load_match_profile, profile_summary_lines
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,20 @@ _QUERY_BUDGET_SECONDS = 600.0
 def _require_job_search(session: SessionModel) -> None:
     if session.kind != "job_search":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="not_a_job_search_session")
+
+
+async def _profile_hint_lines(db: AsyncSession, user_id) -> list[str]:
+    """classify_job_info_query에 넘길 짧은 프로필 힌트 — "내 맞춤 정보에 따라
+    찾아줘"처럼 질문 자체엔 주제어가 없는 자기참조적 질문을 카테고리로 매핑하기
+    위한 것(2026-09-14 리포트). 정보가 없으면 빈 리스트(게스트 포함)."""
+    profile = await load_match_profile(db, user_id)
+    lines = []
+    if profile.desired_job:
+        lines.append(f"희망직무: {profile.desired_job}")
+    regions = [label for code in profile.desired_region_codes if (label := region_label_for(code))]
+    if regions:
+        lines.append(f"희망지역: {', '.join(regions)}")
+    return lines
 
 
 async def _profile_derived_query_params(db: AsyncSession, user_id) -> JobInfoQueryParams | None:
@@ -107,12 +121,18 @@ async def query_job_info(
     # 이미 LLM 호출이 많아 요청 경로에 하나를 더 얹을 수 없다).
     background_tasks.add_task(extractor, session.user_id, "job_search", payload.query)
 
+    profile_hint = await _profile_hint_lines(db, session.user_id)
+
     try:
-        category_queries = await llm.classify_job_info_query(payload.query)
+        category_queries, unsupported_note = await llm.classify_job_info_query(payload.query, profile_hint)
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
 
     if not category_queries:
+        # unsupported_note가 있으면(예: "카페 알바 알려줘") 일반적인 재질문 문구보다
+        # "이건 우리가 다루는 정보가 아니다"를 그대로 보여주는 게 사용자에게 더 정확하다.
+        if unsupported_note:
+            return JobInfoQueryRead(categories=[], unsupported_note=unsupported_note)
         return JobInfoQueryRead(categories=[], clarification_question=_CLARIFICATION_QUESTION)
 
     selected_categories = [cq.category for cq in category_queries][:_MAX_CATEGORIES_PER_QUERY]
@@ -206,7 +226,12 @@ async def query_job_info(
             )
         )
 
-    return JobInfoQueryRead(categories=categories, clarification_question=None, skipped_category_labels=skipped)
+    return JobInfoQueryRead(
+        categories=categories,
+        clarification_question=None,
+        skipped_category_labels=skipped,
+        unsupported_note=unsupported_note,
+    )
 
 
 @router.post("/{session_id}/job-search/draft-query-from-gap", response_model=JobInfoDraftQueryRead)
@@ -214,8 +239,9 @@ async def draft_query_from_gap(
     session: SessionModel = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
     llm: LLMProvider = Depends(get_llm_provider),
+    extractor=Depends(get_profile_extractor),
 ) -> JobInfoDraftQueryRead:
-    """공백기 채우기 세션에서 "취업 정보 검색으로 이관"한 직후, 그 세션의
+    """커리어 채우기 세션에서 "취업 정보 검색으로 이관"한 직후, 그 세션의
     confirmed_facts를 요약해 컴포저에 미리 채워둘 첫 질문 초안을 만든다.
     suggestion만 반환하고 아무것도 저장하지 않는다 — 사용자가 그대로 보내거나
     고쳐 쓰거나 지우고 새로 써야 실제로 대화가 시작된다(다른 모든 AI 초안과
@@ -236,12 +262,21 @@ async def draft_query_from_gap(
         )
     ).scalars().all()
 
+    # 이관 순간 바로 희망직무/희망지역을 반영한다 — 평소엔 인터뷰 답변마다
+    # 백그라운드로 도는 추출이 이관 자체에서는 안 도니, 그 자리에서 동기로
+    # 한 번 불러준다(이 함수는 자기 세션을 열고 예외를 삼킨다, attributes.py
+    # 참고 — 실패해도 아래 초안 생성 자체는 계속된다). 이래야 바로 다음 줄의
+    # profile_summary_lines가 방금 반영된 값을 읽는다(2026-09-14 리포트).
+    await extractor(session.user_id, "job_search", "\n".join(f.content for f in facts))
+    profile_summary = await profile_summary_lines(db, session.user_id)
+
     try:
         draft_query = await llm.draft_job_info_query_from_facts(
             [
                 LLMConfirmedFact(id=str(f.id), content=f.content, source_type=f.source_type, fact_type=f.fact_type)
                 for f in facts
-            ]
+            ],
+            profile_summary,
         )
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc

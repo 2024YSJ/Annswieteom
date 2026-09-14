@@ -22,6 +22,7 @@ from app.services.llm.base import (
     DraftDocument,
     DrilldownDecision,
     FactCandidate,
+    FactConflict,
     InterviewContext,
     JOB_INFO_CATEGORIES,
     JobInfoCandidate,
@@ -322,16 +323,42 @@ class LocalOllamaProvider:
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
-    async def classify_job_info_query(self, query: str) -> list[JobInfoCategoryQuery]:
-        prompt = _render("classify_job_info_query.jinja", query=query)
+    async def detect_fact_conflicts(self, facts: list[str]) -> list[FactConflict]:
+        if len(facts) < 2:
+            return []
+        prompt = _render("detect_fact_conflicts.jinja", facts=facts)
+        response_text = await self._generate(prompt, label="detect_fact_conflicts", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
+        try:
+            data = json.loads(response_text)
+            conflicts = []
+            for c in data["conflicts"]:
+                pair = c["indices"]
+                if (
+                    isinstance(pair, list)
+                    and len(pair) == 2
+                    and all(isinstance(i, int) and not isinstance(i, bool) for i in pair)
+                    and all(0 <= i < len(facts) for i in pair)
+                    and pair[0] != pair[1]
+                ):
+                    conflicts.append(FactConflict(indices=(pair[0], pair[1]), reason=c.get("reason", "")))
+            return conflicts
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
+
+    async def classify_job_info_query(
+        self, query: str, profile_hint: list[str]
+    ) -> tuple[list[JobInfoCategoryQuery], str | None]:
+        prompt = _render("classify_job_info_query.jinja", query=query, profile_hint=profile_hint)
         response_text = await self._generate(prompt, label="classify_job_info_query", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
-            return [
+            categories = [
                 JobInfoCategoryQuery(category=c)
                 for c in data["categories"]
                 if c in JOB_INFO_CATEGORIES  # hallucinated category name -> drop, don't guess
             ]
+            unsupported_note = data.get("unsupported_note") or None
+            return categories, unsupported_note
         except (json.JSONDecodeError, KeyError) as exc:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
@@ -365,8 +392,10 @@ class LocalOllamaProvider:
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
-    async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str:
-        prompt = _render("draft_job_info_query.jinja", confirmed_facts=confirmed_facts)
+    async def draft_job_info_query_from_facts(
+        self, confirmed_facts: list[ConfirmedFact], profile_summary: list[str]
+    ) -> str:
+        prompt = _render("draft_job_info_query.jinja", confirmed_facts=confirmed_facts, profile_summary=profile_summary)
         response_text = await self._generate(prompt, label="draft_job_info_query_from_facts", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(response_text)

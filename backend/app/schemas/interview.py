@@ -92,11 +92,24 @@ class ConfirmedFactRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ConflictRefRead(BaseModel):
+    """FactCandidateRead.conflict_with 항목 하나 — 모순 상대 draft를 turn_id+index로
+    가리킨다(같은 카테고리 리뷰 카드 안이라도 다른 턴의 draft를 가리킬 수 있어
+    전역 인덱스가 아니라 이 조합이 필요하다)."""
+
+    turn_id: str
+    index: int
+
+
 class FactCandidateRead(BaseModel):
     index: int
     content: str
     fact_type: str
     based_on: BasedOnRead
+    #: 같은 카테고리 리뷰 카드 안의 다른 draft와 논리적으로 모순된다고 LLM이
+    #: 판단했을 때 그 상대 draft(들)을 가리킨다. 확정을 막지 않는다 — 사용자가
+    #: 리뷰에서 직접 확인하라는 경고일 뿐이다(devlog 41, Case D).
+    conflict_with: list[ConflictRefRead] = []
 
 
 class ReviewGroupRead(BaseModel):

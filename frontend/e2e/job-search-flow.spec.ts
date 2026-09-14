@@ -6,7 +6,7 @@ function uniqueEmail(): string {
 
 /**
  * Drives the "취업 정보 종합 검색" flow against the real local backend/DB:
- * registering with zero sessions lands on the 공백기 채우기/취업 정보 검색
+ * registering with zero sessions lands on the 커리어 채우기/취업 정보 검색
  * chooser, picking 취업 정보 검색 creates a kind="job_search" session, and the
  * conversational multi-source search runs against a mocked `/job-search/query`
  * (mocked at the network layer since it needs real WorkNet keys this
@@ -71,7 +71,7 @@ test.describe("job search flow", () => {
     await page.getByRole("button", { name: "취업 정보 검색" }).click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/, { timeout: 15000 });
 
-    // Sidebar groups this under 취업 정보 검색, not 공백기 채우기.
+    // Sidebar groups this under 취업 정보 검색, not 커리어 채우기.
     await expect(page.getByText("취업 정보 검색", { exact: true })).toBeVisible();
 
     // --- 첫 질문: 훈련과정 + 강소기업 두 카테고리에 동시에 걸치는 질문 ---
