@@ -93,7 +93,7 @@ async def test_judgment_calls_use_deterministic_temperature(ollama_calls):
     await LocalOllamaProvider().classify_job_info_query("경기 북부 훈련과정 있어?", [], [])
 
     canned["content"] = json.dumps({"relevant_indices": [0]})
-    await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES)
+    await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES, [])
 
     assert [c["options"]["temperature"] for c in calls] == [0.0, 0.0]
 
@@ -122,16 +122,33 @@ async def test_select_relevant_drops_hallucinated_indices(ollama_calls):
     _, canned = ollama_calls
     canned["content"] = json.dumps({"relevant_indices": [0, 7, -1, 2]})
 
-    result = await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES)
+    result = await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES, [])
 
     assert result == [0, 2]
+
+
+@pytest.mark.asyncio
+async def test_select_relevant_renders_history_block(ollama_calls):
+    """2026-09-15 리포트 — history 없이는 "그중에서 서울 지역만 보여줘" 같은
+    후속 질문의 관련성 판정에서 이전 턴의 직무 조건("간호사")이 통째로 사라진다.
+    프롬프트에 실제로 [이전 대화] 블록이 렌더링되는지 확인한다."""
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps({"relevant_indices": [0]})
+
+    await LocalOllamaProvider().select_relevant_job_info_results(
+        "그중에서 서울 지역만 보여줘", "공채속보", CANDIDATES, ["간호사 채용 정보 알려줘"]
+    )
+
+    prompt = calls[0]["messages"][1]["content"]
+    assert "[이전 대화" in prompt
+    assert "간호사 채용 정보 알려줘" in prompt
 
 
 @pytest.mark.asyncio
 async def test_select_relevant_with_no_candidates_never_calls_the_model(ollama_calls):
     calls, _ = ollama_calls
 
-    result = await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", [])
+    result = await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", [], [])
 
     assert result == []
     assert calls == []
@@ -143,7 +160,7 @@ async def test_select_relevant_malformed_json_raises_provider_unavailable(ollama
     canned["content"] = "관련 있는 건 0번입니다"
 
     with pytest.raises(LLMUnavailableError):
-        await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES)
+        await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES, [])
 
 
 @pytest.mark.asyncio
@@ -152,7 +169,7 @@ async def test_select_relevant_non_iterable_indices_raises_provider_unavailable(
     canned["content"] = json.dumps({"relevant_indices": 5})
 
     with pytest.raises(LLMUnavailableError):
-        await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES)
+        await LocalOllamaProvider().select_relevant_job_info_results("질문", "직업훈련과정", CANDIDATES, [])
 
 
 @pytest.mark.asyncio
