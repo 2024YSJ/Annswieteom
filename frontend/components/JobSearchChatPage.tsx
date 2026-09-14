@@ -81,8 +81,12 @@ export function JobSearchChatPage({
     setPrefillText(null);
     setPendingQuery(queryText);
     setIsSubmitting(true);
+    // 무상태 대화라 서버는 이번 메시지밖에 모른다 — "그럼 서울도 같이 봐줘" 같은
+    // 후속 질문을 이해하려면 지금까지의 발화를 매번 다시 실어 보내야 한다
+    // (devlog 44). 서버가 최근 N턴만 쓰므로 여기서는 그냥 전부 보낸다.
+    const history = turns.map((t) => t.query);
     try {
-      const result = await jobSearchApi.query(sessionId, queryText, accessToken!);
+      const result = await jobSearchApi.query(sessionId, queryText, history, accessToken!);
       setTurns((prev) => [
         ...prev,
         {
@@ -131,6 +135,14 @@ export function JobSearchChatPage({
                   {turn.categories.map((category) => (
                     <div key={category.category} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted-text)" }}>{category.category_label}</div>
+                      {/* 처음 조건대로는 모자라 범위를 넓혀 다시 찾은 경우 —
+                          실제 챗봇이라면 "이렇게 다르게 시도해봤다"를 설명해야
+                          한다는 원칙(devlog 44). */}
+                      {category.broadened && (
+                        <p style={{ margin: 0, fontSize: 12.5, color: "var(--muted-text)" }}>
+                          지정하신 조건엔 마땅한 게 없어서 범위를 넓혀 찾아봤어요.
+                        </p>
+                      )}
                       {category.results.length === 0 ? (
                         <ChatBubble side="left">조건에 맞는 {category.category_label} 정보를 찾지 못했어요.</ChatBubble>
                       ) : (

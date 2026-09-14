@@ -282,10 +282,15 @@ class LLMProvider(Protocol):
     #: 자기참조적 질문을 위한 것 — 희망직무/희망지역 같은 이미 확인된 정보를
     #: 참고해 카테고리를 폭넓게 고를 수 있게 한다(devlog 43). 게스트/정보 없는
     #: 사용자는 빈 리스트를 넘긴다.
+    #: history는 이 대화의 이전 사용자 발화 원문(오래된 것부터) — 무상태
+    #: 대화라 세션에 아무것도 안 남기므로, "그럼 서울도 같이 봐줘"처럼 앞
+    #: 턴을 전제하는 후속 질문을 이해하려면 매번 다시 실어 보내야 한다(devlog 44).
     async def classify_job_info_query(
-        self, query: str, profile_hint: list[str]
+        self, query: str, profile_hint: list[str], history: list[str]
     ) -> tuple[list[JobInfoCategoryQuery], str | None]: ...
-    async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams: ...
+    async def extract_job_info_query_params(
+        self, query: str, known_regions: list[str], history: list[str]
+    ) -> JobInfoQueryParams: ...
     async def select_relevant_job_info_results(
         self, query: str, category_label: str, candidates: list[JobInfoCandidate]
     ) -> list[int]: ...

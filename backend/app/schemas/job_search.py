@@ -5,6 +5,11 @@ from pydantic import BaseModel
 
 class JobInfoQueryRequest(BaseModel):
     query: str
+    #: 이전 사용자 발화 원문만(가장 오래된 것부터), 구조화된 파라미터는 안 담는다 —
+    #: 프론트가 이미 로컬로 들고 있는 turns를 그대로 잘라 보낸다. 백엔드는 세션에
+    #: 아무것도 저장하지 않으므로(무상태 대화) 이게 유일한 맥락 전달 경로다
+    #: (devlog 44, "그럼 서울도 같이 봐줘" 같은 후속 질문 지원).
+    history: list[str] = []
 
 
 class JobInfoResultRead(BaseModel):
@@ -18,6 +23,10 @@ class JobInfoCategoryResultRead(BaseModel):
     category: str
     category_label: str
     results: list[JobInfoResultRead]
+    #: 처음 조건(지역/키워드)대로는 결과가 모자라 조건을 일부 풀고 다시 조회했을
+    #: 때만 true — 실제 챗봇이라면 "조건을 넓혀서 찾아봤다"를 사용자에게 설명해야
+    #: 한다(devlog 44).
+    broadened: bool = False
 
 
 class JobInfoQueryRead(BaseModel):
