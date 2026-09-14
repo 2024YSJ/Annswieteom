@@ -689,6 +689,25 @@ button.flow:active:not(:disabled) {
   color: var(--muted-text);
 }
 
+.section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-collapse-toggle {
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  font-size: 13px;
+  color: var(--muted-text);
+  cursor: pointer;
+}
+
+.section-collapse-toggle:hover {
+  color: var(--body-text);
+}
+
 /* 예시 결과물 미리보기 — 실제 ResultSection의 문서 카드와 같은 문법. */
 .doc-preview {
   border: 1px solid var(--border-strong);
@@ -935,6 +954,16 @@ button.flow:active:not(:disabled) {
   background: var(--accent-soft);
   border-color: var(--accent-soft-border);
   color: var(--accent);
+}
+
+/* 공고·훈련 카드의 개별 근거 pill(지역/직무 관련 등) — "조건이 몇 개 다 맞았다"는
+   판정이 아니라 "이런 이유로 관련 있다"는 신호 나열이라, 정책의 옅은 합집합
+   색과 같은 톤을 쓴다. */
+.feed-match-signal {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .feed-card-match {

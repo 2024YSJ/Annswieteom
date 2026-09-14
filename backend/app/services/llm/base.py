@@ -278,12 +278,23 @@ class LLMProvider(Protocol):
     #: (카테고리 리뷰 카드에서 확정 전에 경고를 보여주기 위함 — devlog 41).
     #: facts는 0-based로 넘기고 반환되는 FactConflict.indices도 0-based다.
     async def detect_fact_conflicts(self, facts: list[str]) -> list[FactConflict]: ...
-    async def classify_job_info_query(self, query: str) -> tuple[list[JobInfoCategoryQuery], str | None]: ...
+    #: profile_hint는 "내 맞춤 정보에 따라 찾아줘"처럼 질문 자체에 주제어가 없는
+    #: 자기참조적 질문을 위한 것 — 희망직무/희망지역 같은 이미 확인된 정보를
+    #: 참고해 카테고리를 폭넓게 고를 수 있게 한다(devlog 43). 게스트/정보 없는
+    #: 사용자는 빈 리스트를 넘긴다.
+    async def classify_job_info_query(
+        self, query: str, profile_hint: list[str]
+    ) -> tuple[list[JobInfoCategoryQuery], str | None]: ...
     async def extract_job_info_query_params(self, query: str, known_regions: list[str]) -> JobInfoQueryParams: ...
     async def select_relevant_job_info_results(
         self, query: str, category_label: str, candidates: list[JobInfoCandidate]
     ) -> list[int]: ...
-    async def draft_job_info_query_from_facts(self, confirmed_facts: list[ConfirmedFact]) -> str: ...
+    #: profile_summary는 확정된 사실만으로는 알 수 없는 희망직무/희망지역을
+    #: 초안 문장에 자연스럽게 녹이기 위한 것 — 이미 확인된 프로필 정보라
+    #: confirmed_facts와 달리 지어내는 게 아니다(devlog 43).
+    async def draft_job_info_query_from_facts(
+        self, confirmed_facts: list[ConfirmedFact], profile_summary: list[str]
+    ) -> str: ...
     #: 사람 단위 속성 추출(나이·거주지·학력·희망직무 …). 백그라운드에서만 부른다 —
     #: 요청 경로의 LLM 호출 수를 늘리지 않는다. 프롬프트는 `allow_sensitive`와
     #: 무관하게 민감 키도 보여준다 — 동의 없는 사용자가 스스로 말한 경우를 알아야

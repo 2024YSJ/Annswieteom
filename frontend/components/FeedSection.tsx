@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useState } from "react";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
 import Link from "next/link";
@@ -12,6 +13,26 @@ import { queryKeys } from "@/lib/query-keys";
  * 수집은 응답 이후 BackgroundTask로 도는 구조라, 최초 1회는 빈 응답이 나온 뒤
  * 잠시 기다렸다 다시 물어보는 것 말고는 방법이 없다. */
 const WARMING_POLL_MS = 4000;
+
+/** 섹션 접기/펼치기는 순수 이 브라우저만의 편의 상태라 서버에 저장하지 않는다
+ * (다른 기기·다른 사용자에게 영향 없어야 함) — 접근 불가 환경(프라이빗 창 등)에서도
+ * 화면이 정상 동작해야 하므로 읽기/쓰기 모두 조용히 실패한다. */
+function readCollapsed(scope: FeedScope): boolean {
+  try {
+    return localStorage.getItem(`feed-section-collapsed:${scope}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeCollapsed(scope: FeedScope, collapsed: boolean): void {
+  try {
+    if (collapsed) localStorage.setItem(`feed-section-collapsed:${scope}`, "1");
+    else localStorage.removeItem(`feed-section-collapsed:${scope}`);
+  } catch {
+    // 저장 실패는 무시 — 이번 방문 동안만 상태가 안 남을 뿐 기능은 그대로 동작한다.
+  }
+}
 
 export type FeedScope =
   | "policies"
@@ -55,7 +76,11 @@ function fallbackNotice(feed: FeedRead): { text: string; tone: "info" | "warn" }
 }
 
 /** 맞춤 정책 카드의 조건 일치 표시. "왜 이게 위에 있지?"에 답하는 자리다 —
- * 교집합(all)과 합집합(some)을 구분해 보여주지 않으면 사용자는 순서의 의미를 모른다. */
+ * 교집합(all)과 합집합(some)을 구분해 보여주지 않으면 사용자는 순서의 의미를 모른다.
+ * 공고·훈련은 "티어"(all/some) 개념이 없어(match_tier가 항상 "none") 카운트
+ * pill 대신, 계산된 각 근거(matched_labels)를 라벨별로 개별 pill로 보여준다 —
+ * 정책과 똑같이 눈에 띄지만, "N개 중 일치"가 아니라 "왜 관련 있는지"를 그대로
+ * 나열하는 것이라 표현 방식이 다르다.*/
 function MatchBadge({ item }: { item: FeedItemRead }) {
   const matched = item.matched_labels ?? [];
   if (item.match_tier === "all") {
@@ -63,6 +88,17 @@ function MatchBadge({ item }: { item: FeedItemRead }) {
   }
   if (item.match_tier === "some") {
     return <span className="feed-match feed-match-some">조건 {matched.length}개 일치</span>;
+  }
+  if (matched.length > 0) {
+    return (
+      <>
+        {matched.map((label) => (
+          <span key={label} className="feed-match feed-match-signal">
+            {label}
+          </span>
+        ))}
+      </>
+    );
   }
   return null;
 }
@@ -81,7 +117,12 @@ function FeedCard({ item }: { item: FeedItemRead }) {
       </div>
       <span className="feed-card-title">{item.title}</span>
       {item.subtitle && <span className="feed-card-subtitle">{item.subtitle}</span>}
-      {matched.length > 0 && <span className="feed-card-match">✓ {matched.join(" · ")}</span>}
+      {/* 정책만 평문으로도 다시 나열한다 — "조건 N개 일치" 카운트 pill 옆에 실제
+          어떤 조건인지 풀어써야 의미가 있다. 공고·훈련은 이제 위 태그 줄의
+          개별 pill이 이미 같은 정보를 보여주므로 평문을 중복해서 안 그린다. */}
+      {item.match_tier !== "none" && matched.length > 0 && (
+        <span className="feed-card-match">✓ {matched.join(" · ")}</span>
+      )}
       {item.match_tier === "some" && unmet.length > 0 && (
         <span className="feed-card-unmet">확인 필요: {unmet.slice(0, 2).join(" · ")}</span>
       )}
@@ -123,6 +164,8 @@ export function FeedSection({
   accessToken: string | null;
   limit?: number;
 }) {
+  const [collapsed, setCollapsed] = useState(() => readCollapsed(scope));
+
   const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: queryKeys.feed(scope),
     queryFn: ({ pageParam }) => {
@@ -168,41 +211,59 @@ export function FeedSection({
             <span aria-hidden>{icon}</span> {title}
             {feed?.personalized && <span className="feed-badge">맞춤</span>}
           </h2>
-          {action ?? (aside && <span className="section-aside">{aside}</span>)}
+          <div className="section-head-actions">
+            {action ?? (aside && <span className="section-aside">{aside}</span>)}
+            <button
+              type="button"
+              className="section-collapse-toggle"
+              aria-expanded={!collapsed}
+              onClick={() => {
+                const next = !collapsed;
+                setCollapsed(next);
+                writeCollapsed(scope, next);
+              }}
+            >
+              {collapsed ? "펼치기 ▾" : "접기 ▴"}
+            </button>
+          </div>
         </div>
 
-        {notice && !suppressed && (
-          <p className={notice.tone === "warn" ? "msg-error feed-notice" : "feed-notice"}>{notice.text}</p>
-        )}
-
-        {error ? (
-          <p className="msg-error">{errorMessage(error)}</p>
-        ) : isLoading ? (
-          <p className="feed-empty">불러오는 중...</p>
-        ) : suppressed && notice ? (
-          <p className={notice.tone === "warn" ? "msg-error" : "feed-callout"}>{notice.text}</p>
-        ) : items.length > 0 ? (
+        {!collapsed && (
           <>
-            <div className="feed-grid">
-              {items.map((item) => (
-                <FeedCard key={item.id} item={item} />
-              ))}
-            </div>
-            {hasNextPage && (
-              <div className="feed-more">
-                <button type="button" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
-                  {isFetchingNextPage ? "불러오는 중..." : "더보기"}
-                </button>
-              </div>
+            {notice && !suppressed && (
+              <p className={notice.tone === "warn" ? "msg-error feed-notice" : "feed-notice"}>{notice.text}</p>
+            )}
+
+            {error ? (
+              <p className="msg-error">{errorMessage(error)}</p>
+            ) : isLoading ? (
+              <p className="feed-empty">불러오는 중...</p>
+            ) : suppressed && notice ? (
+              <p className={notice.tone === "warn" ? "msg-error" : "feed-callout"}>{notice.text}</p>
+            ) : items.length > 0 ? (
+              <>
+                <div className="feed-grid">
+                  {items.map((item) => (
+                    <FeedCard key={item.id} item={item} />
+                  ))}
+                </div>
+                {hasNextPage && (
+                  <div className="feed-more">
+                    <button type="button" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+                      {isFetchingNextPage ? "불러오는 중..." : "더보기"}
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : feed?.is_warming ? (
+              <p className="feed-empty">최신 정보를 모으고 있어요. 잠시만 기다려주세요...</p>
+            ) : (
+              <p className="feed-empty">
+                지금은 보여드릴 항목이 없어요. 대화로 직접 찾아보시려면{" "}
+                <Link href="/">취업 정보 검색</Link>을 이용해보세요.
+              </p>
             )}
           </>
-        ) : feed?.is_warming ? (
-          <p className="feed-empty">최신 정보를 모으고 있어요. 잠시만 기다려주세요...</p>
-        ) : (
-          <p className="feed-empty">
-            지금은 보여드릴 항목이 없어요. 대화로 직접 찾아보시려면{" "}
-            <Link href="/">취업 정보 검색</Link>을 이용해보세요.
-          </p>
         )}
       </div>
     </section>
