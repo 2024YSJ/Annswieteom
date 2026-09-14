@@ -381,12 +381,16 @@ class LocalOllamaProvider:
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
     async def select_relevant_job_info_results(
-        self, query: str, category_label: str, candidates: list[JobInfoCandidate]
+        self, query: str, category_label: str, candidates: list[JobInfoCandidate], history: list[str]
     ) -> list[int]:
         if not candidates:
             return []
         prompt = _render(
-            "select_relevant_job_info_results.jinja", query=query, category_label=category_label, candidates=candidates
+            "select_relevant_job_info_results.jinja",
+            query=query,
+            category_label=category_label,
+            candidates=candidates,
+            history=history,
         )
         response_text = await self._generate(prompt, label="select_relevant_job_info_results", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:

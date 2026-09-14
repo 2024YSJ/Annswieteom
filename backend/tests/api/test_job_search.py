@@ -411,7 +411,7 @@ def test_query_drops_category_when_relevance_judgment_is_unavailable(session_cli
     )
 
     class BrokenRelevanceLLM(FakeLLMProvider):
-        async def select_relevant_job_info_results(self, query, category_label, candidates):
+        async def select_relevant_job_info_results(self, query, category_label, candidates, history):
             raise LLMUnavailableError()
 
     app.dependency_overrides[get_llm_provider] = lambda: BrokenRelevanceLLM(
@@ -498,12 +498,12 @@ def test_query_runs_relevance_judgments_one_at_a_time(session_client):
             self.in_flight = 0
             self.max_in_flight = 0
 
-        async def select_relevant_job_info_results(self, query, category_label, candidates):
+        async def select_relevant_job_info_results(self, query, category_label, candidates, history):
             self.in_flight += 1
             self.max_in_flight = max(self.max_in_flight, self.in_flight)
             try:
                 await asyncio.sleep(0)  # 동시에 돌고 있다면 여기서 서로 끼어든다
-                return await super().select_relevant_job_info_results(query, category_label, candidates)
+                return await super().select_relevant_job_info_results(query, category_label, candidates, history)
             finally:
                 self.in_flight -= 1
 
@@ -537,7 +537,7 @@ def test_query_skips_remaining_categories_when_the_budget_runs_out(session_clien
     _override_job_info_client(results_by_category={"job_fair": one_result, "training_course": one_result})
 
     class SlowRelevanceLLM(FakeLLMProvider):
-        async def select_relevant_job_info_results(self, query, category_label, candidates):
+        async def select_relevant_job_info_results(self, query, category_label, candidates, history):
             await asyncio.sleep(0.5)
             return [0]
 
@@ -636,6 +636,28 @@ def test_history_is_capped_and_passed_to_classify_and_extract(session_client):
 
     assert fake_llm.job_info_history_calls == [long_history[-5:]]
     assert fake_llm.extract_query_params_history_calls == [long_history[-5:]]
+
+
+def test_history_reaches_relevance_judging(session_client):
+    """2026-09-15 리포트 — select_relevant_job_info_results가 history를 전혀
+    못 받아서, "간호사" 대화 중 "그중에서 서울 지역만 보여줘" 후속 질문의 관련성
+    판정에 "간호사"라는 직무 조건이 아예 안 보였다. 그 결과 지역만 맞고 직무는
+    무관한 항목("기술영업직")이 관련 있다고 잘못 골라졌다. 이 회귀를 막는다."""
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    one_result = [JobInfoResult(title="아무거나", subtitle="서울", meta_lines=[])]
+    _override_job_info_client(results_by_category={"public_recruitment": one_result})
+    fake_llm = FakeLLMProvider(job_info_categories=[JobInfoCategoryQuery(category="public_recruitment")])
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "그중에서 서울 지역만 보여줘", "history": ["간호사 채용 정보 알려줘"]},
+        headers=_auth(token),
+    )
+
+    assert fake_llm.select_relevant_history_calls
+    assert fake_llm.select_relevant_history_calls[0] == ["간호사 채용 정보 알려줘"]
 
 
 def test_widen_retries_promising_sme_without_region_when_results_are_scarce(session_client):
