@@ -149,6 +149,7 @@ class FakeLLMProvider:
         self.extract_query_params_history_calls: list[list[str]] = []
         self.draft_job_info_query_profile_calls: list[list[str]] = []
         self.select_relevant_calls: list[tuple] = []
+        self.select_relevant_history_calls: list[list[str]] = []
         self.extract_query_params_calls: list[tuple] = []
         self.draft_job_info_query_calls: list[list] = []
         self.activity_items_calls: list[tuple[str, str]] = []
@@ -256,8 +257,9 @@ class FakeLLMProvider:
         # 일일이 설정하지 않아도 되게 한다(조건 없이 조회하던 예전 동작과 동일).
         return JobInfoQueryParams()
 
-    async def select_relevant_job_info_results(self, query, category_label, candidates):
+    async def select_relevant_job_info_results(self, query, category_label, candidates, history):
         self.select_relevant_calls.append((query, category_label, candidates))
+        self.select_relevant_history_calls.append(history)
         if self._job_info_relevant_indices is not None:
             return self._job_info_relevant_indices
         # Default: everything the client fetched is "relevant" — tests that

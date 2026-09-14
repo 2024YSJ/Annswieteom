@@ -249,7 +249,7 @@ async def query_job_info(
         ]
         try:
             async with asyncio.timeout(remaining):
-                relevant_indices = await llm.select_relevant_job_info_results(payload.query, label, candidates)
+                relevant_indices = await llm.select_relevant_job_info_results(payload.query, label, candidates, history)
         # TimeoutError를 계속 같이 잡는다. LLMUnavailableError가 프로바이더 쪽
         # httpx 타임아웃을 이미 흡수하지만, 여기 asyncio.timeout(remaining)은
         # 그 바깥에서 도는 전체 예산 타이머라 여전히 맨 TimeoutError를 던진다

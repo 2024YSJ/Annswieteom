@@ -291,8 +291,14 @@ class LLMProvider(Protocol):
     async def extract_job_info_query_params(
         self, query: str, known_regions: list[str], history: list[str]
     ) -> JobInfoQueryParams: ...
+    #: history 없이 이번 질문만으로 판단하면 "그중에서 서울 지역만 보여줘"처럼
+    #: 직무/분야를 다시 말하지 않는 후속 질문에서 원래 직무 조건을 잃어버린다
+    #: — 지역은 맞지만 전혀 다른 직무인 항목을 관련 있다고 잘못 고르는 버그로
+    #: 실측 확인됐다(2026-09-15 리포트: "간호사" 대화 중 "서울 지역만" 후속에
+    #: "기술영업직"이 섞여 나옴). classify_job_info_query/extract_job_info_query_params와
+    #: 마찬가지로 history를 받아야 한다(devlog 45).
     async def select_relevant_job_info_results(
-        self, query: str, category_label: str, candidates: list[JobInfoCandidate]
+        self, query: str, category_label: str, candidates: list[JobInfoCandidate], history: list[str]
     ) -> list[int]: ...
     #: profile_summary는 확정된 사실만으로는 알 수 없는 희망직무/희망지역을
     #: 초안 문장에 자연스럽게 녹이기 위한 것 — 이미 확인된 프로필 정보라
