@@ -202,10 +202,26 @@ async def search_job_fairs(params: JobInfoQueryParams | None = None, limit: int 
     # 0건으로 끝난다 — occupation_synonyms로 표현을 몇 개 더 시도한다
     # (devlog 46). 매핑 안 된 키워드는 후보가 1개뿐이라 기존과 동일하게 호출 1회.
     variants = expand_occupation_keyword(params.keywords[0], limit=_MAX_JOB_FAIR_KEYWORD_VARIANTS)
-    fetched = await asyncio.gather(*[_fetch_job_fairs_for_keyword(v, limit) for v in variants])
+
+    # 고용24는 "이 키워드로 매칭되는 행사가 없다"도 빈 목록이 아니라 오류
+    # XML로 준다(devlog 15). 표현 하나가 이걸 맞으면 asyncio.gather가 그
+    # 예외로 통째로 실패해, 다른 표현이 실제로 결과를 찾았어도 카테고리 전체가
+    # skipped로 떨어진다(2026-09-15 실계정에서 "경남 용접공" 재현) — 표현마다
+    # 독립적으로 실패를 흡수하고, 전부 실패했을 때만 마지막 오류를 올린다
+    # (training_course의 4-엔드포인트 _safe/any_ok와 같은 패턴).
+    async def _safe(keyword: str) -> list[JobInfoResult] | WorknetApiError:
+        try:
+            return await _fetch_job_fairs_for_keyword(keyword, limit)
+        except WorknetApiError as exc:
+            return exc
+
+    fetched = await asyncio.gather(*[_safe(v) for v in variants])
+    succeeded = [group for group in fetched if not isinstance(group, WorknetApiError)]
+    if not succeeded:
+        raise next(exc for exc in fetched if isinstance(exc, WorknetApiError))
 
     merged: dict[object, JobInfoResult] = {}
-    for group in fetched:
+    for group in succeeded:
         for r in group:
             key = r.source_key or (r.title, r.subtitle)
             merged.setdefault(key, r)
