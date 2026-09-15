@@ -57,6 +57,11 @@ class Case:
     unsupported_expected: bool = False
     #: extract_job_info_query_params도 같이 채점하고 싶을 때만.
     expected_regions: frozenset[str] | None = None
+    #: extract_job_info_query_params가 뽑은 keywords 중 이 중 하나라도 있으면
+    #: 통과(정확히 이 표현이어야 한다고 강제하지 않는다 — 실제 데이터 표현으로
+    #: 바꿔 적으라는 규칙이 있어 정확한 문자열을 강제하기 어렵다. 2026-09-15
+    #: 다중 주제 히스토리 버그 회귀 감시용).
+    expected_keywords_any_of: frozenset[str] | None = None
     #: True면 extract_job_info_query_params도 호출해서, unsupported_note가
     #: 방금 추출한 keywords 중 하나를 그대로 미지원 사유로 지어내는 모순이
     #: 있는지 검사한다(2026-09-15 리포트 — 지역 모순과 같은 패턴이 직무명에도
@@ -212,6 +217,25 @@ CASES: list[Case] = [
         "강소기업 추천해줘",
         expected_categories=frozenset({"promising_sme"}),
     ),
+    Case(
+        # 2026-09-15 실계정 재현: 무관한 직무 4개를 연속으로 물은 뒤 "그중에서
+        # 서울 지역만"이라고 물으면, extract가 keywords를 잃어버리거나(빈
+        # 배열) 더 앞의 무관한 직무(승강기정비사/게임기획자/배달라이더)를
+        # 잘못 골라 0건이 됐다 — 새 세션에서 "전기기사" 한 턴만 이력에 두고
+        # 같은 후속 질문을 하면 정상 작동하는 것으로 대조 확인됐다.
+        "multi_topic_history_keeps_only_last_job",
+        "그중에서 서울 지역만 보여줘",
+        history=[
+            "상담심리사 관련 훈련과정 있어?",
+            "승강기정비사 관련 훈련과정 있어?",
+            "게임기획자 관련 훈련과정이나 채용공고 있어?",
+            "배달라이더 구인 정보 있어?",
+            "전기기사 관련 채용훈련과정 알려줘",
+        ],
+        expected_categories=frozenset({"training_course"}),
+        expected_regions=frozenset({"서울"}),
+        expected_keywords_any_of=frozenset({"전기기사", "전기", "전기공사"}),
+    ),
 ]
 
 
@@ -264,6 +288,28 @@ RELEVANCE_CASES: list[RelevanceCase] = [
         [
             ("(주)코리아메디케어", "서울 중구 · 의료기기 유통업"),
             ("덕산네오룩스(주)", "충남 천안시 · 전자부품 제조업"),
+        ],
+        expected_indices=frozenset({0}),
+    ),
+    RelevanceCase(
+        # 2026-09-15 실계정 재현: 무관한 직무 4개(상담심리사/승강기정비사/
+        # 게임기획자/배달라이더) 다음 "전기기사"를 물은 뒤 "그중에서 서울
+        # 지역만"이라고 물으면 0건이 됐다 — 더 앞의 무관한 직무로 되돌아가거나
+        # 어느 직무도 유효하지 않다고 판단해 전부 걸러낸 것으로 보인다.
+        "multi_topic_history_keeps_only_last_job",
+        "그중에서 서울 지역만 보여줘",
+        "직업훈련과정",
+        [
+            ("전기기사 기초", "국민내일배움카드 · 서울 서초구"),
+            ("(게임콘텐츠제작) 게임 그래픽 디자이너 양성", "국민내일배움카드 · 서울 관악구"),
+            ("전기(산업)기사 실기", "국민내일배움카드 · 부산 부산진구"),
+        ],
+        history=[
+            "상담심리사 관련 훈련과정 있어?",
+            "승강기정비사 관련 훈련과정 있어?",
+            "게임기획자 관련 훈련과정이나 채용공고 있어?",
+            "배달라이더 구인 정보 있어?",
+            "전기기사 관련 채용훈련과정 알려줘",
         ],
         expected_indices=frozenset({0}),
     ),
@@ -357,6 +403,18 @@ def _score_regions(case: Case, regions: list[str]) -> list[str]:
     return []
 
 
+def _score_keywords(case: Case, keywords: list[str]) -> list[str]:
+    # 정확한 표현을 강제하지 않는다 — 규칙상 실제 데이터 표현으로 바꿔 적으라고
+    # 하므로 "전기기사"가 아니라 "전기"로 나와도 맞을 수 있다. "이 중 하나라도
+    # 있으면 통과"로 느슨하게 채점한다(2026-09-15 다중 주제 히스토리 회귀 감시).
+    if case.expected_keywords_any_of is None:
+        return []
+    got = frozenset(keywords)
+    if not (case.expected_keywords_any_of & got):
+        return [f"키워드 불일치: 기대(하나 이상) {sorted(case.expected_keywords_any_of)}, 실제 {sorted(got)}"]
+    return []
+
+
 async def _run(provider: LocalOllamaProvider) -> list[CaseScore]:
     scores = []
     for case in CASES:
@@ -372,7 +430,11 @@ async def _run(provider: LocalOllamaProvider) -> list[CaseScore]:
 
         regions: list[str] | None = None
         keywords: list[str] | None = None
-        if case.expected_regions is not None or case.check_keyword_contradiction:
+        if (
+            case.expected_regions is not None
+            or case.check_keyword_contradiction
+            or case.expected_keywords_any_of is not None
+        ):
             try:
                 from app.services.job_pipeline.regions import KNOWN_REGION_NAMES
 
@@ -381,6 +443,7 @@ async def _run(provider: LocalOllamaProvider) -> list[CaseScore]:
                 )
                 regions, keywords = params.regions, params.keywords
                 problems += _score_regions(case, regions)
+                problems += _score_keywords(case, keywords)
             except Exception as exc:
                 problems.append(f"extract 실패: {exc}")
 
