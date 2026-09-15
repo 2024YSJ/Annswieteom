@@ -39,15 +39,24 @@ def test_pet_groomer_group_covers_the_real_certificate_name():
 
 def test_kindergarten_teacher_group_covers_the_real_certificate_name():
     # 같은 라운드에서 발견: "유치원교사"는 0건, 실제 과정은 "보육교사"로 등록.
-    result = expand_occupation_keyword("유치원교사", limit=4)
+    # limit=2는 training_course의 실제 캡(_MAX_TRAINING_KEYWORD_VARIANTS)과
+    # 같다 — 처음엔 limit=4로만 테스트해서, 실제로 쓰이는 limit=2에서 표제어가
+    # 자기 자리를 차지해 "보육교사"가 밀려나는 회귀를 못 잡았었다.
+    result = expand_occupation_keyword("유치원교사", limit=2)
 
     assert "보육교사" in result
 
 
 def test_kindergarten_teacher_group_is_reachable_from_just_the_word_유치원():
-    # 재배포 후에도 여전히 0건이었다 — 추출 프롬프트가 "교사"를 빼고 "유치원"만
-    # 뽑은 것으로 보인다(exact-match라 한 글자만 달라도 못 찾는다). "유치원"도
-    # 같은 그룹에 넣어 표제어 표기가 흔들려도 걸리게 했다.
-    result = expand_occupation_keyword("유치원", limit=4)
+    # 재배포 후에도 여전히 0건이었다 — 로컬 재현 결과 LLM이 "유치원 교사"
+    # (띄어씀)로 뽑은 게 원인이었다(exact-match라 붙여쓴 표제어와 안 걸림).
+    result = expand_occupation_keyword("유치원", limit=2)
+
+    assert "보육교사" in result
+
+
+def test_kindergarten_teacher_group_is_reachable_with_a_space():
+    # 실제로 관측된 추출 형태 — "유치원"과 "교사" 사이에 띄어쓰기가 있다.
+    result = expand_occupation_keyword("유치원 교사", limit=2)
 
     assert "보육교사" in result
