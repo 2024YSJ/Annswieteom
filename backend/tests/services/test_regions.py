@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.services.job_pipeline.regions import (
     KNOWN_REGION_NAMES,
     RegionFilter,
+    region_match_terms,
     resolve_region_filters,
 )
 
@@ -75,3 +76,25 @@ def test_known_region_names_cover_what_the_prompt_needs_to_offer():
     # LLM이 올바른 지역명을 내놓아도 코드 변환에서 조용히 버려진다.
     for name in ("경기 북부", "수도권", "서울", "경기", "고양", "의정부"):
         assert name in KNOWN_REGION_NAMES
+
+
+def test_region_match_terms_expands_a_group_to_its_member_cities():
+    # job_pipeline/prefilter.py(devlog 52)가 자유 텍스트에 부분일치시킬
+    # substring이 필요하다 — 권역명은 그 자체로 텍스트에 안 나오니 시·군
+    # 이름들로 펼쳐야 한다.
+    assert set(region_match_terms(["경기 북부"])) == {
+        "의정부", "동두천", "고양", "구리", "남양주", "파주", "양주", "포천", "연천", "가평",
+    }
+
+
+def test_region_match_terms_expands_metropolitan_area():
+    assert set(region_match_terms(["수도권"])) == {"서울", "경기", "인천"}
+
+
+def test_region_match_terms_strips_known_suffixes_for_bare_names():
+    assert region_match_terms(["고양시"]) == ["고양"]
+    assert region_match_terms(["서울"]) == ["서울"]
+
+
+def test_region_match_terms_skips_blank_entries():
+    assert region_match_terms(["", "  "]) == []

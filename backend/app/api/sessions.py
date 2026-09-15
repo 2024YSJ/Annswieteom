@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,15 +27,6 @@ async def create_session(
 ) -> SessionModel:
     if payload.kind not in SESSION_KINDS:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_kind")
-
-    if current_user.is_guest:
-        # Explicit count query, not current_user.sessions — touching a lazy
-        # relationship here raises MissingGreenlet inside an async function.
-        existing_count = await db.scalar(
-            select(func.count()).select_from(SessionModel).where(SessionModel.user_id == current_user.id)
-        )
-        if existing_count and existing_count > 0:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="guest_session_limit_reached")
 
     linked_gap_session_id = None
     if payload.linked_gap_session_id is not None:

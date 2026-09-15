@@ -588,6 +588,40 @@ def test_query_passes_extracted_search_params_to_the_client(session_client):
     assert "경기 북부" in known_regions
 
 
+def test_query_prefilters_the_wide_candidate_pool_before_relevance_judging(session_client):
+    """devlog 52 — public_recruitment처럼 서버 직무 필터가 없는 카테고리는
+    job_info_client.py가 넓은 원본 풀(최대 300건)을 받아오지만, LLM에는 그
+    전체가 아니라 키워드로 미리 추린 후보만 넘겨야 한다(프롬프트 크기 유지)."""
+    from app.services.llm.base import JobInfoQueryParams
+
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    raw = [
+        JobInfoResult(title="자바 백엔드 개발자 채용", subtitle="한국소프트웨어", meta_lines=[]),
+        JobInfoResult(title="조리기능사 자격증반", subtitle="어떤학원", meta_lines=[]),
+        JobInfoResult(title="피부미용 국가자격 대비반", subtitle="어떤학원", meta_lines=[]),
+        JobInfoResult(title="서버 개발 부트캠프", subtitle="어떤학원", meta_lines=[]),
+    ]
+    _override_job_info_client(results_by_category={"public_recruitment": raw})
+    fake_llm = FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="public_recruitment")],
+        job_info_query_params=JobInfoQueryParams(regions=[], keywords=["백엔드 개발자"]),
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "백엔드 개발자 채용 정보 있어?"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    _, _, candidates = fake_llm.select_relevant_calls[0]
+    # "백엔드 개발자"(동의어 확장으로 "서버 개발" 포함)와 무관한 조리/미용
+    # 과정은 LLM에 넘기기 전에 이미 빠져야 한다.
+    assert {c.title for c in candidates} == {"자바 백엔드 개발자 채용", "서버 개발 부트캠프"}
+
+
 def test_query_still_searches_when_param_extraction_fails(session_client):
     # 조건 추출이 실패하면 조건 없이라도 조회한다 — 예전 동작으로 퇴화할
     # 뿐이고, 질문 전체를 실패시키는 것보다 낫다.
