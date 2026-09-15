@@ -5,7 +5,7 @@ function uniqueEmail(): string {
 }
 
 test.describe("guest sessions", () => {
-  test("guest can start exactly one session and sees it in the sidebar", async ({ page }) => {
+  test("guest can start multiple sessions and sees them in the sidebar", async ({ page }) => {
     await page.goto("/");
 
     // 랜딩의 플로우 카드 한 번 클릭이 곧 "게스트 로그인 + 세션 생성"이다 —
@@ -38,13 +38,17 @@ test.describe("guest sessions", () => {
     await resumeCard.click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
-    // The sidebar's own "+" button (accessible name "커리어 채우기 새로 만들기")
-    // is the only remaining path to attempt a second session, and that's what
-    // should hit the guest limit.
-    await page.getByRole("button", { name: "커리어 채우기 새로 만들기", exact: true }).click();
-    await expect(
-      page.getByText("비회원은 세션을 1개까지만 만들 수 있어요. 회원가입하면 계속 이어서 쓸 수 있습니다."),
-    ).toBeVisible();
+    // The guest session cap was removed — the sidebar's "+" button (accessible
+    // name "커리어 채우기 새로 만들기") now creates a second session for a guest
+    // just like it would for a registered user.
+    const [secondCreateResponse] = await Promise.all([
+      page.waitForResponse(
+        (res) => res.url().endsWith("/api/v1/sessions") && res.request().method() === "POST",
+      ),
+      page.getByRole("button", { name: "커리어 채우기 새로 만들기", exact: true }).click(),
+    ]);
+    expect(secondCreateResponse.status()).toBe(201);
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
   });
 
   test("guest registering keeps the same session and lands on the home page logged in", async ({
