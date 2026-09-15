@@ -113,3 +113,36 @@ def test_classify_prompt_mentions_every_job_info_category():
 
     for category in JOB_INFO_CATEGORIES:
         assert category in rendered
+
+
+def test_classify_prompt_handles_multi_topic_history():
+    # 2026-09-15 실계정 재현 — 무관한 직무 4개(상담심리사/승강기정비사/
+    # 게임기획자/배달라이더) 다음 "전기기사"를 물은 뒤 "그중에서 서울만"이라고
+    # 하면 실패했다. "가장 최근 주제만 유효" 규칙과 그 예시가 사라지면 이
+    # 회귀가 조용히 돌아온다.
+    rendered = _render("classify_job_info_query.jinja", query="이직 준비 도움될 거 있어?")
+
+    assert "가장 최근(마지막)" in rendered
+    assert "전기기사" in rendered
+
+
+def test_extract_prompt_keeps_only_the_most_recent_job_in_history():
+    rendered = _render(
+        "extract_job_info_query_params.jinja",
+        query="이직 준비 도움될 거 있어?",
+        known_regions=["서울"],
+    )
+
+    assert "가장 최근(마지막)" in rendered
+    # 다중 주제 히스토리 예시가 실제로 존재하는지 — 없어지면 규칙만 남고
+    # 모델이 따라야 할 구체적 사례가 사라진다.
+    assert '{ "regions": ["서울"], "keywords": ["전기기사"] }' in rendered
+
+
+def test_select_relevant_prompt_handles_multi_topic_history():
+    rendered = _render_selection(_worst_case_candidates(3))
+
+    assert "가장 최근(마지막)" in rendered
+    # 새 예시가 기존 마지막 예시(exhaustive selection) 앞에 들어갔는지 —
+    # 뒤에 붙으면 devlog 45와 같은 회귀가 재발한다(아래 테스트가 별도로 확인).
+    assert '{ "relevant_indices": [0] }' in rendered
