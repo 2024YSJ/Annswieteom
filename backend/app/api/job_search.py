@@ -22,6 +22,7 @@ from app.schemas.job_search import (
     JobInfoResultRead,
 )
 from app.services.job_pipeline.job_info_client import CATEGORY_LABELS, JobInfoClient, WorknetApiError, get_job_info_client
+from app.services.job_pipeline.prefilter import prefilter_candidates
 from app.services.job_pipeline.regions import KNOWN_REGION_NAMES, region_label_for
 from app.services.llm.base import JobInfoCandidate, JobInfoQueryParams, LLMProvider, LLMUnavailableError
 from app.services.llm.base import ConfirmedFact as LLMConfirmedFact
@@ -68,17 +69,30 @@ _QUERY_BUDGET_SECONDS = 600.0
 # 끝이었다.
 _MIN_RELEVANT_BEFORE_WIDENING = 3
 
-# 서버 필터가 없는 3개 카테고리(_UNFILTERED_FETCH_LIMIT 기본값) + 지역을 뗀
-# promising_sme는 조건을 뗄 게 없으니 대신 후보 풀 자체를 넓혀서 재시도한다.
-# 2026-09-15 실측: display=100/startPage=1 한 번의 호출로 public_recruitment/
-# public_recruitment_company/promising_sme 전부 실제로 서로 다른 100건을
-# 돌려줬고(30~100건 구간에 중복 없음), startPage=2가 1페이지와 완전히 겹치지
-# 않는 것도 확인해 진짜 페이지네이션이 존재함을 확인했다 — 다만 이번엔 더
-# 간단한 "한 번에 더 크게 요청" 쪽을 택한다. 여러 페이지를 병합하는 것과
-# 결과가 사실상 같고 JobInfoClient.search 인터페이스를 안 건드려도 된다.
-# 100 이상은 아직 실측 안 함 — 후보가 select_relevant_job_info_results
-# 프롬프트에 그대로 다 들어가므로 늘릴 땐 지연시간도 같이 재야 한다.
+# 서버 필터가 없는 3개 카테고리 + 지역을 뗀 promising_sme는 조건을 뗄 게
+# 없으니 대신 후보 풀 자체를 넓혀서 재시도한다. 이 값은 job_info_client.py의
+# _RAW_POOL_LIMIT(300, devlog 52)보다 작게 유지한다 — 여기서 만든 widened_raw는
+# job_pipeline/prefilter.py를 거치지 않고 곧장 select_relevant_job_info_results
+# 프롬프트에 다 들어가므로(_judge_relevant가 raw 전체를 candidates로 만든다),
+# 크기를 지금까지처럼 LLM 호출 하나에 무리 없는 수준으로 잡아야 한다.
+# devlog 52 실측: display는 100에서 캡된다(200/300/500을 줘도 항상 같은
+# 100건) — 100 이상을 받으려면 job_info_client._fetch_paged()처럼 여러
+# 페이지를 병합해야 하는데, 그건 딱 이 "그대로 LLM에 넣는" 안전망 용도로는
+# 과하다. 100 그대로 유지한다.
 _WIDENED_UNFILTERED_LIMIT = 100
+
+# 넓힌 원본 풀(job_info_client.py의 _RAW_POOL_LIMIT=300)에서 1차 필터
+# (job_pipeline/prefilter.py)를 거쳐 LLM에 실제로 넘길 후보 상한 — 예전
+# _UNFILTERED_FETCH_LIMIT(30)과 같은 크기로 맞춰, 검색 대상 풀은 넓히되 LLM
+# 호출 자체의 프롬프트 크기·지연시간은 지금과 비슷하게 유지한다(devlog 52).
+_PREFILTERED_CANDIDATE_LIMIT = 30
+
+# 1차 필터를 적용할 카테고리 — 서버 쪽 직무 필터가 없는 4개(devlog 39/46/52).
+# job_fair/training_course는 이미 서버 키워드 필터 + 동의어 확장이 있어
+# 대상에서 뺀다(devlog 46).
+_JOB_FILTER_MISSING_CATEGORIES = frozenset(
+    {"public_recruitment", "public_recruitment_company", "job_seeker_program", "promising_sme"}
+)
 
 # 프론트가 실어 보내는 history(이전 사용자 발화)를 이 개수만큼만 쓴다 — 무상태
 # 대화라 프론트가 전체 turns를 다 보낼 수도 있는데, 프롬프트가 한없이 길어지면
@@ -297,7 +311,16 @@ async def query_job_info(
             skipped.append(label)
             continue
 
-        selected = await _judge_relevant(category, label, raw_results, remaining)
+        # 서버 직무 필터가 없는 4개 카테고리는 job_info_client.py가 이미 넓은
+        # 원본 풀(최대 300건)을 받아왔다 — 이걸 그대로 LLM에 넘기면 프롬프트가
+        # 커지므로, 키워드/지역 부분일치로 미리 추려 넘긴다(devlog 52). 그 외
+        # 카테고리(job_fair/training_course)는 서버가 이미 좁혀준 목록이라
+        # 그대로 넘긴다.
+        judge_pool = raw_results
+        if category in _JOB_FILTER_MISSING_CATEGORIES:
+            judge_pool = prefilter_candidates(raw_results, query_params, _PREFILTERED_CANDIDATE_LIMIT)
+
+        selected = await _judge_relevant(category, label, judge_pool, remaining)
         if selected is None:
             # 원본 목록은 받아왔지만 관련성 판단이 안 되면, 걸러지지 않은
             # 목록을 그대로 보여주느니 이 카테고리를 빼는 쪽이 낫다 — 그게

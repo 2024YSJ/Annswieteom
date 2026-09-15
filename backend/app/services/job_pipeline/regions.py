@@ -206,3 +206,31 @@ def resolve_region_filters(region_names: list[str], limit: int) -> list[RegionFi
         if f not in deduped:
             deduped.append(f)
     return deduped[:limit]
+
+
+def region_match_terms(region_names: list[str]) -> list[str]:
+    """지역명 목록 → 자유 텍스트 부분일치용 substring 목록(devlog 52).
+
+    `resolve_region_filters()`는 훈련과정/강소기업 API에 실을 파라미터(코드)를
+    만드는 반면, 이건 `JobInfoResult.title`/`subtitle`/`meta_lines`처럼 사람이
+    읽는 텍스트에 부분일치시킬 문자열이 필요한 job_pipeline/prefilter.py용이다.
+    알 수 없는 지역명은 조용히 건너뛴다(resolve_region_filters와 같은 이유).
+    """
+    terms: list[str] = []
+    for raw in region_names:
+        name = raw.strip()
+        if not name:
+            continue
+
+        if name == "수도권":
+            terms.extend(label for label, _ in _METROPOLITAN_AREA_CODES)
+            continue
+
+        group = _REGION_GROUPS.get(name)
+        if group is not None:
+            terms.extend(group[1])
+            continue
+
+        bare = name.removesuffix("시").removesuffix("군").removesuffix("구") or name
+        terms.append(bare)
+    return terms
