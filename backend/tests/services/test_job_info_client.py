@@ -164,6 +164,38 @@ async def test_search_job_fairs_expands_a_mapped_keyword_into_multiple_calls(mon
 
 
 @pytest.mark.asyncio
+async def test_search_job_fairs_one_failing_variant_does_not_sink_the_others(monkeypatch):
+    """고용24는 "이 키워드로 매칭되는 행사가 없다"도 빈 목록이 아니라 오류
+    XML로 준다(devlog 15) — 표현 하나가 이걸 맞아도 다른 표현이 찾은 결과는
+    살아야 한다(2026-09-15 실계정 "경남 용접공"에서 발견된 회귀)."""
+    monkeypatch.setattr(jic, "expand_occupation_keyword", lambda kw, limit: ["용접공", "용접", "용접기능사"][:limit])
+
+    async def fake_get(self, url, params=None, **kwargs):
+        if params["keyword"] == "용접공":
+            return httpx.Response(200, text=_ERROR_XML_GO24, request=httpx.Request("GET", url, params=params))
+        return httpx.Response(200, text=_JOB_FAIR_XML, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    results = await jic.search_job_fairs(JobInfoQueryParams(regions=[], keywords=["용접공"]))
+
+    assert len(results) == 1
+    assert results[0].source_key == "49160"
+
+
+@pytest.mark.asyncio
+async def test_search_job_fairs_raises_only_when_every_variant_fails(monkeypatch):
+    monkeypatch.setattr(jic, "expand_occupation_keyword", lambda kw, limit: ["용접공", "용접"][:limit])
+
+    async def always_fails(self, url, params=None, **kwargs):
+        return httpx.Response(200, text=_ERROR_XML_GO24, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", always_fails)
+
+    with pytest.raises(WorknetApiError):
+        await jic.search_job_fairs(JobInfoQueryParams(regions=[], keywords=["용접공"]))
+
+
+@pytest.mark.asyncio
 async def test_search_job_fairs_unmapped_keyword_makes_exactly_one_call(monkeypatch):
     """테이블에 없는 키워드는 오늘과 동일하게 호출 1회 — 회귀 가드."""
     calls = {"n": 0}
