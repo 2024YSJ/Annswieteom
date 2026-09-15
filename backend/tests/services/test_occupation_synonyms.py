@@ -39,6 +39,15 @@ def test_pet_groomer_group_covers_the_real_certificate_name():
 
 def test_kindergarten_teacher_group_covers_the_real_certificate_name():
     # 같은 라운드에서 발견: "유치원교사"는 0건, 실제 과정은 "보육교사"로 등록.
-    result = expand_occupation_keyword("유치원교사", limit=3)
+    result = expand_occupation_keyword("유치원교사", limit=4)
+
+    assert "보육교사" in result
+
+
+def test_kindergarten_teacher_group_is_reachable_from_just_the_word_유치원():
+    # 재배포 후에도 여전히 0건이었다 — 추출 프롬프트가 "교사"를 빼고 "유치원"만
+    # 뽑은 것으로 보인다(exact-match라 한 글자만 달라도 못 찾는다). "유치원"도
+    # 같은 그룹에 넣어 표제어 표기가 흔들려도 걸리게 했다.
+    result = expand_occupation_keyword("유치원", limit=4)
 
     assert "보육교사" in result
