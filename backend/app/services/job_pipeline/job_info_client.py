@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import httpx
 
 from app.core.config import settings
+from app.services.job_pipeline.occupation_synonyms import expand_occupation_keyword
 from app.services.job_pipeline.regions import RegionFilter, resolve_region_filters
 from app.services.llm.base import JobInfoQueryParams
 
@@ -41,6 +42,13 @@ _TRAINING_GROUP_PAGE_SIZE = 30
 _MAX_REGION_FILTERS = 3
 _MAX_KEYWORDS = 2
 _MAX_TRAINING_COMBOS = 3
+
+# 직업 키워드 하나를 occupation_synonyms.expand_occupation_keyword()로 몇 개
+# 표현까지 펼쳐서 시도할지. job_fair는 API 호출이 이 값만큼 늘어나므로(병렬
+# 호출이라 지연시간 영향은 적다) 조금 더 넉넉하게, training_course는 이미
+# 지역×키워드×엔드포인트 조합이라 여기서 더 곱해지면 폭발하므로 작게 잡는다.
+_MAX_JOB_FAIR_KEYWORD_VARIANTS = 3
+_MAX_TRAINING_KEYWORD_VARIANTS = 2
 
 # 조건을 다 걸었을 때 이보다 적게 남으면 키워드를 떼고 지역만으로 한 번 더
 # 넓힌다 — 실측(devlog 20)에서 "경기 북부 + 자바/웹 개발"이 2건이었는데
@@ -146,16 +154,16 @@ async def _get(url: str, params: dict[str, str], category: str) -> ET.Element:
     return root
 
 
-async def search_job_fairs(params: JobInfoQueryParams | None = None, limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+async def _fetch_job_fairs_for_keyword(keyword: str | None, limit: int) -> list[JobInfoResult]:
     request_params = {
         "authKey": settings.worknet_job_posting_api_key, "returnType": "XML", "callTp": "L",
         "startPage": "1", "display": str(limit),
     }
-    if params and params.keywords:
-        # API는 값 하나만 받는다(training_course와 같은 제약) — 첫 키워드만
-        # 싣는다. 여러 키워드를 다 걸어야 하면 training처럼 조합별 호출로
-        # 확장한다(지금은 최소 변경).
-        request_params["keyword"] = params.keywords[0]
+    if keyword:
+        # API는 값 하나만 받는다(training_course와 같은 제약) — 호출 하나당
+        # 키워드 하나. 여러 표현을 다 걸어야 하면(occupation_synonyms) 표현별로
+        # 호출을 쪼갠 뒤 병합한다.
+        request_params["keyword"] = keyword
     root = await _get(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L11.do",
         request_params,
@@ -183,6 +191,25 @@ async def search_job_fairs(params: JobInfoQueryParams | None = None, limit: int 
             )
         )
     return results
+
+
+async def search_job_fairs(params: JobInfoQueryParams | None = None, limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
+    if not (params and params.keywords):
+        return await _fetch_job_fairs_for_keyword(None, limit)
+
+    # keyword가 eventNm(행사명) 리터럴 부분일치라 사용자가 말한 표현이 실제
+    # 행사명과 다르면(예: "백엔드 개발자" vs "IT 개발자 채용상담회") 조용히
+    # 0건으로 끝난다 — occupation_synonyms로 표현을 몇 개 더 시도한다
+    # (devlog 46). 매핑 안 된 키워드는 후보가 1개뿐이라 기존과 동일하게 호출 1회.
+    variants = expand_occupation_keyword(params.keywords[0], limit=_MAX_JOB_FAIR_KEYWORD_VARIANTS)
+    fetched = await asyncio.gather(*[_fetch_job_fairs_for_keyword(v, limit) for v in variants])
+
+    merged: dict[object, JobInfoResult] = {}
+    for group in fetched:
+        for r in group:
+            key = r.source_key or (r.title, r.subtitle)
+            merged.setdefault(key, r)
+    return list(merged.values())[:limit]
 
 
 async def search_public_recruitment(limit: int = _UNFILTERED_FETCH_LIMIT) -> list[JobInfoResult]:
@@ -387,7 +414,19 @@ def _training_combos(params: JobInfoQueryParams | None) -> list[tuple[RegionFilt
         return [(None, None)]
 
     regions = resolve_region_filters(params.regions, limit=_MAX_REGION_FILTERS) or [None]
-    keywords: list[str | None] = list(params.keywords[:_MAX_KEYWORDS]) or [None]
+
+    # srchTraProcessNm도 job_fair의 keyword와 같은 리터럴 부분일치라 표현이
+    # 안 맞으면 조용히 0건이 된다 — 원본 키워드마다 occupation_synonyms로 몇 개
+    # 표현을 더 얹는다(devlog 46). 매핑 안 된 키워드는 자기 자신만 남아 기존과
+    # 동일하다. 이후 _MAX_TRAINING_COMBOS 절단은 그대로라 지역이 여러 개 +
+    # 키워드가 여러 표현으로 늘어나는 드문 경우 지역 폭이 줄 수 있지만, 지금은
+    # 최소 변경으로 남겨둔다.
+    original_keywords = list(params.keywords[:_MAX_KEYWORDS]) or [None]
+    keywords: list[str | None] = [None] if original_keywords == [None] else [
+        variant
+        for kw in original_keywords
+        for variant in expand_occupation_keyword(kw, limit=_MAX_TRAINING_KEYWORD_VARIANTS)
+    ]
 
     combos = [(region, keyword) for region in regions for keyword in keywords]
     return combos[:_MAX_TRAINING_COMBOS]

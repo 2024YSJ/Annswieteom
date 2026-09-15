@@ -139,6 +139,46 @@ async def test_search_job_fairs_sends_no_keyword_when_params_is_none(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_search_job_fairs_expands_a_mapped_keyword_into_multiple_calls(monkeypatch):
+    """occupation_synonyms에 있는 직업이면 표현을 여러 개 시도한다(devlog 46) —
+    eventNm 리터럴 부분일치라 사용자가 말한 표현이 실제 행사명과 다르면 조용히
+    0건이 되기 때문이다."""
+    monkeypatch.setattr(jic, "expand_occupation_keyword", lambda kw, limit: ["용접공", "용접", "용접기능사"][:limit])
+    seen_keywords: list[str] = []
+
+    async def fake_get(self, url, params=None, **kwargs):
+        seen_keywords.append(params["keyword"])
+        # 두 번째 호출에서만 실제로 걸리는 상황을 흉내낸다 — 같은 eventNo가
+        # 다른 호출에서도 겹쳐 나오는 경우까지 함께 확인한다.
+        xml = _JOB_FAIR_XML if params["keyword"] in ("용접", "용접기능사") else "<empEvList><total>0</total></empEvList>"
+        return httpx.Response(200, text=xml, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    results = await jic.search_job_fairs(JobInfoQueryParams(regions=[], keywords=["용접공"]))
+
+    assert seen_keywords == ["용접공", "용접", "용접기능사"]
+    # "용접"과 "용접기능사" 두 호출 모두 같은 eventNo(49160)를 돌려주므로
+    # 중복 제거되어 결과는 1건이어야 한다.
+    assert len(results) == 1
+    assert results[0].source_key == "49160"
+
+
+@pytest.mark.asyncio
+async def test_search_job_fairs_unmapped_keyword_makes_exactly_one_call(monkeypatch):
+    """테이블에 없는 키워드는 오늘과 동일하게 호출 1회 — 회귀 가드."""
+    calls = {"n": 0}
+
+    async def fake_get(self, url, params=None, **kwargs):
+        calls["n"] += 1
+        return httpx.Response(200, text=_JOB_FAIR_XML, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    await jic.search_job_fairs(JobInfoQueryParams(regions=[], keywords=["듣도보도못한직업명"]))
+
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
 async def test_search_public_recruitment_parses_real_shaped_response(monkeypatch):
     _mock_get(monkeypatch, _PUBLIC_RECRUITMENT_XML)
     results = await jic.search_public_recruitment()
@@ -359,29 +399,68 @@ def test_no_params_means_one_unfiltered_combo():
     assert jic._training_combos(JobInfoQueryParams()) == [(None, None)]
 
 
-def test_each_same_dimension_value_becomes_its_own_combo():
+def _no_synonym_expansion(monkeypatch):
+    """조합/캡 로직을 동의어 테이블 내용과 분리한다 — 여긴 메커니즘을
+    테스트하는 것이지 occupation_synonyms.py의 데이터를 테스트하는 게
+    아니다(devlog 46)."""
+    monkeypatch.setattr(jic, "expand_occupation_keyword", lambda kw, limit: [kw])
+
+
+def test_each_same_dimension_value_becomes_its_own_combo(monkeypatch):
     # 같은 파라미터에 값을 여러 개 넣는 건 API가 지원하지 않는다 — 콤마는 0건,
     # 반복 파라미터는 첫 값만 적용된다(실측).
+    _no_synonym_expansion(monkeypatch)
     combos = jic._training_combos(JobInfoQueryParams(regions=["서울", "부산"], keywords=["자바"]))
 
     assert [(r.area1, k) for r, k in combos] == [("11", "자바"), ("26", "자바")]
 
 
-def test_keywords_without_a_region_still_produce_one_combo_each():
+def test_keywords_without_a_region_still_produce_one_combo_each(monkeypatch):
+    _no_synonym_expansion(monkeypatch)
     combos = jic._training_combos(JobInfoQueryParams(keywords=["자바", "디자인"]))
 
     assert [(r, k) for r, k in combos] == [(None, "자바"), (None, "디자인")]
 
 
-def test_combo_count_is_capped():
+def test_combo_count_is_capped(monkeypatch):
     # 조합 하나가 엔드포인트 4개 호출이 되므로 상한이 없으면 호출이 폭발한다.
+    _no_synonym_expansion(monkeypatch)
     combos = jic._training_combos(JobInfoQueryParams(regions=["서울", "부산", "대구"], keywords=["자바", "디자인"]))
 
     assert len(combos) <= jic._MAX_TRAINING_COMBOS
 
 
+def test_combos_expand_each_keyword_through_occupation_synonyms(monkeypatch):
+    """srchTraProcessNm도 리터럴 부분일치라 job_fair와 같은 이유로 원본
+    키워드마다 동의어를 얹는다(devlog 46) — _MAX_TRAINING_KEYWORD_VARIANTS와
+    기존 _MAX_TRAINING_COMBOS 절단을 둘 다 지켜야 한다."""
+    monkeypatch.setattr(
+        jic, "expand_occupation_keyword",
+        lambda kw, limit: {"용접공": ["용접공", "용접"], "제빵사": ["제빵사", "제과제빵"]}[kw][:limit],
+    )
+    combos = jic._training_combos(JobInfoQueryParams(keywords=["용접공", "제빵사"]))
+
+    assert [(r, k) for r, k in combos] == [(None, "용접공"), (None, "용접"), (None, "제빵사")]
+    assert len(combos) <= jic._MAX_TRAINING_COMBOS
+
+
+def test_combos_do_not_expand_when_there_is_no_keyword(monkeypatch):
+    calls = {"n": 0}
+
+    def spy(kw, limit):
+        calls["n"] += 1
+        return [kw]
+
+    monkeypatch.setattr(jic, "expand_occupation_keyword", spy)
+    combos = jic._training_combos(JobInfoQueryParams(regions=["서울"]))
+
+    assert calls["n"] == 0
+    assert [(r.area1, k) for r, k in combos] == [("11", None)]
+
+
 @pytest.mark.asyncio
 async def test_filters_are_passed_through_to_every_endpoint(monkeypatch):
+    _no_synonym_expansion(monkeypatch)
     calls: list[tuple] = []
 
     async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
@@ -405,6 +484,7 @@ async def test_too_few_results_widens_by_dropping_the_keyword_but_keeps_the_regi
     # 실측(devlog 20): "경기 북부 + 자바/웹 개발"은 2건이었는데 지역만으로는
     # 4건이었다 — 과정명에 그 키워드가 없는 IT 과정이 통째로 빠진 것이다.
     # 지역은 사용자가 명시한 조건이라 유지하고 키워드만 뗀다.
+    _no_synonym_expansion(monkeypatch)
     calls: list[tuple] = []
 
     async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
@@ -427,6 +507,8 @@ async def test_too_few_results_widens_by_dropping_the_keyword_but_keeps_the_regi
 
 @pytest.mark.asyncio
 async def test_duplicate_courses_across_combos_are_merged(monkeypatch):
+    _no_synonym_expansion(monkeypatch)
+
     async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
         # 조합이 달라도 같은 과정이 걸려 나오는 상황.
         return [JobInfoResult(title="같은 과정", subtitle="국민내일배움카드 · 고양", meta_lines=[])]
@@ -443,6 +525,7 @@ async def test_zero_filtered_results_falls_back_to_an_unfiltered_fetch(monkeypat
     # 고용24은 유효하지 않은 코드에도 에러가 아니라 빈 목록을 준다(실측: 통합 전
     # 광주 코드 29는 0건 — 지금은 12로 보낸다) — "코드가 틀렸다"와 "그 지역에 과정이 없다"를
     # 구분할 수 없으니, 조용히 빈 화면을 주는 대신 넓혀서 다시 받아온다.
+    _no_synonym_expansion(monkeypatch)
     attempts: list[tuple] = []
 
     async def fake_endpoint(label, url, api_key, today, region=None, keyword=None):
