@@ -27,3 +27,18 @@ def test_limit_truncates_the_group():
     result = expand_occupation_keyword("영양사", limit=1)
 
     assert result == ["영양사"]
+
+
+def test_pet_groomer_group_covers_the_real_certificate_name():
+    # 2026-09-15 재검증: "반려동물미용사"로 검색하면 0건이었는데 실제 과정은
+    # "애견미용사"로만 등록돼 있었다 — 직역과 실제 명칭이 다른 경우.
+    result = expand_occupation_keyword("반려동물미용사", limit=4)
+
+    assert "애견미용사" in result
+
+
+def test_kindergarten_teacher_group_covers_the_real_certificate_name():
+    # 같은 라운드에서 발견: "유치원교사"는 0건, 실제 과정은 "보육교사"로 등록.
+    result = expand_occupation_keyword("유치원교사", limit=3)
+
+    assert "보육교사" in result
