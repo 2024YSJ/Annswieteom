@@ -693,6 +693,10 @@ def test_widen_retries_promising_sme_without_region_when_results_are_scarce(sess
     # 1차는 지역 있음, 2차(widen)는 지역을 뗀 채로 재조회했는지 확인.
     assert fake_client.search_params[0].regions == ["경기"]
     assert fake_client.search_params[1].regions == []
+    # 2026-09-15 리포트에서 발견한 누락 수정 확인: 지역을 뗀 전국 재조회는
+    # 후보 풀도 같이 넓혀야 한다(_WIDENED_UNFILTERED_LIMIT) — 그냥 기본값
+    # (_FETCH_LIMIT=20)으로 남겨두면 "전국"인데 "지역 한정"과 똑같이 좁다.
+    assert fake_client.search_limits[1] == 100
 
 
 def test_widen_does_not_trigger_when_first_attempt_has_enough_results(session_client):
@@ -740,6 +744,58 @@ def test_unsupported_note_naming_the_extracted_region_is_dropped(session_client)
 
     assert resp.status_code == 200
     assert resp.json()["unsupported_note"] is None
+
+
+def test_unsupported_note_naming_the_extracted_keyword_is_dropped(session_client):
+    """2026-09-15 실측 — "인천 초등학교 교사 채용 소식 있어?"가
+    categories=["public_recruitment"]를 정확히 고르고도 unsupported_note에
+    "초등학교 교사 채용정보"라고 방금 검색에 쓴 그 직무명을 그대로 지어냈다.
+    지역과 같은 이유로 모순이니 버려야 한다."""
+    from app.services.llm.base import JobInfoQueryParams
+
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client(results_by_category={"public_recruitment": []})
+    fake_llm = FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="public_recruitment")],
+        job_info_unsupported_note="초등학교 교사 채용정보",
+        job_info_query_params=JobInfoQueryParams(regions=["인천"], keywords=["초등학교 교사"]),
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "인천 초등학교 교사 채용 소식 있어?"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["unsupported_note"] is None
+
+
+def test_unsupported_note_unrelated_to_keywords_still_passes_through(session_client):
+    """방어선이 지나치게 공격적이면 진짜 미지원 안내까지 지워버릴 수 있다 —
+    추출된 직무 키워드와 무관한 unsupported_note는 그대로 통과해야 한다."""
+    from app.services.llm.base import JobInfoQueryParams
+
+    token = _register_and_login(session_client)
+    session_id = _create_job_search_session(session_client, token)
+    _override_job_info_client(results_by_category={"training_course": []})
+    fake_llm = FakeLLMProvider(
+        job_info_categories=[JobInfoCategoryQuery(category="training_course")],
+        job_info_unsupported_note="아르바이트·파트타임 채용정보",
+        job_info_query_params=JobInfoQueryParams(regions=[], keywords=["카페"]),
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/job-search/query",
+        json={"query": "카페 관련 훈련과정이랑 카페 알바 정보 같이 알려줘"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["unsupported_note"] == "아르바이트·파트타임 채용정보"
 
 
 def test_unsupported_note_unrelated_to_regions_still_passes_through(session_client):

@@ -23,6 +23,10 @@
   (2026-09-14에 실제로 발견된 버그 패턴, job_search.py의 사후 방어선과 별개로
   프롬프트 자체의 품질을 잰다).
 - 추출(extract_job_info_query_params): 기대 지역 집합과의 일치.
+- 관련성 판정(select_relevant_job_info_results): "조건 없는 질문"(예: "강소기업
+  추천해줘")을 줬을 때 후보 전체를 관련 있다고 고르는지(2026-09-15 리포트 —
+  비교할 기준이 아예 없는 걸 "전부 무관하다"로 잘못 해석해 빈 배열을 내던
+  버그). classify/extract와 달리 합성 후보 리스트로 직접 이 함수만 호출한다.
 자동 채점 못 하는 것(unsupported_note 문구가 자연스러운지 등)은 리포트에 원문을
 남겨 사람이 읽는다.
 """
@@ -37,6 +41,7 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.core.config import settings  # noqa: E402
+from app.services.llm.base import JobInfoCandidate  # noqa: E402
 from app.services.llm.local_ollama import LocalOllamaProvider  # noqa: E402
 
 
@@ -52,6 +57,11 @@ class Case:
     unsupported_expected: bool = False
     #: extract_job_info_query_params도 같이 채점하고 싶을 때만.
     expected_regions: frozenset[str] | None = None
+    #: True면 extract_job_info_query_params도 호출해서, unsupported_note가
+    #: 방금 추출한 keywords 중 하나를 그대로 미지원 사유로 지어내는 모순이
+    #: 있는지 검사한다(2026-09-15 리포트 — 지역 모순과 같은 패턴이 직무명에도
+    #: 있었다).
+    check_keyword_contradiction: bool = False
 
 
 # 2026-09-13/14 실계정 라이브 테스트에서 실제로 썼던 12개 질의 + 다양성을 더한
@@ -183,7 +193,117 @@ CASES: list[Case] = [
         expected_categories=frozenset({"training_course"}),
         expected_regions=frozenset({"울산"}),
     ),
+    # --- 2026-09-15 실측 회귀 감시 ---
+    Case(
+        # "인천 초등학교 교사 채용 소식 있어?"가 categories=["public_recruitment"]를
+        # 정확히 고르고도 unsupported_note에 "초등학교 교사 채용정보"라고 방금
+        # 고른 그 직무를 미지원이라 지어냈다 — 지역 모순과 같은 패턴.
+        "job_title_contradiction_elementary_teacher",
+        "인천 초등학교 교사 채용 소식 있어?",
+        expected_categories=frozenset({"public_recruitment"}),
+        unsupported_expected=False,
+        check_keyword_contradiction=True,
+    ),
+    Case(
+        # "지역 없이 아무거나" 스타일 — 구체적 조건이 하나도 없으면 classify가
+        # 빈 배열로 포기하지 않는지(원래도 잘 됐어야 하지만, select_relevant
+        # 쪽 회귀와 짝을 맞춰 같이 감시한다).
+        "no_criteria_recommend_anything",
+        "강소기업 추천해줘",
+        expected_categories=frozenset({"promising_sme"}),
+    ),
 ]
+
+
+@dataclass
+class RelevanceCase:
+    """select_relevant_job_info_results 전용 골든셋 — classify/extract와 달리
+    실제 고용24 조회 없이 합성 후보 리스트로 이 함수 하나만 직접 부른다."""
+
+    label: str
+    query: str
+    category_label: str
+    #: (title, subtitle) 쌍 — 실제 응답처럼 meta_lines까지는 안 만든다.
+    candidates: list[tuple[str, str]]
+    history: list[str] = field(default_factory=list)
+    #: 기대하는 relevant_indices. None이면 "전부 다 골라야 한다"(조건 없는
+    #: 질문 케이스).
+    expected_indices: frozenset[int] | None = None
+
+
+RELEVANCE_CASES: list[RelevanceCase] = [
+    RelevanceCase(
+        # 2026-09-15 리포트: "강소기업 추천해줘"처럼 비교할 조건이 아예 없으면
+        # "관련 있는 게 하나도 없다"로 오인해 빈 배열을 낸 버그.
+        "no_criteria_selects_everything",
+        "강소기업 추천해줘",
+        "강소기업",
+        [
+            ("(주)코리아메디케어", "서울 중구 · 정보서비스업"),
+            ("(주)넷츠", "서울 강남구 · 컴퓨터 프로그래밍"),
+            ("덕산네오룩스(주)", "충남 천안시 · 전자부품 제조업"),
+        ],
+        expected_indices=frozenset({0, 1, 2}),
+    ),
+    RelevanceCase(
+        "no_criteria_job_fair",
+        "요즘 채용행사 뭐 있어?",
+        "채용행사",
+        [
+            ("2026 부산청년 메가(MEGA) 채용 박람회", "부산/경남 지역"),
+            ("대형물류센터 일자리수요데이", "부산/경남 지역"),
+        ],
+        expected_indices=frozenset({0, 1}),
+    ),
+    RelevanceCase(
+        # 조건이 하나라도 있으면(직무만 있어도) 이 예외가 적용되면 안 된다 —
+        # 새 지시가 기존 필터링 능력을 퇴화시키지 않는지 확인하는 회귀 가드.
+        "still_filters_when_a_criterion_exists",
+        "간호사 채용 관련 강소기업 있어?",
+        "강소기업",
+        [
+            ("(주)코리아메디케어", "서울 중구 · 의료기기 유통업"),
+            ("덕산네오룩스(주)", "충남 천안시 · 전자부품 제조업"),
+        ],
+        expected_indices=frozenset({0}),
+    ),
+]
+
+
+def _score_relevance(case: RelevanceCase, got_indices: list[int]) -> list[str]:
+    if case.expected_indices is None:
+        return []
+    got = frozenset(got_indices)
+    if got != case.expected_indices:
+        return [f"relevant_indices 불일치: 기대 {sorted(case.expected_indices)}, 실제 {sorted(got)}"]
+    return []
+
+
+@dataclass
+class RelevanceScore:
+    label: str
+    query: str
+    relevant_indices: list[int]
+    problems: list[str]
+
+
+async def _run_relevance(provider: LocalOllamaProvider) -> list[RelevanceScore]:
+    scores = []
+    for case in RELEVANCE_CASES:
+        candidates = [
+            JobInfoCandidate(index=i, title=title, subtitle=subtitle, meta_lines=[])
+            for i, (title, subtitle) in enumerate(case.candidates)
+        ]
+        try:
+            indices = await provider.select_relevant_job_info_results(
+                case.query, case.category_label, candidates, case.history
+            )
+        except Exception as exc:
+            scores.append(RelevanceScore(case.label, case.query, [], [f"select_relevant 실패: {exc}"]))
+            continue
+        problems = _score_relevance(case, indices)
+        scores.append(RelevanceScore(case.label, case.query, indices, problems))
+    return scores
 
 
 @dataclass
@@ -197,7 +317,9 @@ class CaseScore:
     problems: list[str]
 
 
-def _score_categories(case: Case, categories: list[str], unsupported_note: str | None) -> list[str]:
+def _score_categories(
+    case: Case, categories: list[str], unsupported_note: str | None, keywords: list[str] | None = None
+) -> list[str]:
     problems = []
     got = frozenset(categories)
     if case.expected_categories is not None and got != case.expected_categories:
@@ -216,6 +338,13 @@ def _score_categories(case: Case, categories: list[str], unsupported_note: str |
         hit = [r for r in case.expected_regions if r in unsupported_note]
         if hit:
             problems.append(f"모순: 카테고리 선택됐는데 unsupported_note가 지역 {hit}을 미지원이라 언급함")
+    # 같은 패턴이 직무명에도 있었다(2026-09-15 리포트) — 카테고리가 선택됐는데
+    # unsupported_note가 방금 추출한 keywords 중 하나를 그대로 미지원 사유로
+    # 지어내면 모순이다.
+    if got and unsupported_note and keywords:
+        hit = [k for k in keywords if k in unsupported_note]
+        if hit:
+            problems.append(f"모순: 카테고리 선택됐는데 unsupported_note가 직무 {hit}를 미지원이라 언급함")
     return problems
 
 
@@ -240,11 +369,10 @@ async def _run(provider: LocalOllamaProvider) -> list[CaseScore]:
             scores.append(CaseScore(case.label, case.query, [], None, None, None, [f"classify 실패: {exc}"]))
             continue
         category_names = [c.category for c in categories]
-        problems += _score_categories(case, category_names, unsupported_note)
 
         regions: list[str] | None = None
         keywords: list[str] | None = None
-        if case.expected_regions is not None:
+        if case.expected_regions is not None or case.check_keyword_contradiction:
             try:
                 from app.services.job_pipeline.regions import KNOWN_REGION_NAMES
 
@@ -256,6 +384,8 @@ async def _run(provider: LocalOllamaProvider) -> list[CaseScore]:
             except Exception as exc:
                 problems.append(f"extract 실패: {exc}")
 
+        problems += _score_categories(case, category_names, unsupported_note, keywords)
+
         scores.append(CaseScore(case.label, case.query, category_names, unsupported_note, regions, keywords, problems))
     return scores
 
@@ -266,17 +396,22 @@ def main() -> None:
     args = parser.parse_args()
 
     print(f"endpoint: {settings.local_llm_base_url}  model: {settings.local_llm_model_name}\n")
-    scores = asyncio.run(_run(LocalOllamaProvider()))
+    provider = LocalOllamaProvider()
+    scores = asyncio.run(_run(provider))
+    relevance_scores = asyncio.run(_run_relevance(provider))
 
     passed = sum(1 for s in scores if not s.problems)
-    print(f"결과: {passed}/{len(scores)} 통과\n")
+    relevance_passed = sum(1 for s in relevance_scores if not s.problems)
+    print(f"결과(분류/추출): {passed}/{len(scores)} 통과")
+    print(f"결과(관련성 판정): {relevance_passed}/{len(relevance_scores)} 통과\n")
 
     lines = [
         "# 취업 정보 검색 분류·추출 평가",
         "",
         f"- endpoint: `{settings.local_llm_base_url}`",
         f"- model: `{settings.local_llm_model_name}`",
-        f"- 결과: **{passed}/{len(scores)} 통과**",
+        f"- 결과(분류/추출): **{passed}/{len(scores)} 통과**",
+        f"- 결과(관련성 판정): **{relevance_passed}/{len(relevance_scores)} 통과**",
         "",
         "| case | query | categories | unsupported_note | 문제 |",
         "|---|---|---|---|---|",
@@ -286,6 +421,18 @@ def main() -> None:
         note = (s.unsupported_note or "")[:40]
         problems = "; ".join(s.problems) or "-"
         lines.append(f"| {s.label}{mark} | {s.query} | {', '.join(s.categories) or '(없음)'} | {note} | {problems} |")
+
+    lines += [
+        "",
+        "## 관련성 판정(select_relevant_job_info_results)",
+        "",
+        "| case | query | relevant_indices | 문제 |",
+        "|---|---|---|---|",
+    ]
+    for s in relevance_scores:
+        mark = "" if not s.problems else " ⚠"
+        problems = "; ".join(s.problems) or "-"
+        lines.append(f"| {s.label}{mark} | {s.query} | {s.relevant_indices} | {problems} |")
 
     lines += ["", "## 실패/경고 상세"]
     for s in scores:
@@ -299,6 +446,16 @@ def main() -> None:
             f"- unsupported_note: {s.unsupported_note!r}",
             f"- regions: {s.regions}",
             f"- keywords: {s.keywords}",
+            *(f"- ⚠ {p}" for p in s.problems),
+        ]
+    for s in relevance_scores:
+        if not s.problems:
+            continue
+        lines += [
+            "",
+            f"### {s.label} (관련성 판정)",
+            f"- query: {s.query}",
+            f"- relevant_indices: {s.relevant_indices}",
             *(f"- ⚠ {p}" for p in s.problems),
         ]
 
