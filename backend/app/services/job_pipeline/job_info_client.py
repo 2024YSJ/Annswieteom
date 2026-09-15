@@ -25,11 +25,23 @@ _TRAINING_WINDOW_DAYS = 90
 # 부분일치 대신 LLM이 실제로 관련 있는 항목을 골라내는 방식으로 교체), 로컬
 # LLM 호출 하나에 무리 없이 들어갈 만큼만 가져온다.
 _FETCH_LIMIT = 20
-#: 서버 측 필터가 없는 카테고리(아래 _FILTERABLE_CATEGORIES 주석 참고)는 후보
-#: 풀이 좁으면 select_relevant_job_info_results가 고를 게 없다 — 필터 대신
-#: 후보를 조금 더 넓게 받는다. 이 목록 전체가 로컬 LLM 프롬프트에 그대로
-#: 들어가므로 무제한으로 늘리지 않는다(지연시간 증가).
-_UNFILTERED_FETCH_LIMIT = 30
+
+# devlog 52 실측(2026-09-15): display를 100 넘게 줘도(200/300/500) 서버가
+# 항상 최대 100건까지만 돌려준다 — display=100/200/300/500이 완전히 동일한
+# 100건이었다(new_vs_prev_display=0). 반면 startPage=2는 1페이지와 겹치는
+# 항목이 0개였다 — 진짜 페이지네이션은 있고, 캡은 "한 번에 받는 양"에만
+# 걸린다. 그래서 100 이상을 받으려면 _fetch_paged()로 여러 페이지를 병렬
+# 조회해 병합해야 한다.
+_PAGE_SIZE = 100
+
+#: 서버 측 직무 필터가 없는(또는 promising_sme처럼 지역만 있는) 카테고리의
+#: 기본 원본 후보 풀. 이 값 자체는 로컬 LLM 프롬프트에 그대로 들어가지
+#: 않는다 — job_search.py의 prefilter_candidates()가 이 풀에서 키워드/지역
+#: 부분일치로 먼저 추린 뒤에야 LLM에 넘긴다(devlog 52). 그래서 예전
+#: _UNFILTERED_FETCH_LIMIT(30)처럼 "LLM에 그대로 들어갈 만큼"으로 작게 잡을
+#: 필요가 없어졌고, HTTP 호출 자체는 병렬이라 3페이지(300건)를 받아도
+#: ~0.3~0.4초대다(devlog 52 실측).
+_RAW_POOL_LIMIT = 300
 _TRAINING_PER_ENDPOINT_LIMIT = 10
 
 # 권역 질문("경기 북부")은 광역으로 조회한 뒤 주소로 걸러내므로, 기본 10건만
@@ -69,7 +81,14 @@ _MIN_RESULTS_BEFORE_WIDENING = 5
 # 후보 8~9개를 전부 시도했지만(2026-09-13) 반영되는 파라미터를 찾지 못했다.
 # job_seeker_program은 그날 응답 자체가 0건이라 검증이 원천적으로 불가능했다 —
 # 재실측이 필요하다. 이 3개는 필터를 못 걸고 대신 후보 풀만 넓힌다
-# (_UNFILTERED_FETCH_LIMIT).
+# (_RAW_POOL_LIMIT, devlog 52).
+#
+# devlog 52 추가 실측: public_recruitment/public_recruitment_company는
+# 애초에 응답 필드 자체에 지역 정보가 없다(주소·지역명 태그가 없음) — 지역
+# 조건은 서버 파라미터로도, 클라이언트 쪽 텍스트 매칭으로도 걸 수 없는 구조적
+# 한계다. job_search.py의 1차 필터(prefilter.py)가 이 두 카테고리에 지역
+# 조건을 걸어도 매칭될 리 없어 항상 폴백(원본 풀 그대로)으로 빠지는 것은
+# 버그가 아니라 이 한계를 있는 그대로 반영한 것이다.
 _FILTERABLE_CATEGORIES = frozenset({"training_course", "job_fair", "promising_sme"})
 
 
@@ -154,6 +173,47 @@ async def _get(url: str, params: dict[str, str], category: str) -> ET.Element:
     return root
 
 
+async def _fetch_paged(
+    url: str,
+    key: str,
+    category: str,
+    item_path: str,
+    parse_item,
+    limit: int,
+    extra_params: dict[str, str] | None = None,
+) -> list[JobInfoResult]:
+    """`display`가 100에서 캡되는 게 실측 확인돼서(devlog 52 — 위 _PAGE_SIZE
+    주석 참고), `limit`이 100을 넘으면 startPage를 여러 장 병렬로 던져
+    병합한다. HTTP라 병렬 비용은 낮다(devlog 52: 3페이지 병렬이 ~0.3~0.4초).
+
+    search_job_fairs()의 표현별 병렬 조회와 같은 이유로 페이지 하나가
+    실패해도(WorknetApiError) 다른 페이지가 성공했으면 그 페이지만 빼고
+    합친다 — 전부 실패했을 때만 마지막 오류를 올린다.
+    """
+    pages = max(1, -(-limit // _PAGE_SIZE))  # ceil division
+    base_params = {"authKey": key, "returnType": "XML", "callTp": "L", "display": str(_PAGE_SIZE)}
+    if extra_params:
+        base_params.update(extra_params)
+
+    async def _safe(page: int) -> list[JobInfoResult] | WorknetApiError:
+        try:
+            root = await _get(url, {**base_params, "startPage": str(page)}, category)
+        except WorknetApiError as exc:
+            return exc
+        return [parse_item(item) for item in root.findall(item_path)]
+
+    outcomes = await asyncio.gather(*[_safe(page) for page in range(1, pages + 1)])
+    succeeded = [group for group in outcomes if not isinstance(group, WorknetApiError)]
+    if not succeeded:
+        raise next(exc for exc in outcomes if isinstance(exc, WorknetApiError))
+
+    merged: dict[object, JobInfoResult] = {}
+    for group in succeeded:
+        for r in group:
+            merged.setdefault(r.source_key or (r.title, r.subtitle), r)
+    return list(merged.values())[:limit]
+
+
 async def _fetch_job_fairs_for_keyword(keyword: str | None, limit: int) -> list[JobInfoResult]:
     request_params = {
         "authKey": settings.worknet_job_posting_api_key, "returnType": "XML", "callTp": "L",
@@ -228,113 +288,116 @@ async def search_job_fairs(params: JobInfoQueryParams | None = None, limit: int 
     return list(merged.values())[:limit]
 
 
-async def search_public_recruitment(limit: int = _UNFILTERED_FETCH_LIMIT) -> list[JobInfoResult]:
-    root = await _get(
+def _parse_public_recruitment_item(item: ET.Element) -> JobInfoResult:
+    co_size = _text(item, "coClcdNm")
+    stdt = _text(item, "empWantedStdt")
+    endt = _text(item, "empWantedEndt")
+    emp_type = _text(item, "empWantedTypeNm")
+    meta = [m for m in [f"규모: {co_size}" if co_size else "", f"기간: {stdt}~{endt}" if stdt or endt else "", f"고용형태: {emp_type}" if emp_type else ""] if m]
+    return JobInfoResult(
+        title=_text(item, "empWantedTitle"),
+        subtitle=_text(item, "empBusiNm"),
+        meta_lines=meta,
+        # 이 카테고리는 고용24 상세 페이지가 아니라 기업이 직접 올린 채용
+        # 페이지 주소를 준다. 모바일 주소는 비어 있는 경우가 많아 보조로만 쓴다.
+        detail_url=_text(item, "empWantedHomepgDetail") or _text(item, "empWantedMobileUrl") or None,
+        source_key=_text(item, "empSeqno") or None,
+    )
+
+
+async def search_public_recruitment(limit: int = _RAW_POOL_LIMIT) -> list[JobInfoResult]:
+    return await _fetch_paged(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L21.do",
-        {"authKey": settings.worknet_job_posting_api_key, "returnType": "XML", "callTp": "L", "startPage": "1", "display": str(limit)},
+        settings.worknet_job_posting_api_key,
         "public_recruitment",
+        ".//dhsOpenEmpInfo",
+        _parse_public_recruitment_item,
+        limit,
     )
-    results = []
-    for item in root.findall(".//dhsOpenEmpInfo"):
-        co_size = _text(item, "coClcdNm")
-        stdt = _text(item, "empWantedStdt")
-        endt = _text(item, "empWantedEndt")
-        emp_type = _text(item, "empWantedTypeNm")
-        meta = [m for m in [f"규모: {co_size}" if co_size else "", f"기간: {stdt}~{endt}" if stdt or endt else "", f"고용형태: {emp_type}" if emp_type else ""] if m]
-        results.append(
-            JobInfoResult(
-                title=_text(item, "empWantedTitle"),
-                subtitle=_text(item, "empBusiNm"),
-                meta_lines=meta,
-                # 이 카테고리는 고용24 상세 페이지가 아니라 기업이 직접 올린
-                # 채용 페이지 주소를 준다. 모바일 주소는 비어 있는 경우가 많아
-                # 보조로만 쓴다.
-                detail_url=_text(item, "empWantedHomepgDetail") or _text(item, "empWantedMobileUrl") or None,
-                source_key=_text(item, "empSeqno") or None,
-            )
-        )
-    return results
 
 
-async def search_public_recruitment_companies(limit: int = _UNFILTERED_FETCH_LIMIT) -> list[JobInfoResult]:
-    root = await _get(
+def _parse_public_recruitment_company_item(item: ET.Element) -> JobInfoResult:
+    co_size = _text(item, "coClcdNm")
+    intro = _text(item, "coIntroSummaryCont")
+    meta = [m for m in [f"규모: {co_size}" if co_size else "", intro] if m]
+    return JobInfoResult(
+        title=_text(item, "coNm"),
+        subtitle=co_size,
+        meta_lines=meta,
+        # 고용24에는 이 카테고리의 공개 상세 페이지가 없다(기업정보 상세는
+        # 로그인 + 내부 코드가 필요하다). 대신 응답이 기업이 직접 운영하는
+        # 채용 홈페이지를 주므로 그리로 보낸다.
+        detail_url=_text(item, "homepg") or None,
+        source_key=_text(item, "empCoNo") or None,
+    )
+
+
+async def search_public_recruitment_companies(limit: int = _RAW_POOL_LIMIT) -> list[JobInfoResult]:
+    return await _fetch_paged(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L31.do",
-        {"authKey": settings.worknet_job_posting_api_key, "returnType": "XML", "callTp": "L", "startPage": "1", "display": str(limit)},
+        settings.worknet_job_posting_api_key,
         "public_recruitment_company",
+        ".//dhsOpenEmpHireInfo",
+        _parse_public_recruitment_company_item,
+        limit,
     )
-    results = []
-    for item in root.findall(".//dhsOpenEmpHireInfo"):
-        co_size = _text(item, "coClcdNm")
-        intro = _text(item, "coIntroSummaryCont")
-        meta = [m for m in [f"규모: {co_size}" if co_size else "", intro] if m]
-        results.append(
-            JobInfoResult(
-                title=_text(item, "coNm"),
-                subtitle=co_size,
-                meta_lines=meta,
-                # 고용24에는 이 카테고리의 공개 상세 페이지가 없다(기업정보
-                # 상세는 로그인 + 내부 코드가 필요하다). 대신 응답이 기업이
-                # 직접 운영하는 채용 홈페이지를 주므로 그리로 보낸다.
-                detail_url=_text(item, "homepg") or None,
-                source_key=_text(item, "empCoNo") or None,
-            )
-        )
-    return results
 
 
-async def search_job_seeker_programs(limit: int = _UNFILTERED_FETCH_LIMIT) -> list[JobInfoResult]:
-    root = await _get(
+def _parse_job_seeker_program_item(item: ET.Element) -> JobInfoResult:
+    name = _text(item, "pgmNm")
+    sub_name = _text(item, "pgmSubNm")
+    org = _text(item, "orgNm")
+    stdt = _text(item, "pgmStdt")
+    endt = _text(item, "pgmEndt")
+    place = _text(item, "openPlcCont")
+    meta = [m for m in [f"운영: {org}" if org else "", f"기간: {stdt}~{endt}" if stdt or endt else "", f"장소: {place}" if place else ""] if m]
+    return JobInfoResult(title=name or sub_name, subtitle=sub_name if name else "", meta_lines=meta)
+
+
+async def search_job_seeker_programs(limit: int = _RAW_POOL_LIMIT) -> list[JobInfoResult]:
+    return await _fetch_paged(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo217L01.do",
-        {"authKey": settings.worknet_job_seeker_program_api_key, "returnType": "XML", "callTp": "L", "startPage": "1", "display": str(limit)},
+        settings.worknet_job_seeker_program_api_key,
         "job_seeker_program",
+        ".//empPgmSchdInvite",
+        _parse_job_seeker_program_item,
+        limit,
     )
-    results = []
-    for item in root.findall(".//empPgmSchdInvite"):
-        name = _text(item, "pgmNm")
-        sub_name = _text(item, "pgmSubNm")
-        org = _text(item, "orgNm")
-        stdt = _text(item, "pgmStdt")
-        endt = _text(item, "pgmEndt")
-        place = _text(item, "openPlcCont")
-        meta = [m for m in [f"운영: {org}" if org else "", f"기간: {stdt}~{endt}" if stdt or endt else "", f"장소: {place}" if place else ""] if m]
-        results.append(JobInfoResult(title=name or sub_name, subtitle=sub_name if name else "", meta_lines=meta))
-    return results
 
 
-async def search_promising_smes(params: JobInfoQueryParams | None = None, limit: int = _FETCH_LIMIT) -> list[JobInfoResult]:
-    request_params = {
-        "authKey": settings.worknet_promising_sme_api_key, "returnType": "XML", "callTp": "L",
-        "startPage": "1", "display": str(limit),
-    }
+def _parse_promising_sme_item(item: ET.Element) -> JobInfoResult:
+    industry = _text(item, "indTpNm")
+    region = _text(item, "regionNm")
+    product = _text(item, "coMainProd")
+    meta = [m for m in [f"업종: {industry}" if industry else "", f"지역: {region}" if region else "", f"주요생산품: {product}" if product else ""] if m]
+    return JobInfoResult(
+        title=_text(item, "coNm"),
+        subtitle=industry,
+        meta_lines=meta,
+        # 상세 URL 없음 — 응답에 링크 필드가 없고, 고용24의 강소기업 페이지는
+        # 제도 안내일 뿐 기업별 상세가 없다(2026-09-10 확인). 추측해서 만든
+        # 링크로 보내느니 안 눌리는 카드로 둔다.
+        source_key=_text(item, "busiNo") or None,
+    )
+
+
+async def search_promising_smes(params: JobInfoQueryParams | None = None, limit: int = _RAW_POOL_LIMIT) -> list[JobInfoResult]:
+    extra_params: dict[str, str] = {}
     if params and params.regions:
         # 이 엔드포인트는 지역 조건 하나만 받는다(job_fair의 keyword와 같은
         # 최소 변경 원칙) — 5자리(광역 2자리 + "000") 형식이 실측 확인됐다.
         filters = resolve_region_filters(params.regions, limit=1)
         if filters:
-            request_params["region"] = f"{filters[0].area1}000"
-    root = await _get(
+            extra_params["region"] = f"{filters[0].area1}000"
+    return await _fetch_paged(
         "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo216L01.do",
-        request_params,
+        settings.worknet_promising_sme_api_key,
         "promising_sme",
+        ".//smallGiant",
+        _parse_promising_sme_item,
+        limit,
+        extra_params=extra_params,
     )
-    results = []
-    for item in root.findall(".//smallGiant"):
-        industry = _text(item, "indTpNm")
-        region = _text(item, "regionNm")
-        product = _text(item, "coMainProd")
-        meta = [m for m in [f"업종: {industry}" if industry else "", f"지역: {region}" if region else "", f"주요생산품: {product}" if product else ""] if m]
-        results.append(
-            JobInfoResult(
-                title=_text(item, "coNm"),
-                subtitle=industry,
-                meta_lines=meta,
-                # 상세 URL 없음 — 응답에 링크 필드가 없고, 고용24의 강소기업
-                # 페이지는 제도 안내일 뿐 기업별 상세가 없다(2026-09-10 확인).
-                # 추측해서 만든 링크로 보내느니 안 눌리는 카드로 둔다.
-                source_key=_text(item, "busiNo") or None,
-            )
-        )
-    return results
 
 
 # 훈련과정 4종 — 사용자에게는 "직업훈련과정" 하나로 보이지만 실제로는 별도

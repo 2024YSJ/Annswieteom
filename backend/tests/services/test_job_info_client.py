@@ -233,6 +233,90 @@ async def test_search_public_recruitment_companies_parses_real_shaped_response(m
     assert results[0].source_key == "E000026363"
 
 
+def _public_recruitment_xml_for_page(page: str) -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<dhsOpenEmpInfoList><total>1</total><dhsOpenEmpInfo>
+  <empSeqno>page-{page}</empSeqno><empWantedTitle>공고 {page}페이지</empWantedTitle>
+  <empBusiNm>회사</empBusiNm>
+</dhsOpenEmpInfo></dhsOpenEmpInfoList>
+"""
+
+
+@pytest.mark.asyncio
+async def test_search_public_recruitment_limit_over_100_fetches_multiple_pages(monkeypatch):
+    """devlog 52 실측: display는 100에서 캡된다 — 100 넘게 받으려면
+    startPage를 여러 장 던져 병합해야 한다."""
+    seen_pages: list[str] = []
+
+    async def fake_get(self, url, params=None, **kwargs):
+        seen_pages.append(params["startPage"])
+        return httpx.Response(
+            200, text=_public_recruitment_xml_for_page(params["startPage"]), request=httpx.Request("GET", url, params=params)
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    results = await jic.search_public_recruitment(limit=250)
+
+    # ceil(250/100) = 3페이지, 병렬 호출이라 순서는 보장 안 되지만 집합은 같다.
+    assert sorted(seen_pages) == ["1", "2", "3"]
+    assert {r.source_key for r in results} == {"page-1", "page-2", "page-3"}
+
+
+@pytest.mark.asyncio
+async def test_search_public_recruitment_limit_at_or_under_100_makes_one_call(monkeypatch):
+    """피드 수집(worknet_source.py)이 limit=50으로 부르는 기존 동작의 회귀
+    가드 — 100 이하는 여전히 호출 1회여야 한다."""
+    calls = {"n": 0}
+
+    async def fake_get(self, url, params=None, **kwargs):
+        calls["n"] += 1
+        return httpx.Response(200, text=_PUBLIC_RECRUITMENT_XML, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    await jic.search_public_recruitment(limit=50)
+
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_search_public_recruitment_dedupes_the_same_item_across_pages(monkeypatch):
+    """페이지 사이에 겹치는 항목이 있어도(실측으론 안 겹치지만, 안전망으로)
+    source_key로 중복 제거해야 한다."""
+    async def fake_get(self, url, params=None, **kwargs):
+        return httpx.Response(200, text=_PUBLIC_RECRUITMENT_XML, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    results = await jic.search_public_recruitment(limit=250)
+
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_public_recruitment_one_failing_page_does_not_sink_the_others(monkeypatch):
+    async def fake_get(self, url, params=None, **kwargs):
+        if params["startPage"] == "2":
+            return httpx.Response(200, text=_ERROR_XML_GO24, request=httpx.Request("GET", url, params=params))
+        return httpx.Response(
+            200, text=_public_recruitment_xml_for_page(params["startPage"]), request=httpx.Request("GET", url, params=params)
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    results = await jic.search_public_recruitment(limit=250)
+
+    assert {r.source_key for r in results} == {"page-1", "page-3"}
+
+
+@pytest.mark.asyncio
+async def test_search_public_recruitment_raises_only_when_every_page_fails(monkeypatch):
+    async def always_fails(self, url, params=None, **kwargs):
+        return httpx.Response(200, text=_ERROR_XML_GO24, request=httpx.Request("GET", url, params=params))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", always_fails)
+
+    with pytest.raises(WorknetApiError):
+        await jic.search_public_recruitment(limit=250)
+
+
 @pytest.mark.asyncio
 async def test_search_job_seeker_programs_parses_real_shaped_response(monkeypatch):
     _mock_get(monkeypatch, _JOB_SEEKER_PROGRAM_XML)
