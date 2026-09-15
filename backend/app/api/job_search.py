@@ -68,10 +68,17 @@ _QUERY_BUDGET_SECONDS = 600.0
 # 끝이었다.
 _MIN_RELEVANT_BEFORE_WIDENING = 3
 
-# 서버 필터가 없는 3개 카테고리(_UNFILTERED_FETCH_LIMIT 기본값)는 조건을 뗄 게
-# 없으니 대신 후보 풀 자체를 넓혀서 재시도한다 — 진짜 페이지네이션(startPage=2)은
-# 이번 범위 밖(JobInfoClient.search 인터페이스를 더 크게 건드려야 함).
-_WIDENED_UNFILTERED_LIMIT = 60
+# 서버 필터가 없는 3개 카테고리(_UNFILTERED_FETCH_LIMIT 기본값) + 지역을 뗀
+# promising_sme는 조건을 뗄 게 없으니 대신 후보 풀 자체를 넓혀서 재시도한다.
+# 2026-09-15 실측: display=100/startPage=1 한 번의 호출로 public_recruitment/
+# public_recruitment_company/promising_sme 전부 실제로 서로 다른 100건을
+# 돌려줬고(30~100건 구간에 중복 없음), startPage=2가 1페이지와 완전히 겹치지
+# 않는 것도 확인해 진짜 페이지네이션이 존재함을 확인했다 — 다만 이번엔 더
+# 간단한 "한 번에 더 크게 요청" 쪽을 택한다. 여러 페이지를 병합하는 것과
+# 결과가 사실상 같고 JobInfoClient.search 인터페이스를 안 건드려도 된다.
+# 100 이상은 아직 실측 안 함 — 후보가 select_relevant_job_info_results
+# 프롬프트에 그대로 다 들어가므로 늘릴 땐 지연시간도 같이 재야 한다.
+_WIDENED_UNFILTERED_LIMIT = 100
 
 # 프론트가 실어 보내는 history(이전 사용자 발화)를 이 개수만큼만 쓴다 — 무상태
 # 대화라 프론트가 전체 turns를 다 보낼 수도 있는데, 프롬프트가 한없이 길어지면
@@ -86,8 +93,13 @@ def _widen_attempt(
     더 넓힐 방법이 없으면(예: training_course — 이미 job_info_client.py 내부에서
     자체적으로 단계적으로 넓힌 뒤라 여기서 더 할 게 없다) None을 돌려준다."""
     if category == "promising_sme" and query_params and query_params.regions:
-        # 유일한 서버 필터가 region이다 — 그걸 떼고 전국으로 넓힌다.
-        return JobInfoQueryParams(regions=[], keywords=query_params.keywords), None
+        # 유일한 서버 필터가 region이다 — 그걸 떼고 전국으로 넓힌다. 지역을
+        # 뗐으면 후보 풀도 같이 넓혀야 한다 — limit을 그냥 None으로 두면
+        # job_client.search()가 기본값(_FETCH_LIMIT=20)을 쓰는데, "전국"으로
+        # 넓힌 조회가 "지역 한정" 조회와 똑같은 20건만 받아오는 건 앞뒤가
+        # 안 맞는다(2026-09-15 리포트에서 발견한 누락 — 다른 무필터 카테고리는
+        # 이미 _WIDENED_UNFILTERED_LIMIT을 쓰고 있었다).
+        return JobInfoQueryParams(regions=[], keywords=query_params.keywords), _WIDENED_UNFILTERED_LIMIT
     if category == "job_fair" and query_params and query_params.keywords:
         # 유일한 서버 필터가 keyword다 — 그걸 떼고 지역만(또는 무조건) 넓힌다.
         return JobInfoQueryParams(regions=query_params.regions, keywords=[]), None
@@ -200,6 +212,21 @@ async def query_job_info(
                 "job_search: dropped contradictory unsupported_note %r for regions %s",
                 unsupported_note,
                 query_params.regions,
+            )
+            unsupported_note = None
+
+    # 지역과 같은 이유로 직무 쪽에도 같은 구멍이 있었다. 실측 사례
+    # (2026-09-15): "인천 초등학교 교사"/"서울 그래픽 디자이너 강소기업"이
+    # categories를 정확히 고르고도 unsupported_note에 "초등학교 교사
+    # 채용정보"/"그래픽 디자이너 채용정보"처럼 방금 검색에 쓸 그 직무명을
+    # 그대로 지어냈다 — 카테고리를 골랐다는 것 자체가 그 직무를 다룬다는
+    # 뜻이라 모순이다(Phase 3 프롬프트 지시와 별개의 값싼 사후 방어선).
+    if unsupported_note and query_params and query_params.keywords:
+        if any(keyword in unsupported_note for keyword in query_params.keywords):
+            logger.warning(
+                "job_search: dropped contradictory unsupported_note %r for keywords %s",
+                unsupported_note,
+                query_params.keywords,
             )
             unsupported_note = None
 
