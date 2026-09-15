@@ -25,14 +25,14 @@ def test_guest_can_create_one_session(session_client):
     assert resp.json()["status"]
 
 
-def test_guest_second_session_returns_409(session_client):
+def test_guest_can_create_multiple_sessions(session_client):
     token = _guest_login(session_client)
-    session_client.post("/api/v1/sessions", headers=_auth(token))
+    first = session_client.post("/api/v1/sessions", headers=_auth(token))
 
-    resp = session_client.post("/api/v1/sessions", headers=_auth(token))
+    second = session_client.post("/api/v1/sessions", headers=_auth(token))
 
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "guest_session_limit_reached"
+    assert first.status_code == 201
+    assert second.status_code == 201
 
 
 def test_registered_user_can_create_multiple_sessions(session_client):

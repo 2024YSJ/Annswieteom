@@ -36,11 +36,11 @@ router = APIRouter(prefix="/me", tags=["profile"])
 def _require_registered(user: User) -> None:
     """문답 아카이브는 이메일로 등록된 계정에만 열어준다.
 
-    게스트 계정은 세션을 하나만 가질 수 있어서(app/api/sessions.py의
-    guest_session_limit_reached) 애초에 "세션을 넘어 쌓인 기록"이라는 게
-    성립하지 않는다. 기록 자체는 게스트 세션에서도 user_id를 달고 저장되고,
-    게스트가 이메일로 회원가입하면 같은 user 행이 승격되므로(app/api/auth.py)
-    그 시점부터 여기서 그대로 보인다 — 승격 과정에서 잃는 것은 없다.
+    게스트 정체성은 쿠키 삭제 등으로 언제든 버려질 수 있는 임시 신원이라
+    "누적된 기록의 주인"이 되기에 적합하지 않다. 기록 자체는 게스트 세션에서도
+    user_id를 달고 저장되고, 게스트가 이메일로 회원가입하면 같은 user 행이
+    승격되므로(app/api/auth.py) 그 시점부터 여기서 그대로 보인다 — 승격 과정에서
+    잃는 것은 없다.
     """
     if user.is_guest:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="registered_account_required")
