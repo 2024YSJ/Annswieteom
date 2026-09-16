@@ -16,10 +16,12 @@ import {
 } from "@/lib/api-client";
 import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
+import { sentenceBadge } from "@/lib/sentence-badge";
 import { EvidenceTag } from "@/components/EvidenceTag";
 import { ToneSlider } from "@/components/ToneSlider";
 import { ChatBubble } from "@/components/ChatBubble";
 import { LoadingNotice } from "@/components/LoadingNotice";
+import { TrustScoreboard } from "@/components/TrustScoreboard";
 
 /** finalize가 409로 막았을 때 서버가 함께 내려준 문장 목록. 그 형태가 아니면
  * null을 돌려 평범한 에러 메시지 경로로 보낸다. */
@@ -27,17 +29,6 @@ function unverifiedSentencesFrom(err: unknown): UnverifiedSentence[] | null {
   if (!(err instanceof ApiError) || err.detail !== "unverified_sentences") return null;
   const payload = err.payload as { sentences?: UnverifiedSentence[] } | null;
   return payload?.sentences ?? null;
-}
-
-/** 문장 하나가 무엇에 기대고 있는지 한 줄로. "검증 통과"와 "내가 직접 썼음"을
- * 구분하는 게 요점이다 — 서버는 사용자가 고쳐 쓴 문장도
- * consistency_check_passed=true로 두므로(본인이 쓴 말은 정의상 확인된 사실),
- * 그 true를 임베딩 검증 결과처럼 보여주면 거짓말이 된다. */
-function sentenceBadge(sentence: SentenceRead): string {
-  if (sentence.edited_by_user) return "✎ 직접 작성";
-  if (sentence.evidence_grade === "record_backed") return "🔗 기록물로 뒷받침됨";
-  if (sentence.evidence_grade === "unsupported") return "· 인용된 근거 없음";
-  return "· 본인 진술";
 }
 
 function SentenceRow({
@@ -476,6 +467,8 @@ export function ResultSection({
         <ToneSlider value={document.tone} onChange={handleToneChange} disabled={isReadOnly} />
         <span style={{ fontSize: 12, color: "var(--muted-text)" }}>버전 {document.version} · {document.status === "FINAL" ? "확정됨" : "초안"}</span>
       </div>
+
+      <TrustScoreboard sessionId={sessionId} accessToken={accessToken} enabled={document.status === "FINAL"} />
 
       {!isReadOnly && paragraphs.length > 1 && (
         <p style={{ fontSize: 13, color: "var(--muted-text)", marginTop: 0 }}>

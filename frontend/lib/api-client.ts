@@ -9,3 +9,4 @@ export * from "./api/document";
 export * from "./api/feed";
 export * from "./api/profile";
 export * from "./api/job-search";
+export * from "./api/trust";
