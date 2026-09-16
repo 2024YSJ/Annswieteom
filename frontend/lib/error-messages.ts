@@ -28,6 +28,9 @@ const KNOWN_DETAILS: Record<string, string> = {
   range_already_covered: "이미 설명된 기간이에요.",
   range_outside_gap_period: "공백 기간 밖의 구간은 채울 수 없어요.",
   registered_account_required: "이메일로 회원가입한 계정만 이용할 수 있어요.",
+  category_already_in_progress: "이미 답변을 시작한 활동은 분류를 바꿀 수 없어요.",
+  invalid_category_type: "올바르지 않은 활동 종류예요.",
+  category_not_found: "활동을 찾을 수 없습니다.",
 };
 
 const BY_STATUS: Record<number, string> = {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ActivityCategoryRead, BasedOnRead, ConfirmedFactRead, FactCandidateRead } from "@/lib/api-client";
+import type { ActivityCategoryRead, BasedOnRead, CategoryType, ConfirmedFactRead, FactCandidateRead } from "@/lib/api-client";
 import { CATEGORY_LABELS } from "@/lib/session-routes";
 import { ChatBubble } from "@/components/ChatBubble";
 import { TypingDots } from "@/components/TypingDots";
@@ -71,6 +71,7 @@ export function InterviewChatThread({
   questionText,
   questionSource,
   onSkip,
+  onRetype,
   pendingAnswerText,
   candidates,
   onUpdateCandidate,
@@ -91,6 +92,11 @@ export function InterviewChatThread({
    * 이 값으로 "건너뛰기" 버튼 노출 여부를 정한다. */
   questionSource?: "base" | "followup" | "split_check" | null;
   onSkip?: () => void;
+  /** 분류가 잘못돼 엉뚱한 질문 은행이 배정됐을 때(예: 인턴십이 아르바이트로)
+   * 직접 바로잡는다 — 서버가 이미 답변이 시작된 카테고리는 거부하므로, 여기서도
+   * 같은 조건(아직 draft_turns/confirmed_facts가 없는 현재 카테고리)일 때만
+   * 컨트롤을 보여준다(6인 페르소나 검증 라운드에서 발견). */
+  onRetype?: (categoryId: string, categoryType: CategoryType) => void;
   /** The answer just sent, echoed immediately (before the server round-trip
    * finishes) so sending never looks like the input vanished — cleared once
    * candidates take over, but left in place if the request errors. */
@@ -143,8 +149,20 @@ export function InterviewChatThread({
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {visibleCategories.map((category) => (
         <div key={category.id} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ fontSize: 13, color: "var(--muted-text)", fontWeight: "bold" }}>
-            ▸ {category.custom_label ?? CATEGORY_LABELS[category.category_type]}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13, color: "var(--muted-text)", fontWeight: "bold" }}>
+              ▸ {category.custom_label ?? CATEGORY_LABELS[category.category_type]}
+            </div>
+            {onRetype &&
+              category.id === currentCategoryId &&
+              category.confirmed_facts.length === 0 &&
+              (category.draft_turns ?? []).length === 0 && (
+                <RetypeControl
+                  category={category}
+                  disabled={isSubmitting}
+                  onRetype={(categoryType) => onRetype(category.id, categoryType)}
+                />
+              )}
           </div>
           {groupFactsByQuestion(category.confirmed_facts).map((group) => (
             <div key={group.facts[0].id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -224,6 +242,48 @@ export function InterviewChatThread({
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** "이 활동, 분류가 이상한가요?" — 첫 질문 문구를 보고서야 잘못 분류됐음을
+ * 알아채는 경우가 많아(예: 인턴십에 "이 아르바이트를…") 질문 옆에 바로
+ * 노출한다. 이미 뭔가 답한 뒤엔 서버가 거부하므로 그 전까지만 보여준다. */
+function RetypeControl({
+  category,
+  disabled,
+  onRetype,
+}: {
+  category: ActivityCategoryRead;
+  disabled: boolean;
+  onRetype: (categoryType: CategoryType) => void;
+}) {
+  const [selected, setSelected] = useState<CategoryType>(category.category_type);
+  const categoryTypes = Object.keys(CATEGORY_LABELS) as CategoryType[];
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span style={{ fontSize: 12, color: "var(--muted-text)" }}>분류가 이상한가요?</span>
+      <select
+        value={selected}
+        onChange={(e) => setSelected(e.target.value as CategoryType)}
+        disabled={disabled}
+        style={{ fontSize: 12 }}
+      >
+        {categoryTypes.map((type) => (
+          <option key={type} value={type}>
+            {CATEGORY_LABELS[type]}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        disabled={disabled || selected === category.category_type}
+        onClick={() => onRetype(selected)}
+        style={{ fontSize: 12 }}
+      >
+        바꾸기
+      </button>
     </div>
   );
 }

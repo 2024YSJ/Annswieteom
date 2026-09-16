@@ -303,6 +303,135 @@ def test_deeper_category_specific_questions_for_study_and_part_time_differ(sessi
     assert part_time_first_question != BASE_QUESTIONS["study"][0].text
 
 
+def test_internship_and_club_categories_get_their_own_dedicated_questions(session_client):
+    """6인 페르소나 검증 라운드에서 인턴십이 아르바이트 질문으로, 동호회가
+    자격증 공부 질문으로 잘못 배정된 걸 확인 — 전용 유형을 추가한 뒤 실제로
+    다른 질문이 나오는지 확인한다."""
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("internship", "club"))
+
+    internship_first_question = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/ask", headers=headers
+    ).json()["question_text"]
+
+    assert internship_first_question == BASE_QUESTIONS["internship"][0].text
+    assert internship_first_question != BASE_QUESTIONS["part_time"][0].text
+    assert internship_first_question != BASE_QUESTIONS["club"][0].text
+
+
+def test_retype_category_updates_the_type_before_any_answer(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    category_id = _advance_to_interviewing(session_client, headers, session_id, category_types=("part_time",))
+
+    resp = session_client.patch(
+        f"/api/v1/sessions/{session_id}/categories/{category_id}/type",
+        headers=headers,
+        json={"category_type": "internship"},
+    )
+    assert resp.status_code == 204
+
+    categories = session_client.get(f"/api/v1/sessions/{session_id}", headers=headers).json()["categories"]
+    assert categories[0]["category_type"] == "internship"
+
+
+def test_retype_category_clears_cached_pending_question_so_ask_returns_the_new_types_question(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    category_id = _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
+    # /interview/ask is idempotent — it caches the question in pending_turn, so
+    # calling it again here would just return the same part_time text if the
+    # retype endpoint below didn't clear that cache.
+    cached = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert cached["question_text"] == BASE_QUESTIONS["part_time"][0].text
+
+    resp = session_client.patch(
+        f"/api/v1/sessions/{session_id}/categories/{category_id}/type",
+        headers=headers,
+        json={"category_type": "internship"},
+    )
+    assert resp.status_code == 204
+
+    refreshed = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers).json()
+    assert refreshed["question_text"] == BASE_QUESTIONS["internship"][0].text
+
+
+def test_retype_category_still_allowed_after_split_check_but_before_any_real_answer(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    category_id = _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
+
+    resp = session_client.patch(
+        f"/api/v1/sessions/{session_id}/categories/{category_id}/type",
+        headers=headers,
+        json={"category_type": "internship"},
+    )
+    assert resp.status_code == 204
+
+
+def test_retype_category_rejects_invalid_type(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    category_id = _advance_to_interviewing(session_client, headers, session_id, category_types=("part_time",))
+
+    resp = session_client.patch(
+        f"/api/v1/sessions/{session_id}/categories/{category_id}/type",
+        headers=headers,
+        json={"category_type": "not_a_real_type"},
+    )
+    assert resp.status_code == 422
+
+
+def test_retype_category_rejects_once_a_question_has_been_answered(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    category_id = _advance_to_first_category(session_client, headers, session_id, category_types=("part_time",))
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+
+    resp = session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer",
+        headers=headers,
+        json={"text": "이 아르바이트는 주 3회, 6개월간 했어요."},
+    )
+    assert resp.status_code == 200
+
+    resp = session_client.patch(
+        f"/api/v1/sessions/{session_id}/categories/{category_id}/type",
+        headers=headers,
+        json={"category_type": "internship"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "category_already_in_progress"
+
+
+def test_retype_category_rejects_another_users_category(session_client):
+    owner_headers = _register_and_login(session_client, email="retype-owner@example.com")
+    session_id = _create_session(session_client, owner_headers)
+    category_id = _advance_to_interviewing(session_client, owner_headers, session_id, category_types=("part_time",))
+
+    other_headers = _register_and_login(session_client, email="retype-other@example.com")
+    resp = session_client.patch(
+        f"/api/v1/sessions/{session_id}/categories/{category_id}/type",
+        headers=other_headers,
+        json={"category_type": "internship"},
+    )
+    assert resp.status_code == 403
+
+
+def test_retype_category_rejects_unknown_category_id(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_interviewing(session_client, headers, session_id, category_types=("part_time",))
+
+    resp = session_client.patch(
+        f"/api/v1/sessions/{session_id}/categories/{uuid.uuid4()}/type",
+        headers=headers,
+        json={"category_type": "internship"},
+    )
+    assert resp.status_code == 404
+
+
 def test_activity_breakdown_splits_category_into_children_and_walks_into_them(session_client):
     headers = _register_and_login(session_client)
     session_id = _create_session(session_client, headers)

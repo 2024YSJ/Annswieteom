@@ -66,6 +66,23 @@ BASE_QUESTIONS: dict[str, list[BaseQuestion]] = {
         BaseQuestion("travel_hardship", "hardship_and_coping", "여행 중 힘들었던 점이나 예상 밖의 상황은 무엇이었고, 어떻게 대처하셨나요?"),
         BaseQuestion("travel_achievement", "achievement", "이 경험으로 얻은 것(생각의 변화, 계획 등)이 있다면 무엇인가요?"),
     ],
+    # part_time과 구분되는 지점: 시급 노동이 아니라 정규직 채용을 염두에 둔
+    # 구조화된 근무라 "얼마나 자주 알바했냐"가 아니라 맡은 업무·전환 여부를 묻는다.
+    "internship": [
+        BaseQuestion("internship_task", "task", "인턴으로서 맡은 구체적인 업무나 역할은 무엇이었나요?"),
+        BaseQuestion("internship_freq", "frequency", "언제부터 언제까지, 어떤 형태(정규/파트타임)로 근무하셨나요?"),
+        BaseQuestion("internship_hardship", "hardship_and_coping", "인턴십을 하면서 가장 힘들었던 점은 무엇이었고, 어떻게 해결하셨나요?"),
+        BaseQuestion("internship_outcome", "outcome", "인턴십을 통해 얻은 성과나 결과(정규직 전환 여부, 완료한 프로젝트 등)가 있다면 무엇인가요?"),
+        BaseQuestion("internship_technical", "technical_detail", "구체적으로 어떤 기술/도구/방법론을 사용해서 업무를 수행하셨나요?"),
+    ],
+    # study와 구분되는 지점: 시험/자격증처럼 뚜렷한 목표가 있는 학습이 아니라
+    # 가벼운 사교·취미 모임이라 "공부 목표"가 아니라 모임 성격과 얻은 것을 묻는다.
+    "club": [
+        BaseQuestion("club_context", "context", "어떤 모임이나 동호회였고, 거기서 어떤 역할이었나요?"),
+        BaseQuestion("club_freq", "frequency", "얼마나 자주, 어느 정도 기간 동안 참여하셨나요?"),
+        BaseQuestion("club_hardship", "hardship_and_coping", "참여하면서 힘들었던 점이나 아쉬웠던 점은 무엇이었나요?"),
+        BaseQuestion("club_achievement", "achievement", "이 활동을 통해 얻은 것(새로운 관점, 인간관계 등)이 있다면 무엇인가요?"),
+    ],
     "other": [
         BaseQuestion("other_what", "task", "이 기간 동안 구체적으로 어떤 일을 하셨나요?"),
         BaseQuestion("other_reason", "motivation", "이걸 하게 된 계기나 이유가 있으셨나요?"),
