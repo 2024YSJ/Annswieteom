@@ -129,3 +129,64 @@ def test_delete_other_users_session_returns_403(session_client):
     assert resp.status_code == 403
     still_listed = session_client.get("/api/v1/sessions", headers=_auth(token_a)).json()
     assert len(still_listed) == 1
+
+
+def test_bulk_delete_removes_all_specified_sessions(session_client):
+    token = _register_and_login(session_client)
+    first_id = session_client.post("/api/v1/sessions", headers=_auth(token)).json()["id"]
+    second_id = session_client.post("/api/v1/sessions", headers=_auth(token)).json()["id"]
+
+    resp = session_client.post(
+        "/api/v1/sessions/bulk-delete", headers=_auth(token), json={"session_ids": [first_id, second_id]}
+    )
+
+    assert resp.status_code == 200
+    assert set(resp.json()["deleted_ids"]) == {first_id, second_id}
+    listed = session_client.get("/api/v1/sessions", headers=_auth(token)).json()
+    assert listed == []
+
+
+def test_bulk_delete_ignores_other_users_sessions(session_client):
+    token_a = _register_and_login(session_client, email="alice@example.com", nickname="Alice")
+    token_b = _register_and_login(session_client, email="bob@example.com", nickname="Bob")
+    alice_session_id = session_client.post("/api/v1/sessions", headers=_auth(token_a)).json()["id"]
+    bob_session_id = session_client.post("/api/v1/sessions", headers=_auth(token_b)).json()["id"]
+
+    resp = session_client.post(
+        "/api/v1/sessions/bulk-delete",
+        headers=_auth(token_b),
+        json={"session_ids": [alice_session_id, bob_session_id]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["deleted_ids"] == [bob_session_id]
+    still_listed = session_client.get("/api/v1/sessions", headers=_auth(token_a)).json()
+    assert len(still_listed) == 1
+
+
+def test_bulk_delete_ignores_nonexistent_ids(session_client):
+    token = _register_and_login(session_client)
+
+    resp = session_client.post(
+        "/api/v1/sessions/bulk-delete",
+        headers=_auth(token),
+        json={"session_ids": ["00000000-0000-0000-0000-000000000000"]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["deleted_ids"] == []
+
+
+def test_bulk_delete_empty_list_returns_empty(session_client):
+    token = _register_and_login(session_client)
+
+    resp = session_client.post("/api/v1/sessions/bulk-delete", headers=_auth(token), json={"session_ids": []})
+
+    assert resp.status_code == 200
+    assert resp.json()["deleted_ids"] == []
+
+
+def test_bulk_delete_requires_authentication(session_client):
+    resp = session_client.post("/api/v1/sessions/bulk-delete", json={"session_ids": []})
+
+    assert resp.status_code == 401
