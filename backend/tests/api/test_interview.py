@@ -1032,7 +1032,25 @@ def test_followup_budget_caps_ai_questions_but_never_skips_a_fixed_one(session_c
     _advance_to_first_category(session_client, headers, session_id)
 
     session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
-    session_client.fake_llm._drilldown_queue = [DrilldownDecision(should_ask=True, question_text="더 자세히 말해주세요")] * 10
+    # 표현이 실질적으로 서로 달라야 한다 — 문구가 거의 같으면(끝에 번호만 다른
+    # 정도로는 부족) devlog 54의 근접 중복 검사(is_near_duplicate_question)가
+    # 첫 번째 뒤로 전부 걸러내, 이 테스트의 실제 목적(예산이 고정 질문을 절대
+    # 안 건너뛴다)을 못 재현한다.
+    _DRILLDOWN_TEXTS = [
+        "그 일을 하면서 가장 기억에 남는 순간은 언제였나요?",
+        "그 활동을 하기 전과 후에 달라진 점이 있다면 무엇인가요?",
+        "그 일을 함께한 사람이 있었나요? 있었다면 어떤 역할을 맡았나요?",
+        "그 시기에 겪었던 가장 큰 어려움은 구체적으로 무엇이었나요?",
+        "그 활동을 위해 어떤 준비 과정을 거쳤나요?",
+        "그 결과를 얻기까지 시행착오가 있었다면 어떤 것이었나요?",
+        "그 경험에서 얻은 구체적인 수치나 결과물이 있나요?",
+        "그 활동을 어디에서, 어떤 도구를 써서 진행했나요?",
+        "그 일을 하며 가장 많이 반복했던 작업은 무엇인가요?",
+        "그 활동을 마친 뒤 주변 반응은 어땠나요?",
+    ]
+    session_client.fake_llm._drilldown_queue = [
+        DrilldownDecision(should_ask=True, question_text=text) for text in _DRILLDOWN_TEXTS
+    ]
 
     asked, review_body = _finish_category(session_client, headers, session_id)
     asked_base_questions = [a["question_text"] for a in asked if a["question_source"] == "base"]
@@ -1238,4 +1256,220 @@ def test_long_activities_get_a_bigger_followup_budget(session_client):
 
     assert orchestrator.followup_budget(ShortCategory()) == MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
     assert orchestrator.followup_budget(UnknownCategory()) == MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
-    assert orchestrator.followup_budget(LongCategory()) > MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+
+
+# --- devlog 54: 한자 혼입 → None 처리, 근접 중복 억제, "건너뛰기" -------------
+
+
+def _reach_pending_followup(client, headers, session_id, category_types=("part_time",)):
+    """고정 질문을 전부 답하고(judge_sufficiency를 계속 "부족"으로 둬서) 후속
+    질문이 pending으로 뜬 상태에서 멈춘다. 그 질문을 담은 ask/answer 바디를
+    반환한다."""
+    client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
+    asked = []
+    for _ in range(30):
+        ask_body, answer_body = _answer(client, headers, session_id)
+        asked.append(ask_body)
+        if answer_body["mode"] == "question" and answer_body["question"]["question_source"] == "followup":
+            return asked, answer_body["question"]
+    raise AssertionError("never reached a pending followup question")
+
+
+def test_followup_question_none_is_treated_as_budget_exhausted(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
+    # None은 language_guard가 한자 혼입 재시도 후에도 실패했을 때의 반환값이다
+    # (devlog 54) — 예산 소진과 동일하게 곧장 리뷰로 넘어가야 한다.
+    session_client.fake_llm._followup_queue = [None]
+
+    asked = []
+    for _ in range(len(BASE_QUESTIONS["part_time"])):
+        ask_body, answer_body = _answer(session_client, headers, session_id)
+        asked.append(ask_body)
+    assert answer_body["mode"] == "review"
+    assert not any(a["question_source"] == "followup" for a in asked)
+
+
+def test_near_duplicate_followup_is_suppressed(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
+    # 표현이 완전히 동일한 후속 질문을 두 번 내려준다 — 두 번째는 asked_questions와
+    # 근접 중복이라 억제되고 곧장 리뷰로 넘어가야 한다(devlog 54).
+    session_client.fake_llm._followup_queue = ["똑같은 후속 질문입니다", "똑같은 후속 질문입니다"]
+
+    followup_count = 0
+    for _ in range(len(BASE_QUESTIONS["part_time"]) + 2):
+        ask_body, answer_body = _answer(session_client, headers, session_id)
+        if ask_body["question_source"] == "followup":
+            followup_count += 1
+        if answer_body["mode"] == "review":
+            break
+    else:
+        raise AssertionError("never reached review")
+
+    assert followup_count == 1
+
+
+def test_near_duplicate_drilldown_is_suppressed(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    # 드릴다운이 매 턴 똑같은 문구를 내려준다 — 첫 턴만 실제로 질문이 되고,
+    # 그 다음부터는 근접 중복으로 억제돼 곧장 다음 고정 질문으로 넘어가야 한다.
+    session_client.fake_llm._drilldown_queue = [
+        DrilldownDecision(should_ask=True, question_text="똑같은 드릴다운 질문입니다")
+    ] * 10
+
+    followup_count = 0
+    # 고정 질문 개수 + 인터리브된 드릴다운 1턴만큼 여유를 둔다 — 근접 중복이
+    # 제대로 억제되면 드릴다운은 그 이상 안 끼어드니 이걸로 충분하다.
+    for _ in range(len(BASE_QUESTIONS["part_time"]) + 1):
+        ask_body, answer_body = _answer(session_client, headers, session_id)
+        if ask_body["question_source"] == "followup":
+            followup_count += 1
+        if answer_body["mode"] == "review":
+            break
+
+    assert followup_count == 1
+
+
+def test_skip_followup_question_advances_to_next(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+    _, followup = _reach_pending_followup(session_client, headers, session_id)
+    assert followup["question_source"] == "followup"
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["mode"] in ("question", "review")
+    if body["mode"] == "question":
+        # 텍스트 입력 없이 다음으로 넘어갔다 — 방금 건너뛴 질문이 그대로
+        # 다시 나오지는 않아야 한다.
+        assert body["question"]["question_text"] != followup["question_text"]
+
+
+def test_skip_base_question_returns_409_question_not_skippable(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.json()["question_source"] == "base"
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "question_not_skippable"
+
+
+def test_skip_split_check_question_returns_409_question_not_skippable(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_interviewing(session_client, headers, session_id)
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    assert resp.json()["question_source"] == "split_check"
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "question_not_skippable"
+
+
+def test_skip_without_pending_question_returns_409_no_pending_question(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_interviewing(session_client, headers, session_id)
+    # split-check가 아직 pending인 채로 곧장 skip을 쳐도, pending 자체가
+    # question_source!="followup"이라 이미 앞선 테스트가 잡는다 — 여기서는
+    # candidate_facts가 채워진(=아직 confirm 전) 상태를 재현한다.
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+    session_client.post(
+        f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "하나뿐이에요"}
+    )
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "no_pending_question"
+
+
+def test_skip_during_category_review_returns_409_category_review_pending(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+    _, review = _answer_until_review(session_client, headers, session_id)
+    assert review is not None
+
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "category_review_pending"
+
+
+def test_skip_registers_question_in_asked_questions_so_it_is_not_immediately_repeated(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+    _, followup = _reach_pending_followup(session_client, headers, session_id)
+
+    # 건너뛴 뒤 곧바로 같은 문구를 다시 내려줘도(모델이 여전히 낡은 전제를
+    # 쓰는 경우를 흉내) 근접 중복으로 억제돼야 한다.
+    session_client.fake_llm._followup_queue = [followup["question_text"]]
+    resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    if body["mode"] == "question":
+        assert body["question"]["question_text"] != followup["question_text"]
+
+
+def test_skip_does_not_appear_in_category_review_groups(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id, category_types=("project",))
+    _, followup = _reach_pending_followup(session_client, headers, session_id, category_types=("project",))
+
+    # 남은 질문을 전부 "잘 모르겠다"류로 답하지 않고, 건너뛴 뒤 바로 리뷰까지
+    # 밀어붙인다 — 예산을 다 쓰면 리뷰로 넘어간다.
+    session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
+    session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+    for _ in range(10):
+        resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/ask", headers=headers)
+        body = resp.json()
+        if body["mode"] == "review":
+            review_texts = [g["question_text"] for g in body["review"]["groups"]]
+            assert followup["question_text"] not in review_texts
+            return
+        session_client.post(
+            f"/api/v1/sessions/{session_id}/interview/answer", headers=headers, json={"text": "답변입니다"}
+        )
+    raise AssertionError("never reached review")
+
+
+def test_skip_still_counts_against_followup_budget(session_client):
+    headers = _register_and_login(session_client)
+    session_id = _create_session(session_client, headers)
+    _advance_to_first_category(session_client, headers, session_id)
+    _reach_pending_followup(session_client, headers, session_id)
+
+    # followup_questions_asked는 질문을 낼 때(_build_pending_turn) 이미 오르므로
+    # 건너뛰기만 반복해도 예산이 그대로 소진돼야 한다(스팸으로 우회 불가).
+    session_client.fake_llm._followup_queue = [f"후속 질문 {i}" for i in range(10)]
+    session_client.fake_llm._sufficiency_queue = [SufficiencyResult(sufficient=False, reason="never enough")] * 10
+
+    for _ in range(MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY - 1):
+        resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        if body["mode"] == "review":
+            break
+    else:
+        resp = session_client.post(f"/api/v1/sessions/{session_id}/interview/skip", headers=headers)
+        body = resp.json()
+
+    assert body["mode"] == "review"

@@ -146,3 +146,81 @@ def test_select_relevant_prompt_handles_multi_topic_history():
     # 새 예시가 기존 마지막 예시(exhaustive selection) 앞에 들어갔는지 —
     # 뒤에 붙으면 devlog 45와 같은 회귀가 재발한다(아래 테스트가 별도로 확인).
     assert '{ "relevant_indices": [0] }' in rendered
+
+
+# --- devlog 54: 프로필 공개·모순 시 폐기 + 한국어 전용 지시 ------------------
+
+_INTERVIEW_BASE_KWARGS = dict(
+    category_label="아르바이트",
+    gap_start="2025-01-01",
+    gap_end="2025-06-30",
+    confirmed_facts_so_far=[{"fact_type": "task", "content": "카페에서 일했다"}],
+    record_excerpts=[],
+    asked_questions=["이전 질문"],
+)
+
+
+def _render_followup(profile_summary: list[str] | None = None) -> str:
+    return _render(
+        "interview_followup_question.jinja",
+        profile_summary=profile_summary or [],
+        **_INTERVIEW_BASE_KWARGS,
+    )
+
+
+def _render_drilldown(profile_summary: list[str] | None = None) -> str:
+    return _render(
+        "interview_drilldown.jinja",
+        profile_summary=profile_summary or [],
+        **_INTERVIEW_BASE_KWARGS,
+    )
+
+
+def test_followup_prompt_profile_block_requires_disclosure_and_staleness_check():
+    rendered = _render_followup(profile_summary=["희망직무: 백엔드 개발자"])
+
+    assert "질문 문장 자체에 자연스럽게 그 사실을 밝혀라" in rendered
+    assert "모순되면 프로필 쪽을 낡은 정보로 보고 더 이상 참고하지 마라" in rendered
+
+
+def test_drilldown_prompt_profile_block_requires_disclosure_and_staleness_check():
+    rendered = _render_drilldown(profile_summary=["희망직무: 백엔드 개발자"])
+
+    assert "질문 문장 자체에 자연스럽게 그 사실을 밝혀라" in rendered
+    assert "모순되면 프로필 쪽을 낡은 정보로 보고 더 이상 참고하지 마라" in rendered
+
+
+def test_extract_facts_prompt_forbids_language_mixing():
+    rendered = _render(
+        "interview_extract_facts.jinja",
+        category_label="아르바이트",
+        gap_start="2025-01-01",
+        gap_end="2025-06-30",
+        confirmed_facts_so_far=[],
+        record_excerpts=[],
+        question_text="어떤 일을 하셨나요?",
+        answer_text="카페에서 일했어요",
+        fact_type_hint="task",
+    )
+
+    assert "한국어로만" in rendered
+
+
+def test_followup_prompt_forbids_language_mixing():
+    assert "한국어로만" in _render_followup()
+
+
+def test_drilldown_prompt_forbids_language_mixing():
+    assert "한국어로만" in _render_drilldown()
+
+
+def test_probe_activity_prompt_forbids_language_mixing():
+    rendered = _render(
+        "probe_activity_question.jinja",
+        free_text="잘 모르겠어요",
+        gap_start="2025-01-01",
+        gap_end="2025-06-30",
+        focus="아르바이트나 단기 근로",
+    )
+
+    assert "한국어로만" in rendered

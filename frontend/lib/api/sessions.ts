@@ -178,6 +178,14 @@ export interface InterviewAnswerRead {
   review: CategoryReviewRead | null;
 }
 
+/** `POST /interview/skip` 응답 — 건너뛰기는 question_source==="followup"일 때만
+ * 가능하다(고정 질문·소분류 확인 질문은 절대 건너뛸 수 없다). */
+export interface InterviewSkipRead {
+  mode: "question" | "review";
+  question: InterviewAskRead | null;
+  review: CategoryReviewRead | null;
+}
+
 export interface FactConfirmation {
   index: number;
   final_text: string;
@@ -277,6 +285,12 @@ export const sessionApi = {
       method: "POST",
       headers: authHeaders(accessToken),
       body: JSON.stringify({ text }),
+    }),
+
+  interviewSkip: (sessionId: string, accessToken: string) =>
+    request<InterviewSkipRead>(`/api/v1/sessions/${sessionId}/interview/skip`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
     }),
 
   interviewConfirm: (sessionId: string, confirmations: FactConfirmation[], accessToken: string) =>

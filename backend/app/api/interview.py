@@ -34,6 +34,7 @@ from app.schemas.interview import (
     InterviewConfirmRead,
     InterviewConfirmRequest,
     InterviewReviewRequest,
+    InterviewSkipRead,
     ReviewGroupRead,
     PeriodExtractRead,
     PeriodExtractRequest,
@@ -548,6 +549,7 @@ def _review_read(category: ActivityCategory) -> CategoryReviewRead:
                 ],
             )
             for turn in _draft_turns(category)
+            if not turn.get("skipped")
         ],
     )
 
@@ -596,7 +598,13 @@ async def _annotate_fact_conflicts(category: ActivityCategory, llm: LLMProvider)
 
 
 def _append_turn(
-    category: ActivityCategory, pending: dict, answer_text: str, drafts: list[dict], answer_log_id: str | None
+    category: ActivityCategory,
+    pending: dict,
+    answer_text: str,
+    drafts: list[dict],
+    answer_log_id: str | None,
+    *,
+    skipped: bool = False,
 ) -> dict:
     turn = {
         "turn_id": uuid.uuid4().hex,
@@ -607,6 +615,10 @@ def _append_turn(
         "fact_type_hint": pending["fact_type_hint"],
         "answer_text": answer_text,
         "drafts": drafts,
+        # 사용자가 "건너뛰기"로 넘긴 턴(devlog 54) — drafts가 항상 비어 있고,
+        # _review_read()가 리뷰 화면에서 걸러낸다. asked_questions에는 그대로
+        # 실려(_build_context) 같은/거의 같은 질문이 바로 다시 나오는 걸 막는다.
+        "skipped": skipped,
     }
     # JSON 컬럼은 제자리 변경(append)을 추적하지 않는다 — 새 리스트로 재할당해야 저장된다.
     category.draft_turns = [*_draft_turns(category), turn]
@@ -693,6 +705,14 @@ async def _decide_next(
                 # 정형화된 구체화 질문을 하나 끼워 넣는다(2026-09-06).
                 if _is_vague_answer([d["content"] for d in last_turn["drafts"]]):
                     should_ask, drilldown_text = True, _GENERIC_PROBE_QUESTION
+            # 프롬프트의 "중복 질문 금지" 지시는 조언일 뿐이라(devlog 54), LLM
+            # 판단이든 규칙 기반 백업이든 동일하게 코드 쪽 근접 중복 검사를 거친다 —
+            # 낡은 프로필 정보가 매 턴 재주입돼 같은 전제의 질문이 반복되는 걸 막는
+            # 최종 방어선(1a의 프롬프트 지시가 원인 자체를 줄여주는 것과는 별개).
+            if should_ask and drilldown_text and orchestrator.is_near_duplicate_question(
+                drilldown_text, context.asked_questions if context is not None else []
+            ):
+                should_ask, drilldown_text = False, None
             if should_ask and drilldown_text:
                 if context is None:
                     context, _ = await _build_context(db, session, category, chunk_search, query_text=drilldown_text)
@@ -719,6 +739,14 @@ async def _decide_next(
     # 후속 질문은 질문 문구가 아직 없으므로 카테고리 이름을 검색어로 쓴다.
     context, _ = await _build_context(db, session, category, chunk_search, query_text=category.label)
     question_text = await llm.followup_question(context)
+    # question_text가 None인 두 가지 원인 — (1) 한자 혼입이 재시도 후에도 안
+    # 없어짐(language_guard, devlog 54), (2) 근접 중복(같은 낡은 전제가 반복,
+    # is_near_duplicate_question) — 둘 다 "이번엔 후속 질문 없음"으로 같이
+    # 처리한다. 기존 "예산 소진 → 확인" 분기와 같은 모양을 그대로 쓴다.
+    if question_text is not None and orchestrator.is_near_duplicate_question(question_text, context.asked_questions):
+        question_text = None
+    if question_text is None:
+        return "review", None
     return "question", _build_pending_turn(context, category, question_text, "followup", "followup")
 
 
@@ -932,6 +960,55 @@ async def interview_answer(
     session.pending_turn = next_pending
     await db.commit()
     return InterviewAnswerRead(mode="question", question=_ask_read(category, next_pending))
+
+
+@router.post("/{session_id}/interview/skip", response_model=InterviewSkipRead)
+async def interview_skip(
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMProvider = Depends(get_llm_provider),
+    chunk_search=Depends(get_chunk_search),
+) -> InterviewSkipRead:
+    """고정 질문·소분류 확인 질문은 건너뛸 수 없다 — next_base_question()의 완료
+    판정이 모든 fact_type 슬롯의 응답을 전제하므로, 건너뛰면 그 카테고리가 영원히
+    안 끝난다. AI가 즉흥적으로 만든 질문(question_source=="followup", 드릴다운·
+    후속 둘 다 여기 해당)만 건너뛸 수 있다(devlog 54 — 프로필 정보가 낡은 채로
+    반복 주입돼 같은 전제의 질문이 몇 번이고 반복될 수 있다는 게 실측으로 확인됐다).
+
+    /interview/answer의 뒷부분(_decide_next 이후)과 거의 동일하게 흐른다 — 새
+    상태머신 분기 없이 session.pending_turn/category.draft_turns만 바뀐다."""
+    try:
+        orchestrator.require_interviewing(session.status)
+    except orchestrator.StateMachineViolation as exc:
+        raise _violation_to_409(exc) from exc
+
+    pending = session.pending_turn
+    if pending is not None and pending.get("kind") == "category_review":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="category_review_pending")
+    if pending is None or pending.get("candidate_facts") is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_pending_question")
+    if pending.get("question_source") != "followup":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="question_not_skippable")
+
+    category = await db.get(ActivityCategory, uuid.UUID(pending["category_id"]))
+    turn = _append_turn(category, pending, "(건너뛰었어요)", [], None, skipped=True)
+    session.pending_turn = None
+    await db.commit()
+
+    try:
+        decision, next_pending = await _decide_next(db, session, category, llm, chunk_search, last_turn=turn)
+    except LLMUnavailableError:
+        decision, next_pending = "review", None
+
+    if decision == "review":
+        await _annotate_fact_conflicts(category, llm)
+        session.pending_turn = _review_pending(category)
+        await db.commit()
+        return InterviewSkipRead(mode="review", review=_review_read(category))
+
+    session.pending_turn = next_pending
+    await db.commit()
+    return InterviewSkipRead(mode="question", question=_ask_read(category, next_pending))
 
 
 @router.post("/{session_id}/interview/confirm", response_model=InterviewConfirmRead)

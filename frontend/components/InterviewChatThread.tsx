@@ -69,6 +69,8 @@ export function InterviewChatThread({
   categories,
   currentCategoryId,
   questionText,
+  questionSource,
+  onSkip,
   pendingAnswerText,
   candidates,
   onUpdateCandidate,
@@ -84,6 +86,11 @@ export function InterviewChatThread({
   categories: ActivityCategoryRead[];
   currentCategoryId: string | null;
   questionText: string | null;
+  /** "base"(고정 질문)·"split_check"(소분류 확인)는 절대 건너뛸 수 없다 — 서버가
+   * question_source==="followup"일 때만 /interview/skip을 허용한다(devlog 54).
+   * 이 값으로 "건너뛰기" 버튼 노출 여부를 정한다. */
+  questionSource?: "base" | "followup" | "split_check" | null;
+  onSkip?: () => void;
   /** The answer just sent, echoed immediately (before the server round-trip
    * finishes) so sending never looks like the input vanished — cleared once
    * candidates take over, but left in place if the request errors. */
@@ -171,6 +178,14 @@ export function InterviewChatThread({
           {category.id === currentCategoryId && questionText && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }} aria-live="polite">
               <ChatBubble side="left">{questionText}</ChatBubble>
+
+              {candidates === null && !isWaitingForAnswer && !pendingAnswerText && questionSource === "followup" && onSkip && (
+                <div>
+                  <button type="button" disabled={isSubmitting} onClick={onSkip} style={{ fontSize: 13 }}>
+                    건너뛰기
+                  </button>
+                </div>
+              )}
 
               {pendingAnswerText && <ChatBubble side="right">{pendingAnswerText}</ChatBubble>}
 

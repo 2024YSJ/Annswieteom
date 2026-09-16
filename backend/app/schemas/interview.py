@@ -180,6 +180,18 @@ class InterviewAnswerRead(BaseModel):
     review: CategoryReviewRead | None = None
 
 
+class InterviewSkipRead(BaseModel):
+    """`POST /interview/skip` 응답 — records/skip과 달리 다음 질문/리뷰까지
+    바로 실어 보낸다(추가 /ask 호출 없이). `mode="question"`이면 `question`에,
+    `mode="review"`면 `review`에 내용이 있다. 건너뛰기는
+    `question_source == "followup"`일 때만 가능하다(devlog 54) — 고정 질문·
+    소분류 확인 질문은 건너뛸 수 없다."""
+
+    mode: Literal["question", "review"]
+    question: InterviewAskRead | None = None
+    review: CategoryReviewRead | None = None
+
+
 class FactConfirmation(BaseModel):
     index: int
     final_text: str
