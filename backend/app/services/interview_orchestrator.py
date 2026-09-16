@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import uuid
 
 from app.models.activity_category import ActivityCategory
@@ -39,6 +40,29 @@ def followup_budget(category: ActivityCategory) -> int:
         if days >= LONG_ACTIVITY_DAYS:
             return MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY + LONG_ACTIVITY_FOLLOWUP_BONUS
     return MAX_FOLLOWUP_QUESTIONS_PER_CATEGORY
+
+
+# 드릴다운/후속 질문 프롬프트의 "이미 물어본 질문과 중복되는 질문은 하지 마라"는
+# 지시는 조언일 뿐이다 — 실측(devlog 54)에서 낡은 프로필 정보가 매 턴 그대로
+# 재주입되는 바람에, 같은 전제(예: "백엔드 프로그래머 아니냐")를 깐 질문이 표현만
+# 바뀐 채 한 카테고리에서 최대 3번 반복됐다. 이게 코드 쪽 하드 백스톱이다.
+NEAR_DUPLICATE_QUESTION_THRESHOLD = 0.7
+
+
+def _normalize_question(text: str) -> str:
+    return " ".join(text.split())
+
+
+def is_near_duplicate_question(
+    candidate: str, asked_questions: list[str], threshold: float = NEAR_DUPLICATE_QUESTION_THRESHOLD
+) -> bool:
+    """candidate가 asked_questions 중 하나와 표현만 다를 뿐 사실상 같은 질문인지."""
+    normalized_candidate = _normalize_question(candidate)
+    return any(
+        difflib.SequenceMatcher(None, normalized_candidate, _normalize_question(asked)).ratio() >= threshold
+        for asked in asked_questions
+    )
+
 
 # 기록물(블로그/사진/텍스트) 생성 엔드포인트가 허용되는 세션 상태.
 #

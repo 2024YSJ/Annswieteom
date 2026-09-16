@@ -12,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from app.core.config import settings
 from app.models.activity_category import CATEGORY_TYPES
+from app.services.llm.language_guard import contains_cjk
 from app.services.llm.ollama_gate import OLLAMA_GATE
 from app.services.llm.base import (
     AttributeCandidate,
@@ -40,6 +41,11 @@ from app.services.llm.base import (
 from app.services.profile import vocabulary
 
 logger = logging.getLogger(__name__)
+
+# 인터뷰 관련 응답에 중국어 한자가 섞여 나오는 게 재현됐다(devlog 08, 54) — 프롬프트
+# 지시만으로는 안 잡히는 경우를 대비해 감지 시 이 문구를 덧붙여 딱 한 번만 재시도한다
+# (app/services/llm/language_guard.py 참고).
+_LANGUAGE_WARNING_SUFFIX = "\n\n[언어 경고] 방금 답에 한자가 섞여 있었다. 반드시 한국어로만 다시 답하라."
 
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 _jinja_env = Environment(loader=FileSystemLoader(str(_PROMPTS_DIR)), autoescape=False)
@@ -141,6 +147,19 @@ class LocalOllamaProvider:
             answer_text=answer_text,
             fact_type_hint=fact_type_hint,
         )
+        candidates = await self._extract_facts_parse(prompt, context)
+        if not any(contains_cjk(c.content) for c in candidates):
+            return candidates
+        logger.warning("extract_facts: CJK contamination detected, retrying once")
+        retried = await self._extract_facts_parse(prompt + _LANGUAGE_WARNING_SUFFIX, context)
+        clean = [c for c in retried if not contains_cjk(c.content)]
+        if len(clean) < len(retried):
+            logger.warning(
+                "extract_facts: dropping %d still-contaminated candidate(s) after retry", len(retried) - len(clean)
+            )
+        return clean
+
+    async def _extract_facts_parse(self, prompt: str, context: InterviewContext) -> list[FactCandidate]:
         response_text = await self._generate(prompt, label="extract_facts", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
@@ -158,7 +177,7 @@ class LocalOllamaProvider:
             # to the next provider instead of a raw 500.
             raise LLMUnavailableError(f"Ollama returned malformed response: {exc}") from exc
 
-    async def followup_question(self, context: InterviewContext) -> str:
+    async def followup_question(self, context: InterviewContext) -> str | None:
         prompt = _render(
             "interview_followup_question.jinja",
             category_label=context.category_label,
@@ -169,6 +188,17 @@ class LocalOllamaProvider:
             asked_questions=context.asked_questions,
             profile_summary=context.profile_summary,
         )
+        question_text = await self._followup_question_parse(prompt)
+        if not contains_cjk(question_text):
+            return question_text
+        logger.warning("followup_question: CJK contamination detected, retrying once")
+        question_text = await self._followup_question_parse(prompt + _LANGUAGE_WARNING_SUFFIX)
+        if contains_cjk(question_text):
+            logger.warning("followup_question: still contaminated after retry, skipping this turn's follow-up")
+            return None
+        return question_text
+
+    async def _followup_question_parse(self, prompt: str) -> str:
         response_text = await self._generate(prompt, label="followup_question", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:
             data = json.loads(response_text)
@@ -199,6 +229,17 @@ class LocalOllamaProvider:
             asked_questions=context.asked_questions,
             profile_summary=context.profile_summary,
         )
+        decision = await self._judge_drilldown_parse(prompt)
+        if not contains_cjk(decision.question_text):
+            return decision
+        logger.warning("judge_drilldown: CJK contamination detected, retrying once")
+        decision = await self._judge_drilldown_parse(prompt + _LANGUAGE_WARNING_SUFFIX)
+        if contains_cjk(decision.question_text):
+            logger.warning("judge_drilldown: still contaminated after retry, skipping this drilldown")
+            return DrilldownDecision(should_ask=False, question_text=None)
+        return decision
+
+    async def _judge_drilldown_parse(self, prompt: str) -> DrilldownDecision:
         response_text = await self._generate(prompt, label="judge_drilldown", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_DETERMINISTIC)
         try:
             data = json.loads(response_text)
@@ -234,7 +275,7 @@ class LocalOllamaProvider:
 
     async def probe_activity_question(
         self, free_text: str, gap_start: date, gap_end: date, focus: str
-    ) -> str:
+    ) -> str | None:
         prompt = _render(
             "probe_activity_question.jinja",
             free_text=free_text,
@@ -242,6 +283,17 @@ class LocalOllamaProvider:
             gap_end=gap_end,
             focus=focus,
         )
+        question_text = await self._probe_activity_question_parse(prompt)
+        if not contains_cjk(question_text):
+            return question_text
+        logger.warning("probe_activity_question: CJK contamination detected, retrying once")
+        question_text = await self._probe_activity_question_parse(prompt + _LANGUAGE_WARNING_SUFFIX)
+        if contains_cjk(question_text):
+            logger.warning("probe_activity_question: still contaminated after retry, giving up")
+            return None
+        return question_text
+
+    async def _probe_activity_question_parse(self, prompt: str) -> str:
         # 되묻는 문장이라 매번 똑같으면 기계적으로 읽힌다 — 생성 계열이므로 CREATIVE.
         response_text = await self._generate(prompt, label="probe_activity_question", timeout=_GENERATE_TIMEOUT, temperature=TEMPERATURE_CREATIVE)
         try:

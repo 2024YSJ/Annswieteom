@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date
 
 import httpx
 import pytest
 
 from app.services.llm import local_ollama
-from app.services.llm.base import JobInfoCandidate, LLMUnavailableError
+from app.services.llm.base import InterviewContext, JobInfoCandidate, LLMUnavailableError
 from app.services.llm.local_ollama import LocalOllamaProvider
 
 CANDIDATES = [
@@ -54,7 +55,10 @@ def ollama_calls(monkeypatch):
     calls: list[dict] = []
     # sent_headers는 canned에 얹었다 — 기존 12개 테스트가 (calls, canned) 2-튜플로
     # 언패킹하고 있어서 반환 형태를 바꾸면 전부 손봐야 한다.
-    canned: dict = {"content": "{}", "sent_headers": []}
+    # content_queue(devlog 54): 설정하면 호출마다 순서대로 하나씩 꺼내 쓴다 —
+    # "1차 응답은 오염, 재시도 응답은 정상" 같은 시나리오를 재현하기 위함.
+    # 없으면(기존 테스트 전부) canned["content"] 하나를 계속 돌려준다.
+    canned: dict = {"content": "{}", "sent_headers": [], "content_queue": None}
 
     class _StubStreamCtx:
         def __init__(self, response: _StubStreamResponse) -> None:
@@ -80,7 +84,9 @@ def ollama_calls(monkeypatch):
             assert method == "POST"
             calls.append(json)
             canned["sent_headers"].append(headers)
-            return _StubStreamCtx(_StubStreamResponse(canned["content"]))
+            queue = canned.get("content_queue")
+            content = queue.pop(0) if queue else canned["content"]
+            return _StubStreamCtx(_StubStreamResponse(content))
 
     monkeypatch.setattr(local_ollama.httpx, "AsyncClient", _StubClient)
     return calls, canned
@@ -765,3 +771,140 @@ async def test_generate_serializes_concurrent_calls_through_the_ollama_gate(monk
     )
 
     assert concurrent["max"] == 1
+
+
+# --- devlog 54: 한자 혼입 감지 시 재시도·폴백 ---------------------------------
+
+
+def _context(**overrides) -> InterviewContext:
+    defaults = dict(
+        session_id="s1",
+        category_label="아르바이트",
+        gap_start=date(2025, 1, 1),
+        gap_end=date(2025, 6, 30),
+        confirmed_facts_so_far=[],
+    )
+    defaults.update(overrides)
+    return InterviewContext(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_followup_question_retries_once_on_cjk_contamination_and_succeeds(ollama_calls):
+    calls, canned = ollama_calls
+    canned["content_queue"] = [
+        json.dumps({"question_text": "您对 그 활동을 왜 시작하셨나요?"}),
+        json.dumps({"question_text": "그 활동을 왜 시작하셨나요?"}),
+    ]
+
+    result = await LocalOllamaProvider().followup_question(_context())
+
+    assert result == "그 활동을 왜 시작하셨나요?"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_followup_question_returns_none_when_still_contaminated_after_retry(ollama_calls):
+    calls, canned = ollama_calls
+    canned["content_queue"] = [
+        json.dumps({"question_text": "您对 그 활동을 왜 시작하셨나요?"}),
+        json.dumps({"question_text": "还是 한자가 안 없어졌어요"}),
+    ]
+
+    result = await LocalOllamaProvider().followup_question(_context())
+
+    assert result is None
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_followup_question_retry_call_carries_the_reinforced_reminder(ollama_calls):
+    calls, canned = ollama_calls
+    canned["content_queue"] = [
+        json.dumps({"question_text": "您对 오염됨"}),
+        json.dumps({"question_text": "정상 질문"}),
+    ]
+
+    await LocalOllamaProvider().followup_question(_context())
+
+    assert "[언어 경고]" in calls[1]["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_judge_drilldown_falls_back_to_should_ask_false_when_still_contaminated(ollama_calls):
+    calls, canned = ollama_calls
+    canned["content_queue"] = [
+        json.dumps({"should_ask": True, "question_text": "您对 파고드는 질문"}),
+        json.dumps({"should_ask": True, "question_text": "还是 오염됨"}),
+    ]
+
+    decision = await LocalOllamaProvider().judge_drilldown(_context())
+
+    assert decision.should_ask is False
+    assert decision.question_text is None
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_judge_drilldown_not_retried_when_should_ask_is_false(ollama_calls):
+    # should_ask=False면 question_text도 null이라 애초에 오염 검사 대상이 없다 —
+    # 재시도 없이 호출 1회로 끝나야 한다.
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps({"should_ask": False, "question_text": None})
+
+    decision = await LocalOllamaProvider().judge_drilldown(_context())
+
+    assert decision.should_ask is False
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_drops_only_the_contaminated_candidate_after_retry(ollama_calls):
+    calls, canned = ollama_calls
+    canned["content_queue"] = [
+        json.dumps(
+            {
+                "facts": [
+                    {"content": "카페에서 일했다", "fact_type": "task"},
+                    {"content": "您对 오염된 사실", "fact_type": "task"},
+                ]
+            }
+        ),
+        json.dumps(
+            {
+                "facts": [
+                    {"content": "카페에서 일했다", "fact_type": "task"},
+                    {"content": "还是 여전히 오염됨", "fact_type": "task"},
+                ]
+            }
+        ),
+    ]
+
+    candidates = await LocalOllamaProvider().extract_facts(_context(), "질문", "답변", "task")
+
+    assert [c.content for c in candidates] == ["카페에서 일했다"]
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_no_retry_when_nothing_contaminated(ollama_calls):
+    calls, canned = ollama_calls
+    canned["content"] = json.dumps({"facts": [{"content": "카페에서 일했다", "fact_type": "task"}]})
+
+    candidates = await LocalOllamaProvider().extract_facts(_context(), "질문", "답변", "task")
+
+    assert [c.content for c in candidates] == ["카페에서 일했다"]
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_probe_activity_question_returns_none_after_retry_failure(ollama_calls):
+    calls, canned = ollama_calls
+    canned["content_queue"] = [
+        json.dumps({"question_text": "您对 아르바이트 하셨나요?"}),
+        json.dumps({"question_text": "还是 오염됨"}),
+    ]
+
+    result = await LocalOllamaProvider().probe_activity_question("잘 모르겠어요", date(2025, 1, 1), date(2025, 6, 30), "아르바이트나 단기 근로")
+
+    assert result is None
+    assert len(calls) == 2

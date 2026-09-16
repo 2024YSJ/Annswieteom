@@ -15,6 +15,8 @@ const KNOWN_DETAILS: Record<string, string> = {
   no_posts_in_period: "이 공백 기간에 해당하는 게시물을 찾지 못했어요. 기간을 확인해주세요.",
   gap_period_missing: "먼저 공백 기간을 설정해주세요.",
   no_pending_question: "먼저 질문을 받아야 답변할 수 있어요. 새로고침 후 다시 시도해주세요.",
+  question_not_skippable: "이 질문은 건너뛸 수 없어요. 새로고침 후 다시 시도해주세요.",
+  category_review_pending: "확인 화면이 이미 대기 중이에요. 새로고침 후 다시 시도해주세요.",
   no_pending_candidates: "확인할 답변이 없어요. 새로고침 후 다시 시도해주세요.",
   invalid_candidate_index: "확인 중 오류가 발생했어요. 새로고침 후 다시 시도해주세요.",
   llm_unavailable: "AI 서버가 수리 중이예요.",
