@@ -10,7 +10,15 @@ from app.db.session import get_db
 from app.models.activity_category import ActivityCategory
 from app.models.session import SESSION_KINDS, Session as SessionModel
 from app.models.user import User
-from app.schemas.session import RecordChunkExcerptRead, SessionContextRead, SessionCreate, SessionRead, SessionRename
+from app.schemas.session import (
+    RecordChunkExcerptRead,
+    SessionBulkDeleteRequest,
+    SessionBulkDeleteResponse,
+    SessionContextRead,
+    SessionCreate,
+    SessionRead,
+    SessionRename,
+)
 from app.services.record_pipeline.search import get_chunk_search
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -142,3 +150,22 @@ async def delete_session(
     # "Status code 204 must not have a response body" assertion at import time.
     await db.delete(session)
     await db.commit()
+
+
+@router.post("/bulk-delete", response_model=SessionBulkDeleteResponse)
+async def bulk_delete_sessions(
+    payload: SessionBulkDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionBulkDeleteResponse:
+    if not payload.session_ids:
+        return SessionBulkDeleteResponse(deleted_ids=[])
+    stmt = select(SessionModel).where(
+        SessionModel.id.in_(payload.session_ids),
+        SessionModel.user_id == current_user.id,
+    )
+    sessions = (await db.execute(stmt)).scalars().all()
+    for session in sessions:
+        await db.delete(session)
+    await db.commit()
+    return SessionBulkDeleteResponse(deleted_ids=[s.id for s in sessions])

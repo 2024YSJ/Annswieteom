@@ -12,7 +12,21 @@ import { useSessionsList } from "@/lib/use-sessions-list";
 import { sessionStatusLabel } from "@/lib/session-routes";
 import { IconAttribution } from "@/components/SiteFooter";
 
-function SessionRow({ session, isActive, accessToken }: { session: SessionRead; isActive: boolean; accessToken: string }) {
+function SessionRow({
+  session,
+  isActive,
+  accessToken,
+  isSelectMode,
+  isChecked,
+  onToggleSelect,
+}: {
+  session: SessionRead;
+  isActive: boolean;
+  accessToken: string;
+  isSelectMode?: boolean;
+  isChecked?: boolean;
+  onToggleSelect?: () => void;
+}) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
@@ -66,6 +80,15 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
   return (
     <li style={{ position: "relative" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        {isSelectMode && (
+          <input
+            type="checkbox"
+            checked={isChecked ?? false}
+            onChange={onToggleSelect}
+            aria-label={`${session.title ?? "세션"} 선택`}
+            style={{ flexShrink: 0 }}
+          />
+        )}
         {isEditing ? (
           <input
             type="text"
@@ -111,7 +134,7 @@ function SessionRow({ session, isActive, accessToken }: { session: SessionRead; 
             </div>
           </Link>
         )}
-        {!isEditing && (
+        {!isEditing && !isSelectMode && (
           <button
             type="button"
             onClick={() => setIsMenuOpen((v) => !v)}
@@ -325,6 +348,46 @@ function SessionGroup({
   activeId: string | undefined;
   accessToken: string | null;
 }) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
+  function toggleSelectMode() {
+    setIsSelectMode((v) => !v);
+    setSelectedIds(new Set());
+    setBulkError(null);
+  }
+
+  function toggleSelected(sessionId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((prev) => (prev.size === sessions.length ? new Set() : new Set(sessions.map((s) => s.id))));
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0 || !accessToken) return;
+    if (!window.confirm(`선택한 ${selectedIds.size}개 세션을 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    setBulkError(null);
+    try {
+      const result = await sessionApi.removeMany(Array.from(selectedIds), accessToken);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions() });
+      if (activeId && result.deleted_ids.includes(activeId)) router.push("/");
+      setSelectedIds(new Set());
+      setIsSelectMode(false);
+    } catch (err) {
+      setBulkError(errorMessage(err));
+    }
+  }
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -349,6 +412,17 @@ function SessionGroup({
         >
           {title}
         </h2>
+        {sessions.length > 0 && (
+          <button
+            type="button"
+            onClick={toggleSelectMode}
+            title={isSelectMode ? "선택 모드 취소" : "여러 세션 선택"}
+            aria-label={isSelectMode ? "선택 모드 취소" : "여러 세션 선택"}
+            style={{ flexShrink: 0, fontSize: 11, padding: "5px 8px" }}
+          >
+            {isSelectMode ? "취소" : "선택"}
+          </button>
+        )}
         <button
           type="button"
           onClick={onNew}
@@ -360,6 +434,28 @@ function SessionGroup({
           {isCreating ? "..." : "+"}
         </button>
       </div>
+      {isSelectMode && sessions.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, flex: 1, minWidth: 0 }}>
+            <input
+              type="checkbox"
+              checked={selectedIds.size === sessions.length}
+              onChange={toggleSelectAll}
+              aria-label="전체 선택"
+            />
+            전체 선택
+          </label>
+          <button
+            type="button"
+            onClick={handleBulkDelete}
+            disabled={selectedIds.size === 0}
+            style={{ flexShrink: 0, fontSize: 12, padding: "5px 9px", color: "var(--danger)" }}
+          >
+            선택 삭제 ({selectedIds.size})
+          </button>
+        </div>
+      )}
+      {bulkError && <p style={{ color: "var(--danger)", fontSize: 11, margin: "0 0 8px", fontWeight: 600 }}>{bulkError}</p>}
       {isLoading ? (
         <p style={{ fontSize: 13, color: "var(--muted-text)" }}>불러오는 중...</p>
       ) : isError ? (
@@ -370,7 +466,15 @@ function SessionGroup({
         <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
           {sessions.map((session) =>
             accessToken ? (
-              <SessionRow key={session.id} session={session} isActive={session.id === activeId} accessToken={accessToken} />
+              <SessionRow
+                key={session.id}
+                session={session}
+                isActive={session.id === activeId}
+                accessToken={accessToken}
+                isSelectMode={isSelectMode}
+                isChecked={selectedIds.has(session.id)}
+                onToggleSelect={() => toggleSelected(session.id)}
+              />
             ) : null,
           )}
         </ul>

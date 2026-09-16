@@ -33,6 +33,10 @@ export interface SessionRead {
   created_at: string;
 }
 
+export interface SessionBulkDeleteResult {
+  deleted_ids: string[];
+}
+
 export interface GapPeriodRead {
   start_date: string;
   end_date: string;
@@ -238,6 +242,13 @@ export const sessionApi = {
     request<void>(`/api/v1/sessions/${sessionId}`, {
       method: "DELETE",
       headers: authHeaders(accessToken),
+    }),
+
+  removeMany: (sessionIds: string[], accessToken: string) =>
+    request<SessionBulkDeleteResult>("/api/v1/sessions/bulk-delete", {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ session_ids: sessionIds }),
     }),
 
   setPeriod: (sessionId: string, startDate: string, endDate: string, accessToken: string) =>
