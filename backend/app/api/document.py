@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -28,6 +29,7 @@ from app.schemas.document import (
     SentenceUpdate,
     UnverifiedSentenceRead,
 )
+from app.schemas.share import ShareLinkRead
 from app.services import document_generator
 from app.services import interview_orchestrator as orchestrator
 from app.services.document_assembly import build_document_read, build_paragraph_read, build_sentence_read, get_latest_document
@@ -430,6 +432,37 @@ async def finalize_document(
     await db.refresh(document)
 
     return await _document_read(document, db, fact_citations)
+
+
+@router.post("/{session_id}/document/share", response_model=ShareLinkRead)
+async def create_share_link(
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+) -> ShareLinkRead:
+    """공유 링크를 발급(이미 있으면 그대로 재사용)한다. FINAL 문서만 공유
+    가능 — 아직 손보는 중인 초안을 밖으로 내보낼 이유가 없다."""
+    document = await _get_latest_document(session.id, db)
+    if document is None or document.status != "FINAL":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="document_not_finalized")
+    if not document.share_slug:
+        document.share_slug = secrets.token_urlsafe(9)[:12]
+        await db.commit()
+        await db.refresh(document)
+    return ShareLinkRead(share_slug=document.share_slug)
+
+
+@router.delete("/{session_id}/document/share", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_share_link(
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+):
+    # No `-> None` annotation — see sessions.delete_session's comment on why
+    # that trips FastAPI's 204-response-body assertion under
+    # `from __future__ import annotations`.
+    document = await _get_latest_document(session.id, db)
+    if document is not None and document.share_slug is not None:
+        document.share_slug = None
+        await db.commit()
 
 
 _EXPORT_FORMATS = ("txt", "md")

@@ -11,6 +11,7 @@ from app.api.job_search import router as job_search_router
 from app.api.profile import router as profile_router
 from app.api.records import router as records_router
 from app.api.sessions import router as sessions_router
+from app.api.share import router as share_router
 from app.api.trust import global_router as trust_global_router, session_router as trust_session_router
 
 api_router = APIRouter()
@@ -27,5 +28,6 @@ api_router.include_router(job_search_router)
 api_router.include_router(trust_session_router)
 api_router.include_router(trust_global_router)
 api_router.include_router(demo_router)
+api_router.include_router(share_router)
 
 __all__ = ["api_router"]

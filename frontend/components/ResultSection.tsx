@@ -7,6 +7,7 @@ import {
   ApiError,
   documentApi,
   sessionApi,
+  shareApi,
   type DocumentRead,
   type ParagraphRead,
   type SentenceRead,
@@ -48,6 +49,7 @@ export function ResultSection({
   const [unverified, setUnverified] = useState<UnverifiedSentence[] | null>(null);
   const [isStartingJobSearch, setIsStartingJobSearch] = useState(false);
   const [exportedText, setExportedText] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const generateFiredRef = useRef(false);
 
   const {
@@ -234,6 +236,20 @@ export function ResultSection({
     if (exportedText) await navigator.clipboard.writeText(exportedText);
   }
 
+  async function handleCreateShare() {
+    setError(null);
+    try {
+      const { share_slug } = await shareApi.create(sessionId, accessToken);
+      setShareUrl(`${window.location.origin}/share/${share_slug}`);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleCopyShareUrl() {
+    if (shareUrl) await navigator.clipboard.writeText(shareUrl);
+  }
+
   async function handleStartJobSearch() {
     setError(null);
     setIsStartingJobSearch(true);
@@ -343,9 +359,14 @@ export function ResultSection({
             최종 확정
           </button>
         ) : (
-          <button type="button" onClick={handleExport}>
-            텍스트로 내보내기
-          </button>
+          <>
+            <button type="button" onClick={handleExport}>
+              텍스트로 내보내기
+            </button>
+            <button type="button" onClick={handleCreateShare}>
+              공유 카드 만들기
+            </button>
+          </>
         )}
         {paragraphs.length > 0 && (
           <button type="button" disabled={isStartingJobSearch} onClick={handleStartJobSearch}>
@@ -359,6 +380,18 @@ export function ResultSection({
           <textarea readOnly rows={10} value={exportedText} style={{ width: "100%" }} />
           <button type="button" onClick={handleCopy} style={{ marginTop: 8 }}>
             클립보드에 복사
+          </button>
+        </div>
+      )}
+
+      {shareUrl && (
+        <div style={{ marginTop: 16 }}>
+          <p style={{ fontSize: 13, color: "var(--muted-text)" }}>
+            대표 문장 1~2개와 근거 요약만 담긴 공개 링크예요 — 원문이나 개인정보는 포함되지 않아요.
+          </p>
+          <input type="text" readOnly value={shareUrl} style={{ width: "100%" }} onFocus={(e) => e.target.select()} />
+          <button type="button" onClick={handleCopyShareUrl} style={{ marginTop: 8 }}>
+            링크 복사
           </button>
         </div>
       )}
