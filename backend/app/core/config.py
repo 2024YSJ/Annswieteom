@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # 0.45~0.65 범위에서 실제 생성 샘플로 튜닝 — app/services/consistency_check.py 참고.
     consistency_threshold: float = 0.55
 
+    # 원클릭 데모 모드(GET /demo/document)가 노출할 세션 하나의 UUID.
+    # backend/scripts/seed_demo_session.py가 만든 세션 id를 여기 붙여넣는다.
+    # 빈 문자열이면 데모 라우트는 404만 낸다 — youthcenter_api_key와 같은
+    # "비어 있으면 기능이 꺼진다" 컨벤션. is_demo 컬럼 대신 환경변수로 둔 이유:
+    # 발표용 세션 하나만 있으면 충분하고, 마이그레이션 없이 재배포만으로 교체 가능하다.
+    demo_session_id: str = ""
+
     def ollama_headers(self) -> dict[str, str]:
         """Auth headers for every request to the Ollama origin.
 

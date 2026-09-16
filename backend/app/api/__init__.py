@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.auth import router as auth_router
 from app.api.coverage import router as coverage_router
+from app.api.demo import router as demo_router
 from app.api.document import router as document_router
 from app.api.feed import router as feed_router
 from app.api.health import router as health_router
@@ -25,5 +26,6 @@ api_router.include_router(coverage_router)
 api_router.include_router(job_search_router)
 api_router.include_router(trust_session_router)
 api_router.include_router(trust_global_router)
+api_router.include_router(demo_router)
 
 __all__ = ["api_router"]

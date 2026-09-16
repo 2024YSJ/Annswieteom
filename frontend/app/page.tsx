@@ -121,6 +121,9 @@ export default function Home() {
             >
               결과물 예시 보기
             </button>
+            <Link href="/demo" className="flow-aside-btn">
+              실제로 만들어진 결과 보기 →
+            </Link>
           </div>
 
           <div className="flow-wrap">

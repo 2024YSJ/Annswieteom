@@ -28,6 +28,8 @@ const KNOWN_DETAILS: Record<string, string> = {
   range_already_covered: "이미 설명된 기간이에요.",
   range_outside_gap_period: "공백 기간 밖의 구간은 채울 수 없어요.",
   registered_account_required: "이메일로 회원가입한 계정만 이용할 수 있어요.",
+  demo_not_configured: "지금은 데모가 준비돼 있지 않아요.",
+  demo_document_not_found: "지금은 데모가 준비돼 있지 않아요.",
 };
 
 const BY_STATUS: Record<number, string> = {

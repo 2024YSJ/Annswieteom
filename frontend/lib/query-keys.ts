@@ -5,6 +5,7 @@ export const queryKeys = {
   document: (sessionId: string) => ["session", sessionId, "document"] as const,
   trustScore: (sessionId: string) => ["session", sessionId, "trust-score"] as const,
   globalTrustScore: () => ["trust-score", "global"] as const,
+  demoDocument: () => ["demo", "document"] as const,
   jobSearch: (sessionId: string) => ["session", sessionId, "job-search"] as const,
   archive: () => ["me", "answers"] as const,
   preferences: () => ["me", "preferences"] as const,
