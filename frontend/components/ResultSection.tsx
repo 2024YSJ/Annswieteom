@@ -17,6 +17,7 @@ import {
 import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
 import { ToneSlider } from "@/components/ToneSlider";
+import { LocalGpuBadge } from "@/components/LocalGpuBadge";
 import { ChatBubble } from "@/components/ChatBubble";
 import { LoadingNotice } from "@/components/LoadingNotice";
 import { TrustScoreboard } from "@/components/TrustScoreboard";
@@ -275,9 +276,13 @@ export function ResultSection({
 
   return (
     <ChatBubble side="left" variant="card" label="완성된 커리어 내러티브">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
         <ToneSlider value={document.tone} onChange={handleToneChange} disabled={isReadOnly} />
         <span style={{ fontSize: 12, color: "var(--muted-text)" }}>버전 {document.version} · {document.status === "FINAL" ? "확정됨" : "초안"}</span>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <LocalGpuBadge stats={document.generation_stats} />
       </div>
 
       <TrustScoreboard sessionId={sessionId} accessToken={accessToken} enabled={document.status === "FINAL"} />

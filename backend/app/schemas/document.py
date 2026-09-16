@@ -96,9 +96,24 @@ class ParagraphRead(BaseModel):
     sentences: list[SentenceRead]
 
 
+class GpuGenerationStatsRead(BaseModel):
+    """이 응답이 로컬 GPU(DGX Spark)에서 처리됐다는 것과 그 속도 — F: 로컬 GPU
+    처리 배지. `generate`/`regenerate` 응답에만 실린다(그 요청에서 실제로 호출한
+    LLMProvider 인스턴스의 계측을 그대로 읽으므로) — 평범한 GET /document
+    재조회에는 없다. persist하지 않으므로 자연스럽게 "방금 생성한 응답에만"
+    나타난다."""
+
+    processed_locally: bool = True
+    model: str
+    call_count: int
+    total_output_tokens: int
+    tokens_per_second: float
+
+
 class DocumentRead(BaseModel):
     id: uuid.UUID
     tone: str
     version: int
     status: str
     paragraphs: list[ParagraphRead]
+    generation_stats: GpuGenerationStatsRead | None = None

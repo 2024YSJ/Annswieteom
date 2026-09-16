@@ -46,12 +46,24 @@ export interface ParagraphRead {
   sentences: SentenceRead[];
 }
 
+/** "이 응답은 클라우드로 전송되지 않고 로컬 GPU(DGX Spark)에서 처리됐다"는
+ * 것과 그 속도. generate/regenerate 응답에만 실린다 — GET /document
+ * 재조회에는 없다(persist하지 않으므로 "방금 생성한 응답에만" 나타난다). */
+export interface GpuGenerationStatsRead {
+  processed_locally: boolean;
+  model: string;
+  call_count: number;
+  total_output_tokens: number;
+  tokens_per_second: number;
+}
+
 export interface DocumentRead {
   id: string;
   tone: Tone;
   version: number;
   status: DocumentStatus;
   paragraphs: ParagraphRead[];
+  generation_stats: GpuGenerationStatsRead | null;
 }
 
 export const documentApi = {

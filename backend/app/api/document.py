@@ -7,6 +7,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_owned_session
 from app.db.session import get_db
 from app.models.confirmed_fact import ConfirmedFact
@@ -19,6 +20,7 @@ from app.schemas.document import (
     DocumentVersionRead,
     FinalizeRequest,
     GenerateRequest,
+    GpuGenerationStatsRead,
     MoveSentenceRequest,
     ParagraphRead,
     ParagraphUpdate,
@@ -40,6 +42,26 @@ router = APIRouter(prefix="/sessions", tags=["document"])
 
 def _violation_to_409(exc: orchestrator.StateMachineViolation) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+def _gpu_stats(llm: LLMProvider) -> GpuGenerationStatsRead | None:
+    """방금 이 llm 인스턴스로 실행된 generate_document 호출들의 계측을 읽는다.
+
+    document_generator.generate_full_document는 카테고리마다 llm.generate_document를
+    한 번씩 순차 호출한다 — 그래서 문서 하나 생성에 여러 건이 쌓일 수 있고, 합쳐서
+    하나의 tok/s로 보여준다. getattr로 접근하는 이유: FakeLLMProvider(테스트)에는
+    이 속성이 없고, 그때는 그냥 배지를 안 보여주면 된다(None)."""
+    calls = [s for s in getattr(llm, "generation_stats", []) if s.label == "generate_document"]
+    if not calls:
+        return None
+    total_tokens = sum(c.out_tokens for c in calls)
+    total_decode = sum(c.decode_seconds for c in calls)
+    return GpuGenerationStatsRead(
+        model=settings.local_llm_model_name,
+        call_count=len(calls),
+        total_output_tokens=total_tokens,
+        tokens_per_second=(total_tokens / total_decode if total_decode else 0.0),
+    )
 
 
 # 이 셋은 이제 app/services/document_assembly.py로 옮겨졌다 — api/demo.py, api/share.py가
@@ -101,7 +123,9 @@ async def generate_document(
     session.status = next_status
     await db.commit()
 
-    return await _document_read(document, db, fact_citations)
+    result = await _document_read(document, db, fact_citations)
+    result.generation_stats = _gpu_stats(llm)
+    return result
 
 
 @router.get("/{session_id}/document", response_model=DocumentRead)
@@ -140,7 +164,9 @@ async def regenerate_document(
         )
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
-    return await _document_read(document, db, fact_citations)
+    result = await _document_read(document, db, fact_citations)
+    result.generation_stats = _gpu_stats(llm)
+    return result
 
 
 @router.patch("/{session_id}/document/sentences/{sentence_id}", response_model=SentenceRead)
