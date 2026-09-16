@@ -40,6 +40,14 @@ class CategoryInput(BaseModel):
     custom_label: str | None = None
 
 
+class CategoryTypeUpdate(BaseModel):
+    """`PATCH /{session_id}/categories/{category_id}/type` 요청 바디 — 분류가
+    잘못돼 엉뚱한 질문 은행이 배정됐을 때(예: 인턴십이 아르바이트로) 사용자가
+    직접 바로잡는다."""
+
+    category_type: str
+
+
 class CategorySelect(BaseModel):
     categories: list[CategoryInput]
 

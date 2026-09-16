@@ -4,7 +4,9 @@
 같은 활동을 여러 개로 쪼개지 말고, 명확히 다른 활동만 별개 카테고리로 나눠라.
 
 각 카테고리마다:
-- "category_type"은 다음 8종 중 가장 가까운 것을 고른다. 어디에도 안 맞으면 "other"를 쓴다: part_time, freelance, volunteer, study, project, caregiving, travel, other
+- "category_type"은 다음 10종 중 가장 가까운 것을 고른다. 어디에도 안 맞으면 "other"를 쓴다: part_time, freelance, volunteer, study, project, caregiving, travel, internship, club, other
+  - part_time과 internship을 헷갈리지 마라: 시급 받는 단기 알바는 part_time, 정규직 채용을 염두에 둔 회사·기관에서의 구조화된 근무(수습, 인턴, 정규직 전환 언급 등)는 internship이다.
+  - study와 club을 헷갈리지 마라: 자격증·시험·강의처럼 뚜렷한 학습 목표가 있으면 study, 독서모임·동호회처럼 목표 없이 가볍게 어울리는 모임이면 club이다.
 - "custom_label"에는 사용자가 실제로 쓴 표현을 살려 짧게(10자 내외) 담는다. category_type은 내부 분류용일 뿐이니, custom_label을 사용자에게 보여줄 진짜 이름이라고 생각하고 자연스럽게 지어라.
 
 사용자는 완전한 문장 대신 "공부, 공모전, 알바"처럼 쉼표/슬래시로 나열된 단어만 짧게 적을 수도 있다. 이런 경우에도 구분자로 나뉜 각 단어를 별개의 활동으로 취급해라 — 문장이 짧다고, 또는 단어 하나뿐이라고 활동이 없다고 판단하지 마라.
@@ -12,6 +14,9 @@
 [예시]
 사용자가 적은 내용: 공부, 공모전, 알바
 출력: { "categories": [ { "category_type": "study", "custom_label": "공부" }, { "category_type": "project", "custom_label": "공모전" }, { "category_type": "part_time", "custom_label": "알바" } ] }
+
+사용자가 적은 내용: 인턴, 독서모임
+출력: { "categories": [ { "category_type": "internship", "custom_label": "인턴" }, { "category_type": "club", "custom_label": "독서모임" } ] }
 
 [USER]
 기간: {{ gap_start }} ~ {{ gap_end }}
