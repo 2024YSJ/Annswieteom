@@ -118,3 +118,31 @@ def test_next_category_unaffected_when_no_categories_have_children():
     cats = [_category(0), _category(1), _category(2)]
     assert orch.next_category(cats, cats[0]) is cats[1]
     assert orch.next_category(cats, cats[2]) is None
+
+
+# --- devlog 54: 근접 중복 후속 질문 감지 -------------------------------------
+
+
+def test_is_near_duplicate_question_detects_reworded_repeat():
+    asked = ["프로필에 저장하신 희망직무(백엔드 개발자) 정보를 참고해서 여쭤볼게요 — 어떤 개발 도구를 쓰셨나요?"]
+    candidate = "프로필에 저장하신 희망직무(백엔드 개발자) 정보를 참고해서 여쭤볼게요 — 어떤 개발 툴을 쓰셨나요?"
+
+    assert orch.is_near_duplicate_question(candidate, asked) is True
+
+
+def test_is_near_duplicate_question_allows_a_genuinely_different_question():
+    asked = ["그 일을 하면서 가장 기억에 남는 순간은 언제였나요?"]
+    candidate = "그 활동을 위해 어떤 준비 과정을 거쳤나요?"
+
+    assert orch.is_near_duplicate_question(candidate, asked) is False
+
+
+def test_is_near_duplicate_question_normalizes_whitespace():
+    asked = ["그   일을 하면서\n가장 기억에 남는 순간은 언제였나요?"]
+    candidate = "그 일을 하면서 가장 기억에 남는 순간은 언제였나요?"
+
+    assert orch.is_near_duplicate_question(candidate, asked) is True
+
+
+def test_is_near_duplicate_question_empty_asked_questions_is_never_duplicate():
+    assert orch.is_near_duplicate_question("아무 질문", []) is False

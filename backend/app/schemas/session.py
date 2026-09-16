@@ -32,6 +32,14 @@ class SessionRename(BaseModel):
     title: str = Field(max_length=200)
 
 
+class SessionBulkDeleteRequest(BaseModel):
+    session_ids: list[uuid.UUID]
+
+
+class SessionBulkDeleteResponse(BaseModel):
+    deleted_ids: list[uuid.UUID]
+
+
 class DraftTurnRead(BaseModel):
     """아직 확인 전인 답변 한 턴 — 대화 화면이 새로고침 뒤에도 "질문·내 답" 말풍선을
     다시 그릴 수 있게 질문과 답 원문만 내려준다(초안 사실은 확인 화면에서만)."""

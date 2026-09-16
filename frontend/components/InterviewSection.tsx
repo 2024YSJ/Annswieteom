@@ -194,6 +194,30 @@ export function InterviewSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composerEvent?.nonce]);
 
+  // 고정 질문·소분류 확인 질문은 건너뛸 수 없다 — 서버가 question_source==="followup"
+  // 일 때만 허용한다(devlog 54). 버튼 자체는 InterviewChatThread가 questionSource로
+  // 가려서, 여기서는 호출만 하고 별도 판단은 하지 않는다.
+  async function skipQuestion() {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const result = await sessionApi.interviewSkip(sessionId, accessToken);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.session(sessionId) });
+      if (result.mode === "review" && result.review) {
+        setQuestion(null);
+        setReview(toReviewDraft(result.review));
+        return;
+      }
+      if (result.question) {
+        setQuestion(result.question);
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   function retryAnswer() {
     if (!pendingAnswerText) return;
     setError(null);
@@ -324,6 +348,8 @@ export function InterviewSection({
         categories={categories}
         currentCategoryId={currentCategoryId}
         questionText={question?.question_text ?? null}
+        questionSource={question?.question_source ?? null}
+        onSkip={skipQuestion}
         pendingAnswerText={pendingAnswerText}
         candidates={candidates}
         onUpdateCandidate={updateCandidate}
