@@ -13,7 +13,11 @@ const MAX_CHARS = 1000;
 const PLACEHOLDER =
   "예) 반도체 장비 쪽 일을 찾고 있어요. 경기 남부에서 통근 가능한 곳이면 좋겠고, 신입도 받아주는 곳이면 좋겠어요.";
 
-/** 사용자가 직접 쓰는 "맞춤 정보".
+/** 사용자가 직접 쓰는 희망사항 — "맞춤 정보"(/archive) 페이지의 두 하위 카드 중
+ * 하나다. 다른 하나(ProfileAttributesEditor)는 "대화에서 알게 된 정보"라
+ * 부르므로, 이쪽은 "직접 적은 희망사항"으로 불러 출처를 대비시킨다 — 예전엔
+ * 이 카드도 페이지 제목과 똑같이 "맞춤 정보"라고만 써서, 페이지 안에 같은
+ * 이름을 가진 카드가 두 개 있는 것처럼 읽혔다(2026-09-17 어휘 정리).
  *
  * 맞춤 공고 정렬은 인터뷰 답변 원문에서만 만들어졌다. 그래서 공백기 정리를
  * 아직 안 한 사용자는 **정렬을 조종할 수단이 전혀 없었다** — 결과가 마음에 안
@@ -45,7 +49,7 @@ export function PreferenceEditor({ accessToken }: { accessToken: string }) {
     },
   });
 
-  if (isLoading) return <LoadingNotice label="맞춤 정보를 불러오는 중이에요" />;
+  if (isLoading) return <LoadingNotice label="희망사항을 불러오는 중이에요" />;
   if (error) return <p className="msg-error">{errorMessage(error)}</p>;
 
   // 초안을 effect로 동기화하지 않고 파생시킨다 — draft가 null이면 아직 아무것도
@@ -57,7 +61,7 @@ export function PreferenceEditor({ accessToken }: { accessToken: string }) {
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: 16 }}>맞춤 정보</h2>
+        <h2 style={{ margin: 0, fontSize: 16 }}>직접 적은 희망사항</h2>
         <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted-text)" }}>
           어떤 일을 찾고 있는지 적어두시면 맞춤 공고를 그 내용에 맞춰 골라드려요. 커리어 채우기를 아직 안
           하셨어도 괜찮아요.
@@ -72,7 +76,7 @@ export function PreferenceEditor({ accessToken }: { accessToken: string }) {
         }}
         placeholder={PLACEHOLDER}
         rows={4}
-        aria-label="맞춤 정보"
+        aria-label="직접 적은 희망사항"
         style={{ resize: "vertical", width: "100%" }}
       />
 

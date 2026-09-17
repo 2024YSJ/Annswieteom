@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 
+from sqlalchemy import func, select
+
 from app.models.feed_item import FeedItem
+from app.models.user_attribute import UserAttribute
 from tests.api.test_profile import _answer_one_turn, _register_and_login, _session_at_interviewing
 
 
@@ -97,6 +100,68 @@ def test_other_users_attributes_are_not_reachable(session_client):
 
     assert session_client.delete(f"/api/v1/me/attributes/{attr['id']}", headers=bob).status_code == 404
     assert session_client.patch(f"/api/v1/me/attributes/{attr['id']}", headers=bob, json={"value": "워드"}).status_code == 404
+
+
+# ── 프로필 초기화 ──────────────────────────────────────────────────────────
+
+
+def test_reset_attributes_clears_everything_and_returns_the_count(session_client):
+    headers = _register_and_login(session_client)
+    session_client.post("/api/v1/me/attributes", headers=headers, json={"key": "residence_region", "value": "수원"})
+    session_client.post("/api/v1/me/attributes", headers=headers, json={"key": "birth_year", "value": "1999"})
+
+    resp = session_client.post("/api/v1/me/attributes/reset", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["reset_count"] == 2
+
+    assert session_client.get("/api/v1/me/attributes", headers=headers).json()["attributes"] == []
+
+
+def test_reset_attributes_also_clears_sensitive_attributes_but_keeps_consent(session_client):
+    headers = _register_and_login(session_client)
+    session_client.put("/api/v1/me/consents/sensitive-profiling", headers=headers, json={"granted": True})
+    session_client.post("/api/v1/me/attributes", headers=headers, json={"key": "special_groups", "value": "한부모가정"})
+
+    resp = session_client.post("/api/v1/me/attributes/reset", headers=headers)
+    assert resp.json()["reset_count"] == 1
+
+    listing = session_client.get("/api/v1/me/attributes", headers=headers).json()
+    assert listing["attributes"] == []
+    # 초기화는 데이터만 지운다 — 동의 자체는 유지돼서, 다시 말하면 여전히 저장할 수 있다.
+    assert listing["consent"]["granted"] is True
+
+
+def test_reset_attributes_removes_rejected_rows_too_unlike_individual_delete(session_client):
+    """개별 삭제는 `rejected`로 남겨 같은 값의 재추정을 막지만, 초기화는 그
+    기억까지 포함해 완전히 지운다 — DB 행 자체가 안 남아야 한다."""
+    headers = _register_and_login(session_client)
+    attr = session_client.post(
+        "/api/v1/me/attributes", headers=headers, json={"key": "residence_region", "value": "수원"}
+    ).json()
+    session_client.delete(f"/api/v1/me/attributes/{attr['id']}", headers=headers)
+
+    async def _count_rows():
+        async with session_client.session_local() as db:
+            return await db.scalar(select(func.count()).select_from(UserAttribute))
+
+    assert asyncio.run(_count_rows()) == 1  # rejected 상태로 여전히 DB에 남아 있음
+
+    resp = session_client.post("/api/v1/me/attributes/reset", headers=headers)
+    assert resp.json()["reset_count"] == 1
+    assert asyncio.run(_count_rows()) == 0
+
+
+def test_reset_attributes_only_clears_the_current_users_rows(session_client):
+    alice = _register_and_login(session_client, email="alice-reset@example.com")
+    bob = _register_and_login(session_client, email="bob-reset@example.com")
+    session_client.post("/api/v1/me/attributes", headers=alice, json={"key": "skills", "value": "엑셀"})
+    session_client.post("/api/v1/me/attributes", headers=bob, json={"key": "skills", "value": "포토샵"})
+
+    resp = session_client.post("/api/v1/me/attributes/reset", headers=alice)
+    assert resp.json()["reset_count"] == 1
+
+    assert session_client.get("/api/v1/me/attributes", headers=alice).json()["attributes"] == []
+    assert [a["label"] for a in session_client.get("/api/v1/me/attributes", headers=bob).json()["attributes"]] == ["포토샵"]
 
 
 # ── 맞춤 정책(티어 매칭) ─────────────────────────────────────────────────

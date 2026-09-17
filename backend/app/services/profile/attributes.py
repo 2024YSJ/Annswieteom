@@ -375,6 +375,20 @@ async def set_sensitive_consent(db: AsyncSession, user_id: uuid.UUID, granted: b
     return row
 
 
+async def reset_all_attributes(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """"프로필 초기화" — 지금까지 쌓인 정보를 전부 지운다(민감정보 포함).
+
+    개별 삭제(`delete_attribute`)는 같은 값이 다시 추정돼도 되살아나지 않게
+    `rejected`로 남기지만, 초기화는 완전히 새로 시작하는 것이라 그 기억까지
+    포함해 깨끗이 지운다 — 이후 대화에서 같은 내용을 다시 말하면 다시
+    저장될 수 있어야 "초기화"라는 이름에 맞다. 민감정보 동의 자체는 건드리지
+    않는다 — 동의는 유지한 채 데이터만 비운 상태도 정상이다(동의 직후 아직
+    아무것도 안 말한 시점과 같은 모양). 커밋은 호출자가 한다.
+    """
+    result = await db.execute(delete(UserAttribute).where(UserAttribute.user_id == user_id))
+    return result.rowcount or 0
+
+
 async def note_sensitive_mention(db: AsyncSession, user_id: uuid.UUID) -> None:
     """동의 없이 민감정보가 언급됐다는 표시만 남긴다(값은 저장하지 않는다)."""
     row = await get_sensitive_consent(db, user_id)

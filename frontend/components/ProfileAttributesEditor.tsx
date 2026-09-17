@@ -166,6 +166,10 @@ export function ProfileAttributesEditor({ accessToken, isGuest }: { accessToken:
     mutationFn: (id: string) => profileApi.deleteAttribute(id, accessToken),
     onSuccess: refresh,
   });
+  const reset = useMutation({
+    mutationFn: () => profileApi.resetAttributes(accessToken),
+    onSuccess: refresh,
+  });
 
   if (isLoading) return <LoadingNotice label="알게 된 정보를 불러오는 중이에요" />;
   if (error || !data) return <p className="msg-error">{errorMessage(error)}</p>;
@@ -176,17 +180,34 @@ export function ProfileAttributesEditor({ accessToken, isGuest }: { accessToken:
     .filter((g) => g.values.length > 0);
   const addable = data.keys.filter((k) => !k.sensitive || data.consent.granted);
   const selectedKey = keyByName.get(newKey);
-  const busy = add.isPending || edit.isPending || confirm.isPending || remove.isPending;
-  const mutationError = add.error ?? edit.error ?? confirm.error ?? remove.error;
+  const busy = add.isPending || edit.isPending || confirm.isPending || remove.isPending || reset.isPending;
+  const mutationError = add.error ?? edit.error ?? confirm.error ?? remove.error ?? reset.error;
 
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div>
-        <h2 style={{ margin: 0, fontSize: 16 }}>나에 대해 알게 된 정보</h2>
-        <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted-text)" }}>
-          대화 중에 말씀하신 나이·사는 곳·학력 같은 정보를 맞춤 정책과 공고를 고르는 데만 쓰려고 저장해요.
-          틀린 건 고치거나 지울 수 있고, 지운 정보는 다시 추정하지 않아요. 커리어 문서에는 쓰이지 않아요.
-        </p>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 16 }}>대화에서 알게 된 정보</h2>
+          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted-text)" }}>
+            대화 중에 말씀하신 나이·사는 곳·학력 같은 정보를 맞춤 정책과 공고를 고르는 데만 쓰려고 저장해요.
+            틀린 건 고치거나 지울 수 있고, 지운 정보는 다시 추정하지 않아요. 커리어 문서에는 쓰이지 않아요.
+          </p>
+        </div>
+        {groups.length > 0 && (
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={busy}
+            style={{ fontSize: 12, color: "var(--danger)", flex: "none", whiteSpace: "nowrap" }}
+            onClick={() => {
+              if (window.confirm("지금까지 대화로 알게 된 정보를 모두 지울까요? 되돌릴 수 없습니다.")) {
+                reset.mutate();
+              }
+            }}
+          >
+            프로필 초기화
+          </button>
+        )}
       </div>
 
       {groups.length === 0 ? (

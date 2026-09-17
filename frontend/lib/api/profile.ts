@@ -70,6 +70,10 @@ export interface ProfileAttributes {
   consent: SensitiveConsent;
 }
 
+export interface AttributesReset {
+  reset_count: number;
+}
+
 export const profileApi = {
   /** 대화로 알게 됐거나 직접 입력한 속성 + 편집용 키 목록·선택지·동의 상태. 게스트도 허용. */
   attributes: (accessToken: string) =>
@@ -98,6 +102,15 @@ export const profileApi = {
   deleteAttribute: (attributeId: string, accessToken: string) =>
     request<void>(`/api/v1/me/attributes/${attributeId}`, {
       method: "DELETE",
+      headers: authHeaders(accessToken),
+    }),
+
+  /** 프로필 초기화 — 지금까지 쌓인 정보를 전부 지운다(민감정보 포함, 동의는
+   * 유지). 개별 삭제와 달리 `rejected`로도 남기지 않아, 이후 대화에서 같은
+   * 내용을 다시 말하면 다시 저장될 수 있다. */
+  resetAttributes: (accessToken: string) =>
+    request<AttributesReset>("/api/v1/me/attributes/reset", {
+      method: "POST",
       headers: authHeaders(accessToken),
     }),
 
