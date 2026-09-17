@@ -9,6 +9,7 @@ import { errorMessage } from "@/lib/error-messages";
 import { sessionStatusLabel } from "@/lib/session-routes";
 import { useSessionsList } from "@/lib/use-sessions-list";
 import { ExampleDocumentModal } from "@/components/ExampleDocumentModal";
+import { ExampleInterviewModal } from "@/components/ExampleInterviewModal";
 import { FeedSection } from "@/components/FeedSection";
 import { LoadingNotice } from "@/components/LoadingNotice";
 
@@ -29,12 +30,19 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [pendingKind, setPendingKind] = useState<SessionKind | null>(null);
   const [isExampleOpen, setIsExampleOpen] = useState(false);
+  const [isQaExampleOpen, setIsQaExampleOpen] = useState(false);
   // 모달을 닫을 때 포커스를 열었던 버튼으로 되돌리기 위해 붙잡아둔다.
   const exampleTriggerRef = useRef<HTMLButtonElement>(null);
+  const qaExampleTriggerRef = useRef<HTMLButtonElement>(null);
 
   function closeExample() {
     setIsExampleOpen(false);
     exampleTriggerRef.current?.focus();
+  }
+
+  function closeQaExample() {
+    setIsQaExampleOpen(false);
+    qaExampleTriggerRef.current?.focus();
   }
 
   // 첫 화면에서 곧바로 서비스로 들어가는 경로. 로그인 여부와 무관하게 카드 한
@@ -105,7 +113,10 @@ export default function Home() {
                 ✍️
               </span>
               <span className="flow-title">커리어 채우기</span>
-              <span className="flow-desc">흐릿한 기억을 대화로 짚어가며, 이력서에 그대로 쓸 수 있는 구체적인 STAR 문장으로 정리해요.</span>
+              <span className="flow-desc">
+                일했던 기간도, 쉬었던 기간도 모두 괜찮아요. 딱히 떠오르는 게 없어도 AI가 질문을 깊이 이어가며, 이력서에 그대로 쓸 수 있는 구체적인 STAR
+                문장으로 정리해요.
+              </span>
               <span className="flow-go">
                 {pendingKind === "gap_fill" ? "시작하는 중..." : hasSessions ? "새로 시작하기" : "시작하기"}{" "}
                 <span aria-hidden>→</span>
@@ -121,6 +132,14 @@ export default function Home() {
             >
               결과물 예시 보기
             </button>
+            <button
+              ref={qaExampleTriggerRef}
+              type="button"
+              className="flow-aside-btn"
+              onClick={() => setIsQaExampleOpen(true)}
+            >
+              문답 예시 보기
+            </button>
             <Link href="/demo" className="flow-aside-btn">
               실제로 만들어진 결과 보기 →
             </Link>
@@ -132,7 +151,9 @@ export default function Home() {
                 🔎
               </span>
               <span className="flow-title">취업 정보 검색</span>
-              <span className="flow-desc">채용행사, 공채 소식, 직업훈련과정, 강소기업까지 대화로 물어보고 한 번에 찾아요.</span>
+              <span className="flow-desc">
+                커리어 채우기에서 나눈 이야기를 바탕으로, 채용행사·공채 소식·직업훈련과정·강소기업까지 대화로 물어보고 한 번에 찾아요.
+              </span>
               <span className="flow-go">
                 {pendingKind === "job_search" ? "여는 중..." : "찾아보기"} <span aria-hidden>→</span>
               </span>
@@ -265,6 +286,7 @@ export default function Home() {
       )}
 
       {isExampleOpen && <ExampleDocumentModal onClose={closeExample} />}
+      {isQaExampleOpen && <ExampleInterviewModal onClose={closeQaExample} />}
     </main>
   );
 }
