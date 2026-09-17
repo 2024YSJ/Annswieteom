@@ -7,6 +7,7 @@ import {
   ApiError,
   documentApi,
   sessionApi,
+  shareApi,
   type DocumentRead,
   type ParagraphRead,
   type SentenceRead,
@@ -16,10 +17,12 @@ import {
 } from "@/lib/api-client";
 import { errorMessage } from "@/lib/error-messages";
 import { queryKeys } from "@/lib/query-keys";
-import { EvidenceTag } from "@/components/EvidenceTag";
 import { ToneSlider } from "@/components/ToneSlider";
+import { LocalGpuBadge } from "@/components/LocalGpuBadge";
 import { ChatBubble } from "@/components/ChatBubble";
 import { LoadingNotice } from "@/components/LoadingNotice";
+import { TrustScoreboard } from "@/components/TrustScoreboard";
+import { ParagraphSection } from "@/components/DocumentView";
 
 /** finalize가 409로 막았을 때 서버가 함께 내려준 문장 목록. 그 형태가 아니면
  * null을 돌려 평범한 에러 메시지 경로로 보낸다. */
@@ -27,204 +30,6 @@ function unverifiedSentencesFrom(err: unknown): UnverifiedSentence[] | null {
   if (!(err instanceof ApiError) || err.detail !== "unverified_sentences") return null;
   const payload = err.payload as { sentences?: UnverifiedSentence[] } | null;
   return payload?.sentences ?? null;
-}
-
-/** 문장 하나가 무엇에 기대고 있는지 한 줄로. "검증 통과"와 "내가 직접 썼음"을
- * 구분하는 게 요점이다 — 서버는 사용자가 고쳐 쓴 문장도
- * consistency_check_passed=true로 두므로(본인이 쓴 말은 정의상 확인된 사실),
- * 그 true를 임베딩 검증 결과처럼 보여주면 거짓말이 된다. */
-function sentenceBadge(sentence: SentenceRead): string {
-  if (sentence.edited_by_user) return "✎ 직접 작성";
-  if (sentence.evidence_grade === "record_backed") return "🔗 기록물로 뒷받침됨";
-  if (sentence.evidence_grade === "unsupported") return "· 인용된 근거 없음";
-  return "· 본인 진술";
-}
-
-function SentenceRow({
-  sentence,
-  onSave,
-  onRegenerate,
-  onMove,
-  canMovePrev,
-  canMoveNext,
-  disabled,
-}: {
-  sentence: SentenceRead;
-  onSave: (text: string) => Promise<void>;
-  onRegenerate: () => Promise<void>;
-  onMove: (direction: "prev" | "next") => Promise<void>;
-  canMovePrev: boolean;
-  canMoveNext: boolean;
-  disabled: boolean;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [text, setText] = useState(sentence.text);
-
-  return (
-    <div
-      style={{
-        padding: 12,
-        borderRadius: "var(--radius-md)",
-        marginBottom: 8,
-        // 일관성 검사에 걸린 문장은 앰버로 표시한다 — 에러가 아니라 "한 번 더
-        // 봐야 하는 것"이라, 실패 메시지의 빨강과 색을 다르게 쓴다.
-        background: sentence.consistency_check_passed ? "var(--surface-strong)" : "var(--caution-surface)",
-        color: sentence.consistency_check_passed ? "var(--surface-strong-text)" : "var(--caution-text)",
-        border: sentence.consistency_check_passed ? "1px solid var(--border)" : "1px solid var(--caution-border)",
-      }}
-    >
-      {!sentence.consistency_check_passed && (
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--caution-text)", marginBottom: 4 }}>⚠ 확인이 더 필요한 문장</div>
-      )}
-
-      <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 4 }}>{sentenceBadge(sentence)}</div>
-
-      {isEditing ? (
-        <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} style={{ width: "100%" }} />
-      ) : (
-        <p style={{ margin: 0 }}>{sentence.text}</p>
-      )}
-
-      <EvidenceTag evidence={sentence.evidence} />
-
-      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-        {isEditing ? (
-          <>
-            <button
-              type="button"
-              disabled={disabled || text.trim().length === 0}
-              onClick={async () => {
-                await onSave(text);
-                setIsEditing(false);
-              }}
-            >
-              저장
-            </button>
-            <button type="button" disabled={disabled} onClick={() => { setText(sentence.text); setIsEditing(false); }}>
-              취소
-            </button>
-          </>
-        ) : (
-          <>
-            <button type="button" disabled={disabled} onClick={() => setIsEditing(true)}>
-              직접 수정
-            </button>
-            <button type="button" disabled={disabled} onClick={onRegenerate}>
-              다시 생성
-            </button>
-            <button type="button" disabled={disabled || !canMovePrev} onClick={() => onMove("prev")}>
-              ◀ 이전 문단으로
-            </button>
-            <button type="button" disabled={disabled || !canMoveNext} onClick={() => onMove("next")}>
-              다음 문단으로 ▶
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ParagraphSection({
-  paragraph,
-  isFirst,
-  isLast,
-  onSaveSentence,
-  onRegenerateSentence,
-  onMoveSentence,
-  onRenameTopic,
-  onToggleConfirmed,
-  onMergeWithNext,
-  onDelete,
-  disabled,
-}: {
-  paragraph: ParagraphRead;
-  isFirst: boolean;
-  isLast: boolean;
-  onSaveSentence: (sentenceId: string, text: string) => Promise<void>;
-  onRegenerateSentence: (sentenceId: string) => Promise<void>;
-  onMoveSentence: (sentenceId: string, direction: "prev" | "next") => Promise<void>;
-  onRenameTopic: (topic: string) => Promise<void>;
-  onToggleConfirmed: () => Promise<void>;
-  onMergeWithNext: () => Promise<void>;
-  onDelete: () => Promise<void>;
-  disabled: boolean;
-}) {
-  const [isEditingTopic, setIsEditingTopic] = useState(false);
-  const [topicDraft, setTopicDraft] = useState(paragraph.topic);
-
-  return (
-    <div style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-        {isEditingTopic ? (
-          <>
-            <input
-              type="text"
-              value={topicDraft}
-              onChange={(e) => setTopicDraft(e.target.value)}
-              style={{ fontWeight: 700, flex: 1, minWidth: 120 }}
-            />
-            <button
-              type="button"
-              disabled={disabled || topicDraft.trim().length === 0}
-              onClick={async () => {
-                await onRenameTopic(topicDraft);
-                setIsEditingTopic(false);
-              }}
-            >
-              저장
-            </button>
-            <button type="button" disabled={disabled} onClick={() => { setTopicDraft(paragraph.topic); setIsEditingTopic(false); }}>
-              취소
-            </button>
-          </>
-        ) : (
-          <>
-            <strong style={{ flex: 1 }}>{paragraph.topic || "(제목 없음)"}</strong>
-            <button type="button" disabled={disabled} onClick={() => setIsEditingTopic(true)} style={{ fontSize: 12 }}>
-              제목 수정
-            </button>
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={onToggleConfirmed}
-              style={{ fontSize: 12, color: paragraph.user_confirmed ? "var(--accent)" : undefined }}
-            >
-              {paragraph.user_confirmed ? "✓ 확인됨" : "이 묶음 확인"}
-            </button>
-            {!isLast && (
-              <button type="button" disabled={disabled} onClick={onMergeWithNext} style={{ fontSize: 12 }}>
-                다음 문단과 합치기
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => {
-                if (window.confirm("이 문단을 삭제할까요? 안의 문장이 전부 사라지고 되돌릴 수 없습니다.")) onDelete();
-              }}
-              style={{ fontSize: 12, color: "var(--danger)" }}
-            >
-              문단 삭제
-            </button>
-          </>
-        )}
-      </div>
-
-      {paragraph.sentences.map((sentence) => (
-        <SentenceRow
-          key={sentence.id}
-          sentence={sentence}
-          disabled={disabled}
-          onSave={(text) => onSaveSentence(sentence.id, text)}
-          onRegenerate={() => onRegenerateSentence(sentence.id)}
-          onMove={(direction) => onMoveSentence(sentence.id, direction)}
-          canMovePrev={!isFirst}
-          canMoveNext={!isLast}
-        />
-      ))}
-    </div>
-  );
 }
 
 export function ResultSection({
@@ -244,6 +49,7 @@ export function ResultSection({
   const [unverified, setUnverified] = useState<UnverifiedSentence[] | null>(null);
   const [isStartingJobSearch, setIsStartingJobSearch] = useState(false);
   const [exportedText, setExportedText] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const generateFiredRef = useRef(false);
 
   const {
@@ -430,6 +236,20 @@ export function ResultSection({
     if (exportedText) await navigator.clipboard.writeText(exportedText);
   }
 
+  async function handleCreateShare() {
+    setError(null);
+    try {
+      const { share_slug } = await shareApi.create(sessionId, accessToken);
+      setShareUrl(`${window.location.origin}/share/${share_slug}`);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleCopyShareUrl() {
+    if (shareUrl) await navigator.clipboard.writeText(shareUrl);
+  }
+
   async function handleStartJobSearch() {
     setError(null);
     setIsStartingJobSearch(true);
@@ -472,10 +292,16 @@ export function ResultSection({
 
   return (
     <ChatBubble side="left" variant="card" label="완성된 커리어 내러티브">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
         <ToneSlider value={document.tone} onChange={handleToneChange} disabled={isReadOnly} />
         <span style={{ fontSize: 12, color: "var(--muted-text)" }}>버전 {document.version} · {document.status === "FINAL" ? "확정됨" : "초안"}</span>
       </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <LocalGpuBadge stats={document.generation_stats} />
+      </div>
+
+      <TrustScoreboard sessionId={sessionId} accessToken={accessToken} enabled={document.status === "FINAL"} />
 
       {!isReadOnly && paragraphs.length > 1 && (
         <p style={{ fontSize: 13, color: "var(--muted-text)", marginTop: 0 }}>
@@ -533,9 +359,14 @@ export function ResultSection({
             최종 확정
           </button>
         ) : (
-          <button type="button" onClick={handleExport}>
-            텍스트로 내보내기
-          </button>
+          <>
+            <button type="button" onClick={handleExport}>
+              텍스트로 내보내기
+            </button>
+            <button type="button" onClick={handleCreateShare}>
+              공유 카드 만들기
+            </button>
+          </>
         )}
         {paragraphs.length > 0 && (
           <button type="button" disabled={isStartingJobSearch} onClick={handleStartJobSearch}>
@@ -549,6 +380,18 @@ export function ResultSection({
           <textarea readOnly rows={10} value={exportedText} style={{ width: "100%" }} />
           <button type="button" onClick={handleCopy} style={{ marginTop: 8 }}>
             클립보드에 복사
+          </button>
+        </div>
+      )}
+
+      {shareUrl && (
+        <div style={{ marginTop: 16 }}>
+          <p style={{ fontSize: 13, color: "var(--muted-text)" }}>
+            대표 문장 1~2개와 근거 요약만 담긴 공개 링크예요 — 원문이나 개인정보는 포함되지 않아요.
+          </p>
+          <input type="text" readOnly value={shareUrl} style={{ width: "100%" }} onFocus={(e) => e.target.select()} />
+          <button type="button" onClick={handleCopyShareUrl} style={{ marginTop: 8 }}>
+            링크 복사
           </button>
         </div>
       )}

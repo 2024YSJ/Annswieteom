@@ -15,6 +15,18 @@ TEMPERATURE_CREATIVE = 0.7
 
 
 @dataclass
+class LLMCallStats:
+    """LLM 호출 한 건의 계측 — local_ollama.py의 _log_generation_stats가 로그
+    한 줄로만 남기던 값을 API 응답(로컬 GPU 처리 배지)에도 실어 보내기 위해
+    구조화했다. Protocol에는 없다 — 메서드 반환 타입을 바꾸지 않고
+    LocalOllamaProvider.generation_stats(인스턴스 속성)로만 노출한다."""
+    label: str
+    out_tokens: int
+    decode_seconds: float
+    tokens_per_second: float
+
+
+@dataclass
 class RecordExcerpt:
     chunk_id: str
     text: str
