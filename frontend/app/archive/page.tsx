@@ -70,6 +70,7 @@ export default function ArchivePage() {
   const { accessToken, user, isLoading: authLoading } = useAuth();
   const queryClient = useQueryClient();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const enabled = !authLoading && !!accessToken && user?.is_guest === false;
@@ -100,6 +101,21 @@ export default function ArchivePage() {
       setError(errorMessage(err));
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleResetAnswers() {
+    setError(null);
+    setIsResetting(true);
+    try {
+      await profileApi.resetAnswers(accessToken!);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.archive() });
+      // 문답들에서 추정한 정보도 서버가 같이 정리한다(attributes.forget_all_answers).
+      await queryClient.invalidateQueries({ queryKey: queryKeys.attributes() });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsResetting(false);
     }
   }
 
@@ -159,7 +175,24 @@ export default function ArchivePage() {
       {/* 맞춤 공고 정렬의 조종간. 문답이 하나도 없어도 이것만으로 개인화가 켜진다. */}
       <PreferenceEditor accessToken={accessToken!} />
 
-      <h2 style={{ margin: 0, fontSize: 16 }}>문답 기록</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16 }}>문답 기록</h2>
+        {answers && answers.length > 0 && (
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={isResetting || deletingId !== null}
+            style={{ fontSize: 12, color: "var(--danger)" }}
+            onClick={() => {
+              if (window.confirm("지금까지 쌓인 문답 기록을 모두 지울까요? 되돌릴 수 없습니다.")) {
+                void handleResetAnswers();
+              }
+            }}
+          >
+            문답 기록 초기화
+          </button>
+        )}
+      </div>
 
       {error && <p className="msg-error" style={{ marginTop: 12 }}>{error}</p>}
       {loadError && <p className="msg-error" style={{ marginTop: 12 }}>{errorMessage(loadError)}</p>}

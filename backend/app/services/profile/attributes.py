@@ -424,6 +424,29 @@ async def forget_answer(db: AsyncSession, user_id: uuid.UUID, answer_id: uuid.UU
         row.source_answer_id = None
 
 
+async def forget_all_answers(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """`forget_answer`의 전체 버전 — "문답 기록 초기화"가 답변을 전부 지우기
+    직전에 불러, 그 답변들에서 추정한 값과 복제된 인용을 같이 정리한다.
+    커밋은 호출자가 한다."""
+    await db.execute(
+        delete(UserAttribute).where(
+            UserAttribute.user_id == user_id,
+            UserAttribute.source_answer_id.is_not(None),
+            UserAttribute.status == "inferred",
+        )
+    )
+    rows = (
+        await db.execute(
+            select(UserAttribute).where(
+                UserAttribute.user_id == user_id, UserAttribute.source_answer_id.is_not(None)
+            )
+        )
+    ).scalars().all()
+    for row in rows:
+        row.evidence_text = None
+        row.source_answer_id = None
+
+
 async def add_user_value(db: AsyncSession, user_id: uuid.UUID, key: str, label: str) -> UserAttribute:
     """프로필 화면에서 직접 입력. 값이 쓸 수 없으면 ValueError. 커밋은 호출자가."""
     normalized = normalize(key, label)

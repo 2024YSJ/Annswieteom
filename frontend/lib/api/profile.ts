@@ -25,6 +25,10 @@ export interface ArchiveSummary {
   category_types: string[];
 }
 
+export interface AnswersReset {
+  reset_count: number;
+}
+
 export interface Preference {
   /** 사용자가 직접 쓴 맞춤 정보. 아직 안 썼으면 빈 문자열(404가 아니다). */
   wish_text: string;
@@ -156,6 +160,14 @@ export const profileApi = {
   deleteAnswer: (answerId: string, accessToken: string) =>
     request<void>(`/api/v1/me/answers/${answerId}`, {
       method: "DELETE",
+      headers: authHeaders(accessToken),
+    }),
+
+  /** 문답 기록 초기화 — 계정에 쌓인 문답을 전부 지운다. 그 답변들에서 추정한
+   * 프로필 속성과 복제된 원문 인용도 같이 정리된다(개별 삭제와 같은 이유). */
+  resetAnswers: (accessToken: string) =>
+    request<AnswersReset>("/api/v1/me/answers/reset", {
+      method: "POST",
       headers: authHeaders(accessToken),
     }),
 };
