@@ -11,6 +11,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Full implementation spec: [docs/specs/annswieteom_detailed_spec.md](docs/specs/annswieteom_detailed_spec.md)  
 Milestone roadmap: [docs/checklists/milestones_overview.md](docs/checklists/milestones_overview.md)
 
+Beyond the original spec, the app also ships a second feature wave not covered by the milestone
+checklists above: job search / main-page feed / profile-attribute matching against 고용24 and
+온통청년 (see [docs/specs/job_search_and_gap_link.md](docs/specs/job_search_and_gap_link.md),
+[docs/specs/main_page_feed.md](docs/specs/main_page_feed.md),
+[docs/specs/profiling_and_matching.md](docs/specs/profiling_and_matching.md)), plus a set of
+demo/showcase features (honesty trust scoreboard, one-click demo mode, local-GPU processing
+badge, shareable OG-image cards — see `docs/devlog/PersonB/58`–`62`). This work is tracked only
+via `docs/devlog/`, not via `docs/checklists/`.
+
 ## Architecture
 
 Hybrid cloud + local GPU setup:
@@ -19,9 +28,9 @@ Hybrid cloud + local GPU setup:
 - **Backend**: FastAPI (Python 3.11+) → deployed on Render (`backend/`)
 - **Database**: PostgreSQL + pgvector on Supabase
 - **Local LLM**: Ollama on an NVIDIA DGX Spark (GB10 Grace Blackwell, ARM64/aarch64, DGX OS), exposed via Cloudflare Tunnel behind a Cloudflare Access service token (only inference path)
-- **Object Storage**: Supabase Storage (images, documents)
+- **Object Storage**: Supabase Storage (uploaded record documents only — `.docx`/`.hwp`; image uploads were removed with OCR, see below)
 
-Inference and embeddings both run on the local Ollama server only. **There is no fallback provider** — Gemini was removed on 2026-09-09. If the local server is unreachable, every AI path returns `503 llm_unavailable` and the UI shows "AI 서버가 수리 중이예요." Image OCR went away with it (it was Gemini Vision and had no local substitute), so record uploads now accept documents only.
+Inference and embeddings both run on the local Ollama server only. **There is no fallback provider** — Gemini was removed on 2026-09-09. If the local server is unreachable, every AI path returns `503 llm_unavailable` and the UI shows "AI 서버가 수리 중이예요." Image OCR went away with it (it was Gemini Vision and had no local substitute), so record uploads now accept documents only (`records.record_type` may still hold legacy `image` rows from before the removal — that value is not a live upload path).
 
 ## Commands
 
@@ -88,13 +97,16 @@ journalctl -u cloudflared -n 50 --no-pager     # "active" alone is not evidence 
 | `sessions` | Interview state machine (8 states) |
 | `activity_categories` | Gap period activity types per session |
 | **`confirmed_facts`** | **Core honesty guardrail** — only user-confirmed facts |
-| `records` | User-submitted blog URLs, images, pasted text |
+| `records` | User-submitted blog URLs, uploaded documents (`.docx`/`.hwp`), pasted text — `record_type='image'` is legacy-only, not a live upload path |
 | `record_chunks` | Parsed text segments with `VECTOR(1024)` embeddings |
-| `generated_documents` | Final output with tone/version metadata |
+| `generated_documents` | Final output with tone/version metadata; `share_slug` (nullable, unique) opts a `FINAL` document into a public `/share/{slug}` preview |
 | `generated_sentences` | Individual sentences with `evidence_fact_ids[]` |
+| `generated_paragraphs` | Paragraph-level grouping/ordering of sentences within a document |
 | `refresh_tokens` | SHA-256 hashed refresh tokens |
 | `user_attributes` | Person-level profile (age, region, education, desired job…) extracted from conversation; `inferred`/`confirmed`/`user_edited`/`rejected`. Feeds recommendations and interview follow-ups **only** — never document generation |
 | `user_consents` | `sensitive_profiling` consent; sensitive attributes (income, special groups, marital) are stored only while granted |
+| `gap_periods` | Career-gap period metadata per session, feeds job-search/coverage matching |
+| `feed_item*`, `user_occupation_embedding`, `user_profile_embedding` | Main-page feed (jobs/policies/training) and its embedding-based matching against user profile/occupation — see [docs/specs/main_page_feed.md](docs/specs/main_page_feed.md), [docs/specs/profiling_and_matching.md](docs/specs/profiling_and_matching.md) |
 
 `confirmed_facts.source_type` must be one of: `user_confirmed`, `user_edited`, `record_cited`. Never insert with a synthetic or AI-generated source type.
 
@@ -106,15 +118,25 @@ All routes under `/api/v1`:
 - `GET /health/llm` — operator probe: is the inference server reachable from *this*
   backend? Always 200; status is in the body. Distinct from `GET /health` (outside
   `/api/v1`), which is Render's liveness probe and must stay dependency-free.
-- `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me`
-- `POST /sessions`, `POST /sessions/{id}/period`, `POST /sessions/{id}/categories`
+- `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me`, plus `POST /auth/guest` (anonymous guest accounts) and `POST /auth/logout`
+- `POST /sessions`, `POST /sessions/{id}/period` (+`/extract`), `POST /sessions/{id}/categories` (+`/extract`)
 - `POST /sessions/{id}/interview/ask` → current question (or the pending category review)
 - `POST /sessions/{id}/interview/answer` → stores the answer's extracted facts as category **drafts** (`activity_categories.draft_turns`), returns the next question or the category review
+- `POST /sessions/{id}/interview/skip` → skip the current question
 - `POST /sessions/{id}/interview/review` → the only path that saves interview facts to `confirmed_facts` (once per category, after the user edits/excludes/adds)
 - `POST /sessions/{id}/interview/confirm` → only the "여러 활동 있나요?" split check (routing, not facts)
-- `POST /sessions/{id}/records` → async blog/image parsing (poll for status)
+- `POST /sessions/{id}/records`, `POST /records/text`, `POST /records/upload` (document only — `.md`/`.txt`/`.docx`/`.hwp`), `GET /records/uncited`, `GET`/`DELETE /records/{id}` → async parsing, poll for status
 - `POST /sessions/{id}/generate` → triggers STAR document generation
-- `GET /sessions/{id}/document`, `PATCH /sessions/{id}/document/sentences/{id}`
+- `GET /sessions/{id}/document`, `POST /sessions/{id}/document/regenerate`, `GET /sessions/{id}/documents` (version list), `POST /sessions/{id}/document/finalize`
+- `PATCH`/`POST /sessions/{id}/document/sentences/{id}` (edit/move/regenerate), `PATCH`/`POST /sessions/{id}/document/paragraphs/{id}` (edit/merge/delete)
+- `GET /sessions/{id}/export`
+- `POST`/`DELETE /sessions/{id}/document/share` (owner, `FINAL` only) → mint/revoke a `share_slug`; `GET /share/{slug}` (unauthenticated) → minimal public preview for link unfurling
+- `GET /sessions/{id}/trust-score`, `GET /trust-score/global` (unauthenticated) → honesty-guardrail metrics (evidence coverage, consistency pass rate, AI-acceptance rate) for the session and for all `FINAL` documents
+- `GET /demo/document` (unauthenticated) → the one operator-designated demo session (`settings.demo_session_id`), no session_id path param by design
+- `GET /sessions/{id}/coverage` → gap-period coverage/fill status
+- `GET /sessions/{id}/job-search`, `POST /sessions/{id}/job-search/draft-query` → job-search query drawn from the session's confirmed gap facts (see [docs/specs/job_search_and_gap_link.md](docs/specs/job_search_and_gap_link.md))
+- `GET /feed/*` (policies, trainings, jobs + `/recommended` variants + `/sources/status`) → main-page feed (see [docs/specs/main_page_feed.md](docs/specs/main_page_feed.md))
+- `GET`/`PATCH /me/attributes`, `/me/preferences`, `/me/answers*`, consent endpoints under `/me` → profile attributes, preferences, archived Q&A, `sensitive_profiling` consent (see [docs/specs/profiling_and_matching.md](docs/specs/profiling_and_matching.md))
 
 JWT: Access tokens expire in 30 minutes; refresh tokens in 14 days.
 
