@@ -21,6 +21,7 @@ from app.schemas.profile import (
     AttributeKeyRead,
     AttributeRead,
     AttributesRead,
+    AttributesResetRead,
     AttributeUpdate,
     ConsentRead,
     ConsentUpdate,
@@ -315,6 +316,23 @@ async def delete_attribute(
         row.invalidated_at = datetime.now(timezone.utc)
         row.evidence_text = None
     await db.commit()
+
+
+@router.post("/attributes/reset", response_model=AttributesResetRead)
+async def reset_attributes(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AttributesResetRead:
+    """프로필 초기화 — 지금까지 쌓인 정보(민감정보 포함)를 전부 지운다.
+
+    개별 삭제와 달리 `rejected`로도 남기지 않는다 — 완전히 새로 시작하는
+    것이므로 이후 대화에서 같은 내용을 다시 말하면 다시 저장될 수 있어야
+    한다. 민감정보 동의 자체는 유지된다(데이터만 비우고 동의는 안 건드림 —
+    다시 말하면 여전히 저장할 수 있어야 하므로).
+    """
+    reset_count = await attrs.reset_all_attributes(db, current_user.id)
+    await db.commit()
+    return AttributesResetRead(reset_count=reset_count)
 
 
 @router.get("/consents/sensitive-profiling", response_model=ConsentRead)
