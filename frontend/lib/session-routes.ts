@@ -35,6 +35,8 @@ export const CATEGORY_LABELS: Record<CategoryType, string> = {
   project: "개인 프로젝트",
   caregiving: "돌봄",
   travel: "여행",
+  internship: "인턴십",
+  club: "동호회·모임",
   other: "기타",
 };
 

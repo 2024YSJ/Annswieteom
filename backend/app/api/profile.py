@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
@@ -15,12 +15,14 @@ from app.models.user_consent import UserConsent
 from app.models.user_preference import UserPreference
 from app.models.user import User
 from app.schemas.profile import (
+    AnswersResetRead,
     ArchivedAnswerRead,
     ArchiveSummaryRead,
     AttributeCreate,
     AttributeKeyRead,
     AttributeRead,
     AttributesRead,
+    AttributesResetRead,
     AttributeUpdate,
     ConsentRead,
     ConsentUpdate,
@@ -130,6 +132,27 @@ async def delete_archived_answer(
     await attrs.forget_answer(db, current_user.id, answer_id)
     await db.delete(answer)
     await db.commit()
+
+
+@router.post("/answers/reset", response_model=AnswersResetRead)
+async def reset_answers(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AnswersResetRead:
+    """문답 기록 초기화 — 계정에 쌓인 문답을 전부 지운다.
+
+    개별 삭제(`delete_archived_answer`)와 같은 이유로 그 답변들에서 추정한
+    프로필 속성과 복제된 원문 인용도 같이 정리한다(`attrs.forget_all_answers`).
+    """
+    _require_registered(current_user)
+
+    reset_count = await db.scalar(
+        select(func.count()).select_from(InterviewAnswer).where(InterviewAnswer.user_id == current_user.id)
+    )
+    await attrs.forget_all_answers(db, current_user.id)
+    await db.execute(delete(InterviewAnswer).where(InterviewAnswer.user_id == current_user.id))
+    await db.commit()
+    return AnswersResetRead(reset_count=reset_count or 0)
 
 
 @router.get("/preferences", response_model=PreferenceRead)
@@ -315,6 +338,23 @@ async def delete_attribute(
         row.invalidated_at = datetime.now(timezone.utc)
         row.evidence_text = None
     await db.commit()
+
+
+@router.post("/attributes/reset", response_model=AttributesResetRead)
+async def reset_attributes(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AttributesResetRead:
+    """프로필 초기화 — 지금까지 쌓인 정보(민감정보 포함)를 전부 지운다.
+
+    개별 삭제와 달리 `rejected`로도 남기지 않는다 — 완전히 새로 시작하는
+    것이므로 이후 대화에서 같은 내용을 다시 말하면 다시 저장될 수 있어야
+    한다. 민감정보 동의 자체는 유지된다(데이터만 비우고 동의는 안 건드림 —
+    다시 말하면 여전히 저장할 수 있어야 하므로).
+    """
+    reset_count = await attrs.reset_all_attributes(db, current_user.id)
+    await db.commit()
+    return AttributesResetRead(reset_count=reset_count)
 
 
 @router.get("/consents/sensitive-profiling", response_model=ConsentRead)

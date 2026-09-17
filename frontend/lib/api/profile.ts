@@ -25,6 +25,10 @@ export interface ArchiveSummary {
   category_types: string[];
 }
 
+export interface AnswersReset {
+  reset_count: number;
+}
+
 export interface Preference {
   /** 사용자가 직접 쓴 맞춤 정보. 아직 안 썼으면 빈 문자열(404가 아니다). */
   wish_text: string;
@@ -70,6 +74,10 @@ export interface ProfileAttributes {
   consent: SensitiveConsent;
 }
 
+export interface AttributesReset {
+  reset_count: number;
+}
+
 export const profileApi = {
   /** 대화로 알게 됐거나 직접 입력한 속성 + 편집용 키 목록·선택지·동의 상태. 게스트도 허용. */
   attributes: (accessToken: string) =>
@@ -98,6 +106,15 @@ export const profileApi = {
   deleteAttribute: (attributeId: string, accessToken: string) =>
     request<void>(`/api/v1/me/attributes/${attributeId}`, {
       method: "DELETE",
+      headers: authHeaders(accessToken),
+    }),
+
+  /** 프로필 초기화 — 지금까지 쌓인 정보를 전부 지운다(민감정보 포함, 동의는
+   * 유지). 개별 삭제와 달리 `rejected`로도 남기지 않아, 이후 대화에서 같은
+   * 내용을 다시 말하면 다시 저장될 수 있다. */
+  resetAttributes: (accessToken: string) =>
+    request<AttributesReset>("/api/v1/me/attributes/reset", {
+      method: "POST",
       headers: authHeaders(accessToken),
     }),
 
@@ -143,6 +160,14 @@ export const profileApi = {
   deleteAnswer: (answerId: string, accessToken: string) =>
     request<void>(`/api/v1/me/answers/${answerId}`, {
       method: "DELETE",
+      headers: authHeaders(accessToken),
+    }),
+
+  /** 문답 기록 초기화 — 계정에 쌓인 문답을 전부 지운다. 그 답변들에서 추정한
+   * 프로필 속성과 복제된 원문 인용도 같이 정리된다(개별 삭제와 같은 이유). */
+  resetAnswers: (accessToken: string) =>
+    request<AnswersReset>("/api/v1/me/answers/reset", {
+      method: "POST",
       headers: authHeaders(accessToken),
     }),
 };

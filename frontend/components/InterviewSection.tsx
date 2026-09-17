@@ -6,6 +6,7 @@ import {
   sessionApi,
   type ActivityCategoryRead,
   type CategoryReviewRead,
+  type CategoryType,
   type InterviewAskRead,
   type SessionStatus,
 } from "@/lib/api-client";
@@ -218,6 +219,20 @@ export function InterviewSection({
     }
   }
 
+  // 분류가 잘못됐을 때(예: 인턴십이 아르바이트로) 사용자가 직접 바로잡는다 —
+  // 서버가 category_type을 바꾸면서 캐시된 pending_turn도 같이 비우므로,
+  // /interview/ask를 다시 불러야 새 유형의 첫 질문을 받는다.
+  async function retypeCategory(categoryId: string, categoryType: CategoryType) {
+    setError(null);
+    try {
+      await sessionApi.retypeCategory(sessionId, categoryId, categoryType, accessToken);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.session(sessionId) });
+      applyAsk(await sessionApi.interviewAsk(sessionId, accessToken));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   function retryAnswer() {
     if (!pendingAnswerText) return;
     setError(null);
@@ -350,6 +365,7 @@ export function InterviewSection({
         questionText={question?.question_text ?? null}
         questionSource={question?.question_source ?? null}
         onSkip={skipQuestion}
+        onRetype={retypeCategory}
         pendingAnswerText={pendingAnswerText}
         candidates={candidates}
         onUpdateCandidate={updateCandidate}

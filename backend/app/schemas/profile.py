@@ -40,6 +40,13 @@ class ArchiveSummaryRead(BaseModel):
     category_types: list[str]
 
 
+class AnswersResetRead(BaseModel):
+    """`POST /me/answers/reset` 응답 — 지운 개수를 돌려줘 "N개를
+    초기화했어요" 같은 확인 문구를 보여줄 수 있게 한다."""
+
+    reset_count: int
+
+
 class PreferenceRead(BaseModel):
     """사용자가 직접 쓴 "맞춤 정보"(희망사항).
 
@@ -110,3 +117,10 @@ class AttributeUpdate(BaseModel):
 
 class ConsentUpdate(BaseModel):
     granted: bool
+
+
+class AttributesResetRead(BaseModel):
+    """`POST /me/attributes/reset` 응답 — 지운 개수를 돌려줘 "12개를
+    초기화했어요" 같은 확인 문구를 보여줄 수 있게 한다."""
+
+    reset_count: int

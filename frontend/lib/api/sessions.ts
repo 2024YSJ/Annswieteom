@@ -1,6 +1,16 @@
 import { authHeaders, request } from "./client";
 import type { RecordRead } from "./records";
 
+/** `fetch`엔 기본 타임아웃이 없어서, 응답이 (깔끔하게 실패하는 대신) 그냥
+ * 멈춰버리면 영원히 안 끝난다 — 1시간 이상 이어진 세션에서 액세스 토큰 재발급
+ * 왕복이 어딘가에서 멈춰, 서버는 답변을 정상 저장했는데도 채팅 UI가
+ * "답변을 정리하고 다음 질문을 준비하고 있어요"에 영구히 멈춰버린 사례로
+ * 확인됐다(6인 페르소나 검증 라운드, 2026-09-17). use-session-context.ts의
+ * SESSION_FETCH_TIMEOUT_MS와 같은 값(Render 콜드 스타트도 버틸 만큼 넉넉하게)을
+ * 써서 인터뷰 관련 호출도 같은 방식으로 보호한다 — 타임아웃 시 던져지는
+ * DOMException은 error-messages.ts의 errorMessage()가 이미 처리한다. */
+const INTERVIEW_TIMEOUT_MS = 65_000;
+
 export type SessionStatus =
   | "PERIOD_INPUT"
   | "CATEGORY_SELECT"
@@ -22,6 +32,8 @@ export type CategoryType =
   | "project"
   | "caregiving"
   | "travel"
+  | "internship"
+  | "club"
   | "other";
 
 export interface SessionRead {
@@ -31,6 +43,10 @@ export interface SessionRead {
   linked_gap_session_id: string | null;
   status: SessionStatus;
   created_at: string;
+}
+
+export interface SessionBulkDeleteResult {
+  deleted_ids: string[];
 }
 
 export interface GapPeriodRead {
@@ -240,6 +256,13 @@ export const sessionApi = {
       headers: authHeaders(accessToken),
     }),
 
+  removeMany: (sessionIds: string[], accessToken: string) =>
+    request<SessionBulkDeleteResult>("/api/v1/sessions/bulk-delete", {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ session_ids: sessionIds }),
+    }),
+
   setPeriod: (sessionId: string, startDate: string, endDate: string, accessToken: string) =>
     request<StatusRead>(`/api/v1/sessions/${sessionId}/period`, {
       method: "POST",
@@ -268,6 +291,17 @@ export const sessionApi = {
       body: JSON.stringify({ text }),
     }),
 
+  /** 분류가 잘못돼 엉뚱한 질문 은행이 배정됐을 때(예: 인턴십이 아르바이트로)
+   * 바로잡는다 — 아직 아무것도 답하지 않은 카테고리에서만 허용된다(서버가
+   * 409 category_already_in_progress로 나머지를 막는다). */
+  retypeCategory: (sessionId: string, categoryId: string, categoryType: CategoryType, accessToken: string) =>
+    request<void>(`/api/v1/sessions/${sessionId}/categories/${categoryId}/type`, {
+      method: "PATCH",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ category_type: categoryType }),
+      signal: AbortSignal.timeout(INTERVIEW_TIMEOUT_MS),
+    }),
+
   skipRecords: (sessionId: string, accessToken: string) =>
     request<RecordsSkipRead>(`/api/v1/sessions/${sessionId}/records/skip`, {
       method: "POST",
@@ -278,12 +312,14 @@ export const sessionApi = {
     request<InterviewAskRead>(`/api/v1/sessions/${sessionId}/interview/ask`, {
       method: "POST",
       headers: authHeaders(accessToken),
+      signal: AbortSignal.timeout(INTERVIEW_TIMEOUT_MS),
     }),
 
   interviewAnswer: (sessionId: string, text: string, accessToken: string) =>
     request<InterviewAnswerRead>(`/api/v1/sessions/${sessionId}/interview/answer`, {
       method: "POST",
       headers: authHeaders(accessToken),
+      signal: AbortSignal.timeout(INTERVIEW_TIMEOUT_MS),
       body: JSON.stringify({ text }),
     }),
 
@@ -291,12 +327,14 @@ export const sessionApi = {
     request<InterviewSkipRead>(`/api/v1/sessions/${sessionId}/interview/skip`, {
       method: "POST",
       headers: authHeaders(accessToken),
+      signal: AbortSignal.timeout(INTERVIEW_TIMEOUT_MS),
     }),
 
   interviewConfirm: (sessionId: string, confirmations: FactConfirmation[], accessToken: string) =>
     request<InterviewConfirmRead>(`/api/v1/sessions/${sessionId}/interview/confirm`, {
       method: "POST",
       headers: authHeaders(accessToken),
+      signal: AbortSignal.timeout(INTERVIEW_TIMEOUT_MS),
       body: JSON.stringify({ confirmations }),
     }),
 
@@ -304,6 +342,7 @@ export const sessionApi = {
     request<InterviewConfirmRead>(`/api/v1/sessions/${sessionId}/interview/review`, {
       method: "POST",
       headers: authHeaders(accessToken),
+      signal: AbortSignal.timeout(INTERVIEW_TIMEOUT_MS),
       body: JSON.stringify({ confirmations }),
     }),
 };

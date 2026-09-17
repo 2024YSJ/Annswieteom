@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.deps import get_owned_session
 from app.db.session import get_background_session_factory, get_db
-from app.models.activity_category import ActivityCategory
+from app.models.activity_category import CATEGORY_TYPES, ActivityCategory
 from app.models.confirmed_fact import ConfirmedFact
 from app.models.gap_period import GapPeriod
 from app.models.interview_answer import InterviewAnswer
@@ -23,6 +23,7 @@ from app.schemas.interview import (
     CategoryExtractRequest,
     CategorySelect,
     CategorySuggestionRead,
+    CategoryTypeUpdate,
     ConfirmedFactRead,
     ConflictRefRead,
     FactCandidateRead,
@@ -438,6 +439,47 @@ async def extract_categories(
         ],
         followup_question=followup_question,
     )
+
+
+@router.patch("/{session_id}/categories/{category_id}/type", status_code=status.HTTP_204_NO_CONTENT)
+async def retype_category(
+    category_id: uuid.UUID,
+    payload: CategoryTypeUpdate,
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+):
+    """분류가 잘못돼 엉뚱한 질문 은행이 배정됐을 때(예: 인턴십이 아르바이트
+    질문으로) 사용자가 직접 바로잡는다(6인 페르소나 검증 라운드에서 발견).
+
+    아직 아무것도 답하지 않은 카테고리에서만 허용한다 — 고정 질문의 fact_type
+    슬롯이 유형마다 달라서, 이미 답한 뒤에 유형을 바꾸면 새 유형의 질문 은행이
+    이미 답한 슬롯을 다시 셀 수 없어 순서가 어긋난다. draft_turns(카테고리 끝
+    확인 전 임시 답변)와 confirmed_facts(확인까지 끝난 사실) 둘 다 비어 있어야
+    "아직 안 답했다"고 본다.
+
+    No `-> None` annotation — 204 응답 본문 assertion 때문(sessions.delete_session 주석 참고).
+    """
+    if payload.category_type not in CATEGORY_TYPES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_category_type")
+
+    category = await db.get(ActivityCategory, category_id)
+    if category is None or category.session_id != session.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="category_not_found")
+
+    has_confirmed_facts = (
+        await db.execute(select(ConfirmedFact.id).where(ConfirmedFact.category_id == category.id).limit(1))
+    ).scalar_one_or_none() is not None
+    if category.draft_turns or has_confirmed_facts:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="category_already_in_progress")
+
+    category.category_type = payload.category_type
+    # pending_turn은 질문 문구를 그대로 캐시해둔 것이라(/interview/ask가 이걸
+    # 그대로 재사용해 idempotent해진다), 유형만 바꾸고 이걸 안 지우면 다음
+    # /ask 호출이 옛 유형의 질문 문구를 그대로 돌려준다. 이 카테고리를 가리키는
+    # pending_turn만 비워서 다음 /ask가 새 유형의 질문 은행으로 다시 만들게 한다.
+    if session.pending_turn and session.pending_turn.get("category_id") == str(category.id):
+        session.pending_turn = None
+    await db.commit()
 
 
 @router.post("/{session_id}/records/skip", response_model=RecordsSkipRead)
