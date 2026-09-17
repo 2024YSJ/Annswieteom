@@ -110,3 +110,10 @@ class AttributeUpdate(BaseModel):
 
 class ConsentUpdate(BaseModel):
     granted: bool
+
+
+class AttributesResetRead(BaseModel):
+    """`POST /me/attributes/reset` 응답 — 지운 개수를 돌려줘 "12개를
+    초기화했어요" 같은 확인 문구를 보여줄 수 있게 한다."""
+
+    reset_count: int
