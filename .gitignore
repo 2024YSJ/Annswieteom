@@ -35,3 +35,7 @@ Thumbs.db
 
 # Alembic (keep migrations, exclude generated pycache)
 backend/app/db/migrations/__pycache__/
+
+# seed_demo_session.py's local record of the last session it created, so
+# `--reset` can find and clean it up. Machine-local, not shared state.
+backend/scripts/.demo_session_id

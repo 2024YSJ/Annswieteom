@@ -29,6 +29,7 @@ from app.services.llm.base import (
     JobInfoCandidate,
     JobInfoCategoryQuery,
     JobInfoQueryParams,
+    LLMCallStats,
     ParagraphDraft,
     PeriodSuggestion,
     LLMUnavailableError,
@@ -132,6 +133,14 @@ class LocalOllamaProvider:
     def __init__(self) -> None:
         self._base_url = settings.local_llm_base_url.rstrip("/")
         self._model = settings.local_llm_model_name
+        # 로컬 GPU 처리 배지(F)용 계측 누적 — get_llm_provider()(services/llm/__init__.py)가
+        # 캐시 없이 요청마다 새 인스턴스를 만든다는 전제 하에서만 안전하다: 이 인스턴스는
+        # 이번 요청 하나에서만 살아 있고, 같은 요청 안에서도 document_generator가 카테고리별로
+        # llm.generate_document를 순차(await) 호출하므로 동시 쓰기가 없다. 이후 프로바이더를
+        # 싱글턴/캐시로 바꾸는 변경이 생기면 이 리스트를 contextvars.ContextVar로 옮겨야 한다 —
+        # 호출부는 항상 getattr(llm, "generation_stats", [])로만 접근하므로 그 전환은 이
+        # 클래스 내부만 바꾸면 된다.
+        self.generation_stats: list[LLMCallStats] = []
 
     async def extract_facts(
         self, context: InterviewContext, question_text: str, answer_text: str, fact_type_hint: str
@@ -559,7 +568,9 @@ class LocalOllamaProvider:
                             await resp.aread()
                         resp.raise_for_status()
                         content, stats = await self._collect_stream(resp)
-                        _log_generation_stats(label, self._model, time.monotonic() - started, stats)
+                        self.generation_stats.append(
+                            _log_generation_stats(label, self._model, time.monotonic() - started, stats)
+                        )
                         return content
         except LLMUnavailableError:
             raise
@@ -612,19 +623,23 @@ class LocalOllamaProvider:
         return "".join(parts), final
 
 
-def _log_generation_stats(label: str, model: str, wall_seconds: float, stats: dict) -> None:
-    """호출 한 건의 속도를 한 줄로 남긴다.
+def _log_generation_stats(label: str, model: str, wall_seconds: float, stats: dict) -> LLMCallStats:
+    """호출 한 건의 속도를 한 줄로 남기고, 같은 값을 구조화해 돌려준다.
 
     Spark에서 응답 시간은 거의 출력 토큰 수 ÷ decode 속도로 정해진다. 그래서
     프롬프트를 줄였는지, 모델을 바꿨는지의 효과는 이 줄의 out_tokens와 tok/s로
     바로 보인다. wall은 Render에서 잰 전체 시간(터널 왕복 포함)이고, 나머지는
     Ollama가 스스로 잰 값이다(ns). 계측이 빠진 응답이어도 호출은 실패시키지 않는다.
+
+    반환값은 LocalOllamaProvider.generation_stats에 쌓여 로컬 GPU 처리 배지(F)의
+    API 응답에 실린다 — 로그 문자열을 다시 파싱하지 않고 같은 계산을 한 번만 한다.
     """
     def _seconds(key: str) -> float:
         return (stats.get(key) or 0) / 1e9
 
     out_tokens = stats.get("eval_count") or 0
     decode_s = _seconds("eval_duration")
+    tokens_per_second = out_tokens / decode_s if decode_s else 0.0
     logger.info(
         "llm %s model=%s wall=%.1fs load=%.1fs prefill=%dtok/%.1fs out=%dtok/%.1fs (%.1f tok/s)",
         label,
@@ -635,5 +650,8 @@ def _log_generation_stats(label: str, model: str, wall_seconds: float, stats: di
         _seconds("prompt_eval_duration"),
         out_tokens,
         decode_s,
-        out_tokens / decode_s if decode_s else 0.0,
+        tokens_per_second,
+    )
+    return LLMCallStats(
+        label=label, out_tokens=out_tokens, decode_seconds=decode_s, tokens_per_second=tokens_per_second
     )

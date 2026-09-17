@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,6 +8,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_owned_session
 from app.db.session import get_db
 from app.models.confirmed_fact import ConfirmedFact
@@ -15,12 +17,11 @@ from app.models.generated_paragraph import GeneratedParagraph
 from app.models.generated_sentence import GeneratedSentence
 from app.models.session import Session as SessionModel
 from app.schemas.document import (
-    CitationRead,
     DocumentRead,
     DocumentVersionRead,
-    EvidenceRead,
     FinalizeRequest,
     GenerateRequest,
+    GpuGenerationStatsRead,
     MoveSentenceRequest,
     ParagraphRead,
     ParagraphUpdate,
@@ -28,11 +29,12 @@ from app.schemas.document import (
     SentenceUpdate,
     UnverifiedSentenceRead,
 )
+from app.schemas.share import ShareLinkRead
 from app.services import document_generator
 from app.services import interview_orchestrator as orchestrator
+from app.services.document_assembly import build_document_read, build_paragraph_read, build_sentence_read, get_latest_document
 from app.services.embedding import get_embedding_provider
 from app.services.embedding.base import EmbeddingProvider
-from app.services.evidence import grade_for
 from app.services.llm.base import LLMProvider, LLMUnavailableError
 from app.services.llm import get_llm_provider
 from app.services.record_pipeline.citation import get_fact_citations
@@ -44,13 +46,32 @@ def _violation_to_409(exc: orchestrator.StateMachineViolation) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
-async def _get_latest_document(session_id: uuid.UUID, db: AsyncSession) -> GeneratedDocument | None:
-    stmt = (
-        select(GeneratedDocument)
-        .where(GeneratedDocument.session_id == session_id)
-        .order_by(GeneratedDocument.version.desc())
+def _gpu_stats(llm: LLMProvider) -> GpuGenerationStatsRead | None:
+    """방금 이 llm 인스턴스로 실행된 generate_document 호출들의 계측을 읽는다.
+
+    document_generator.generate_full_document는 카테고리마다 llm.generate_document를
+    한 번씩 순차 호출한다 — 그래서 문서 하나 생성에 여러 건이 쌓일 수 있고, 합쳐서
+    하나의 tok/s로 보여준다. getattr로 접근하는 이유: FakeLLMProvider(테스트)에는
+    이 속성이 없고, 그때는 그냥 배지를 안 보여주면 된다(None)."""
+    calls = [s for s in getattr(llm, "generation_stats", []) if s.label == "generate_document"]
+    if not calls:
+        return None
+    total_tokens = sum(c.out_tokens for c in calls)
+    total_decode = sum(c.decode_seconds for c in calls)
+    return GpuGenerationStatsRead(
+        model=settings.local_llm_model_name,
+        call_count=len(calls),
+        total_output_tokens=total_tokens,
+        tokens_per_second=(total_tokens / total_decode if total_decode else 0.0),
     )
-    return (await db.execute(stmt)).scalars().first()
+
+
+# 이 셋은 이제 app/services/document_assembly.py로 옮겨졌다 — api/demo.py, api/share.py가
+# 재사용한다. 이 파일은 그대로 alias해서 아래 호출부를 바꾸지 않는다.
+_get_latest_document = get_latest_document
+_sentence_read = build_sentence_read
+_paragraph_read = build_paragraph_read
+_document_read = build_document_read
 
 
 async def _get_owned_sentence(session: SessionModel, sentence_id: uuid.UUID, db: AsyncSession) -> GeneratedSentence:
@@ -75,85 +96,6 @@ async def _get_owned_paragraph(session: SessionModel, paragraph_id: uuid.UUID, d
     if paragraph is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="paragraph_not_found")
     return paragraph
-
-
-async def _sentence_read(sentence: GeneratedSentence, db: AsyncSession, fact_citations) -> SentenceRead:
-    fact_ids = [uuid.UUID(fact_id_str) for fact_id_str in sentence.evidence_fact_ids]
-    citations = await fact_citations(fact_ids, db)
-
-    evidence: list[EvidenceRead] = []
-    for fact_id in fact_ids:
-        fact = await db.get(ConfirmedFact, fact_id)
-        if fact is None:
-            continue
-        citation = citations.get(fact_id)
-        evidence.append(EvidenceRead(
-            fact_id=fact.id,
-            content=fact.content,
-            source_type=fact.source_type,
-            citation=CitationRead(source_url=citation.source_url, published_at=citation.published_at) if citation else None,
-        ))
-
-    return SentenceRead(
-        id=sentence.id,
-        order_index=sentence.order_index,
-        text=sentence.text,
-        evidence=evidence,
-        consistency_check_passed=sentence.consistency_check_passed,
-        consistency_score=sentence.consistency_score,
-        edited_by_user=sentence.edited_by_user,
-        evidence_grade=grade_for(e.source_type for e in evidence),
-    )
-
-
-async def _paragraph_read(paragraph: GeneratedParagraph, db: AsyncSession, fact_citations) -> ParagraphRead:
-    stmt = (
-        select(GeneratedSentence)
-        .where(GeneratedSentence.paragraph_id == paragraph.id)
-        .order_by(GeneratedSentence.order_index)
-    )
-    sentences = (await db.execute(stmt)).scalars().all()
-    return ParagraphRead(
-        id=paragraph.id,
-        order_index=paragraph.order_index,
-        topic=paragraph.topic,
-        user_confirmed=paragraph.user_confirmed,
-        sentences=[await _sentence_read(s, db, fact_citations) for s in sentences],
-    )
-
-
-async def _document_read(document: GeneratedDocument, db: AsyncSession, fact_citations) -> DocumentRead:
-    para_stmt = (
-        select(GeneratedParagraph)
-        .where(GeneratedParagraph.document_id == document.id)
-        .order_by(GeneratedParagraph.order_index)
-    )
-    paragraphs = (await db.execute(para_stmt)).scalars().all()
-    paragraph_reads = [await _paragraph_read(p, db, fact_citations) for p in paragraphs]
-
-    # Sentences pre-dating the paragraph_id column (or otherwise orphaned)
-    # each become their own single-sentence paragraph, so old documents
-    # still render sensibly instead of disappearing.
-    sent_stmt = (
-        select(GeneratedSentence)
-        .where(GeneratedSentence.document_id == document.id, GeneratedSentence.paragraph_id.is_(None))
-        .order_by(GeneratedSentence.order_index)
-    )
-    orphan_sentences = (await db.execute(sent_stmt)).scalars().all()
-    for s in orphan_sentences:
-        paragraph_reads.append(ParagraphRead(
-            id=s.id, order_index=s.order_index, topic="", user_confirmed=False,
-            sentences=[await _sentence_read(s, db, fact_citations)],
-        ))
-    paragraph_reads.sort(key=lambda p: p.order_index)
-
-    return DocumentRead(
-        id=document.id,
-        tone=document.tone,
-        version=document.version,
-        status=document.status,
-        paragraphs=paragraph_reads,
-    )
 
 
 @router.post("/{session_id}/generate", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
@@ -183,7 +125,9 @@ async def generate_document(
     session.status = next_status
     await db.commit()
 
-    return await _document_read(document, db, fact_citations)
+    result = await _document_read(document, db, fact_citations)
+    result.generation_stats = _gpu_stats(llm)
+    return result
 
 
 @router.get("/{session_id}/document", response_model=DocumentRead)
@@ -222,7 +166,9 @@ async def regenerate_document(
         )
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="llm_unavailable") from exc
-    return await _document_read(document, db, fact_citations)
+    result = await _document_read(document, db, fact_citations)
+    result.generation_stats = _gpu_stats(llm)
+    return result
 
 
 @router.patch("/{session_id}/document/sentences/{sentence_id}", response_model=SentenceRead)
@@ -486,6 +432,37 @@ async def finalize_document(
     await db.refresh(document)
 
     return await _document_read(document, db, fact_citations)
+
+
+@router.post("/{session_id}/document/share", response_model=ShareLinkRead)
+async def create_share_link(
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+) -> ShareLinkRead:
+    """공유 링크를 발급(이미 있으면 그대로 재사용)한다. FINAL 문서만 공유
+    가능 — 아직 손보는 중인 초안을 밖으로 내보낼 이유가 없다."""
+    document = await _get_latest_document(session.id, db)
+    if document is None or document.status != "FINAL":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="document_not_finalized")
+    if not document.share_slug:
+        document.share_slug = secrets.token_urlsafe(9)[:12]
+        await db.commit()
+        await db.refresh(document)
+    return ShareLinkRead(share_slug=document.share_slug)
+
+
+@router.delete("/{session_id}/document/share", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_share_link(
+    session: SessionModel = Depends(get_owned_session),
+    db: AsyncSession = Depends(get_db),
+):
+    # No `-> None` annotation — see sessions.delete_session's comment on why
+    # that trips FastAPI's 204-response-body assertion under
+    # `from __future__ import annotations`.
+    document = await _get_latest_document(session.id, db)
+    if document is not None and document.share_slug is not None:
+        document.share_slug = None
+        await db.commit()
 
 
 _EXPORT_FORMATS = ("txt", "md")
